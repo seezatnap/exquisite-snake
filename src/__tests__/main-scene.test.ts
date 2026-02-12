@@ -502,6 +502,40 @@ describe("MainScene", () => {
     expect(swapOrder).toBeLessThan(wipeOrder);
   });
 
+  it("keeps redrawn grid behind food and snake sprites across biome transitions", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.enterPhase("playing");
+    scene.getSnake()!.getTicker().setInterval(60_000);
+
+    mockGraphicsSetDepth.mockClear();
+    mockSpriteSetDepth.mockClear();
+
+    scene.update(0, 45_000); // Neon -> Ice
+
+    const gridDepthCallIndex = mockGraphicsSetDepth.mock.calls.findLastIndex(
+      ([depth]) => depth === RENDER_DEPTH.BIOME_GRID,
+    );
+    expect(gridDepthCallIndex).toBeGreaterThanOrEqual(0);
+    const gridDepthCallOrder =
+      mockGraphicsSetDepth.mock.invocationCallOrder[gridDepthCallIndex];
+
+    const gameplayDepthCallOrders = mockSpriteSetDepth.mock.calls
+      .map(([depth], callIndex) => ({
+        depth,
+        order: mockSpriteSetDepth.mock.invocationCallOrder[callIndex],
+      }))
+      .filter(
+        ({ depth }) =>
+          depth === RENDER_DEPTH.FOOD || depth === RENDER_DEPTH.SNAKE,
+      );
+
+    expect(gameplayDepthCallOrders.length).toBeGreaterThan(0);
+    for (const { order } of gameplayDepthCallOrders) {
+      expect(order).toBeGreaterThan(gridDepthCallOrder);
+    }
+  });
+
   it("keeps gameplay updates in sync while transition FX animates and then cleans up", () => {
     const scene = new MainScene();
     scene.create();

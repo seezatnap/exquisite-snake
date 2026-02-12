@@ -134,6 +134,13 @@ export class Snake {
     this.sprites.push(sprite);
   }
 
+  /** Re-apply a uniform render depth to all segment sprites. */
+  setRenderDepth(depth: number): void {
+    for (const sprite of this.sprites) {
+      sprite.setDepth?.(depth);
+    }
+  }
+
   // ── Input handling ─────────────────────────────────────────────
 
   /**

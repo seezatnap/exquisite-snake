@@ -797,6 +797,20 @@ export class MainScene extends Phaser.Scene {
     this.drawBackdrop(biome, theme);
     this.drawTilemap(biome, theme);
     this.drawGrid(theme.gridLineColor, theme.gridLineAlpha);
+    this.syncGameplayLayering();
+  }
+
+  /**
+   * Keep gameplay sprites above arena graphics after biome redraws.
+   *
+   * Biome transitions recreate backdrop/tilemap/grid graphics while the
+   * snake and food remain alive, so we explicitly re-assert gameplay depths.
+   */
+  private syncGameplayLayering(): void {
+    this.gridGraphics?.setDepth?.(RENDER_DEPTH.BIOME_GRID);
+    this.food?.getSprite()?.setDepth?.(RENDER_DEPTH.FOOD);
+    this.snake?.setRenderDepth(RENDER_DEPTH.SNAKE);
+    this.children?.depthSort?.();
   }
 
   private startBiomeTransitionEffect(from: Biome): void {
