@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import fs from "fs";
 import path from "path";
 import { gameBridge } from "@/game/bridge";
-import { GRID_COLS, GRID_ROWS } from "@/game/config";
+import { GRID_COLS, GRID_ROWS, RENDER_DEPTH } from "@/game/config";
 import { Biome } from "@/game/systems/BiomeManager";
 
 const ROOT = path.resolve(__dirname, "../..");
@@ -12,11 +12,21 @@ const mockLineStyle = vi.fn();
 const mockMoveTo = vi.fn();
 const mockLineTo = vi.fn();
 const mockStrokePath = vi.fn();
+const mockFillStyle = vi.fn();
+const mockFillCircle = vi.fn();
+const mockClearGraphics = vi.fn();
+const mockGraphicsSetDepth = vi.fn();
+const mockGraphicsDestroy = vi.fn();
 const mockAddGraphics = vi.fn(() => mockGraphics);
 const mockSetBackgroundColor = vi.fn();
 
 const mockGraphics = {
+  clear: mockClearGraphics,
+  destroy: mockGraphicsDestroy,
+  setDepth: mockGraphicsSetDepth,
   lineStyle: mockLineStyle,
+  fillStyle: mockFillStyle,
+  fillCircle: mockFillCircle,
   moveTo: mockMoveTo,
   lineTo: mockLineTo,
   strokePath: mockStrokePath,
@@ -25,12 +35,14 @@ const mockGraphics = {
 const mockSceneStart = vi.fn();
 const mockDestroy = vi.fn();
 const mockSetPosition = vi.fn();
+const mockSpriteSetDepth = vi.fn();
 const mockKeyboardOn = vi.fn();
 
 function createMockSprite() {
   return {
     destroy: mockDestroy,
     setPosition: mockSetPosition,
+    setDepth: mockSpriteSetDepth,
     x: 0,
     y: 0,
   };
@@ -167,6 +179,32 @@ describe("MainScene", () => {
     expect(mockLineStyle).toHaveBeenCalledWith(2, 0x00f0ff, 0.12);
     expect(mockLineStyle).toHaveBeenCalledWith(1, 0x00d5e2, 0.14);
     expect(mockLineStyle).toHaveBeenCalledWith(1, 0x00f0ff, 0.08);
+  });
+
+  it("uses explicit render depths for arena layers, mechanics, food, and snake", () => {
+    const scene = new MainScene();
+    scene.create();
+
+    expect(mockGraphicsSetDepth).toHaveBeenCalledWith(RENDER_DEPTH.BIOME_BACKDROP);
+    expect(mockGraphicsSetDepth).toHaveBeenCalledWith(RENDER_DEPTH.BIOME_TILEMAP);
+    expect(mockGraphicsSetDepth).toHaveBeenCalledWith(RENDER_DEPTH.BIOME_GRID);
+
+    scene.enterPhase("playing");
+    expect(mockSpriteSetDepth).toHaveBeenCalledWith(RENDER_DEPTH.FOOD);
+    expect(mockSpriteSetDepth).toHaveBeenCalledWith(RENDER_DEPTH.SNAKE);
+
+    scene.setMoltenLavaConfig({
+      spawnIntervalMs: 45_000,
+      spawnChancePerInterval: 1,
+      maxPools: 1,
+    });
+    scene.setRng(() => 0.25);
+    scene.getSnake()!.getTicker().setInterval(200_000);
+
+    mockGraphicsSetDepth.mockClear();
+    scene.update(0, 45_000); // Neon -> Ice
+    scene.update(0, 45_000); // Ice -> Molten
+    expect(mockGraphicsSetDepth).toHaveBeenCalledWith(RENDER_DEPTH.BIOME_MECHANIC);
   });
 
   it("create() sets phase to 'start' via bridge", () => {
@@ -555,6 +593,30 @@ describe("MainScene", () => {
     }
   });
 
+  it("Molten Core renders lava pool visuals from active mechanic pools", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.enterPhase("playing");
+    scene.setMoltenLavaConfig({
+      spawnIntervalMs: 45_000,
+      spawnChancePerInterval: 1,
+      maxPools: 1,
+    });
+    scene.setRng(() => 0.2);
+
+    const snake = scene.getSnake()!;
+    snake.getTicker().setInterval(200_000);
+
+    scene.update(0, 45_000); // Neon -> Ice
+    mockFillCircle.mockClear();
+
+    scene.update(0, 45_000); // Ice -> Molten + pool visual draw
+
+    expect(scene.getCurrentBiome()).toBe(Biome.MoltenCore);
+    expect(scene.getMoltenLavaPools()).toHaveLength(1);
+    expect(mockFillCircle.mock.calls.length).toBeGreaterThanOrEqual(2);
+  });
+
   it("Molten Core collision burns 3 tail segments when snake is long enough", () => {
     const scene = new MainScene();
     scene.create();
@@ -670,6 +732,29 @@ describe("MainScene", () => {
 
     scene.update(0, 100); // step 3 + gravity pull toward center (down)
     expect(snake.getHeadPosition()).toEqual({ col: 13, row: 1 });
+  });
+
+  it("Void Rift renders an animated center vortex visual", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.enterPhase("playing");
+
+    const snake = scene.getSnake()!;
+    snake.getTicker().setInterval(200_000);
+    scene.update(0, 45_000); // Neon -> Ice
+    scene.update(0, 45_000); // Ice -> Molten
+    scene.update(0, 45_000); // Molten -> Void
+    expect(scene.getCurrentBiome()).toBe(Biome.VoidRift);
+
+    mockFillCircle.mockClear();
+    mockMoveTo.mockClear();
+    mockLineTo.mockClear();
+
+    scene.update(0, 16);
+
+    expect(mockFillCircle).toHaveBeenCalled();
+    expect(mockMoveTo).toHaveBeenCalled();
+    expect(mockLineTo).toHaveBeenCalled();
   });
 
   // ── Replay lifecycle ───────────────────────────────────────
