@@ -7,7 +7,12 @@ const ROOT = path.resolve(__dirname, "../..");
 
 // Track Phaser.Game constructor calls and destroy calls
 const mockDestroy = vi.fn();
-const mockGameInstances: Array<{ destroy: typeof mockDestroy; config: Record<string, unknown> }> = [];
+const mockRefresh = vi.fn();
+const mockGameInstances: Array<{
+  destroy: typeof mockDestroy;
+  scale: { refresh: typeof mockRefresh };
+  config: Record<string, unknown>;
+}> = [];
 
 vi.mock("phaser", () => {
   const FIT = 1;
@@ -20,8 +25,10 @@ vi.mock("phaser", () => {
 
   class MockGame {
     destroy: typeof mockDestroy;
+    scale: { refresh: typeof mockRefresh };
     constructor(public config: Record<string, unknown>) {
       this.destroy = mockDestroy;
+      this.scale = { refresh: mockRefresh };
       mockGameInstances.push(this);
     }
   }
@@ -56,6 +63,7 @@ import Game from "@/components/Game";
 
 beforeEach(() => {
   mockDestroy.mockClear();
+  mockRefresh.mockClear();
   mockGameInstances.length = 0;
 });
 
@@ -189,5 +197,86 @@ describe("Game component", () => {
     );
     // Must NOT have a top-level static import of phaser
     expect(source).not.toMatch(/^import\s+.*from\s+["']phaser["']/m);
+  });
+});
+
+describe("Game component — responsive resize", () => {
+  it("sets inline width/height on the container on mount", () => {
+    const { container } = render(<Game />);
+    const gameContainer = container.querySelector(
+      "#game-container",
+    ) as HTMLDivElement;
+    expect(gameContainer.style.width).toBeTruthy();
+    expect(gameContainer.style.height).toBeTruthy();
+  });
+
+  it("updates container size on window resize", () => {
+    const { container } = render(<Game />);
+    const gameContainer = container.querySelector(
+      "#game-container",
+    ) as HTMLDivElement;
+
+    // Simulate a resize to a smaller viewport
+    Object.defineProperty(window, "innerWidth", { value: 500, writable: true });
+    Object.defineProperty(window, "innerHeight", { value: 400, writable: true });
+    window.dispatchEvent(new Event("resize"));
+
+    // Container should still have valid dimensions after resize
+    expect(gameContainer.style.width).toBeTruthy();
+    expect(gameContainer.style.height).toBeTruthy();
+  });
+
+  it("calls game.scale.refresh() on window resize", async () => {
+    render(<Game />);
+    // Wait for the async init() to complete so the resize listener is registered
+    await waitFor(() => {
+      expect(mockGameInstances.length).toBe(1);
+    });
+    expect(mockRefresh).not.toHaveBeenCalled();
+
+    window.dispatchEvent(new Event("resize"));
+
+    expect(mockRefresh).toHaveBeenCalled();
+  });
+
+  it("removes resize listener on unmount", async () => {
+    const { unmount } = render(<Game />);
+    // Wait for the async init() to complete so the resize listener is registered
+    await waitFor(() => {
+      expect(mockGameInstances.length).toBe(1);
+    });
+    mockRefresh.mockClear();
+
+    unmount();
+
+    // After unmount, resize should not trigger refresh
+    window.dispatchEvent(new Event("resize"));
+    expect(mockRefresh).not.toHaveBeenCalled();
+  });
+
+  it("source file imports responsive utilities", () => {
+    const source = fs.readFileSync(
+      path.join(ROOT, "src/components/Game.tsx"),
+      "utf-8",
+    );
+    expect(source).toContain("viewportToContainer");
+    expect(source).toContain("computeCanvasSize");
+  });
+
+  it("source file registers resize event listener", () => {
+    const source = fs.readFileSync(
+      path.join(ROOT, "src/components/Game.tsx"),
+      "utf-8",
+    );
+    expect(source).toContain('addEventListener("resize"');
+    expect(source).toContain('removeEventListener("resize"');
+  });
+
+  it("source file calls scale.refresh on resize", () => {
+    const source = fs.readFileSync(
+      path.join(ROOT, "src/components/Game.tsx"),
+      "utf-8",
+    );
+    expect(source).toContain("scale.refresh()");
   });
 });
