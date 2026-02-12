@@ -12,6 +12,8 @@ const mockLineStyle = vi.fn();
 const mockMoveTo = vi.fn();
 const mockLineTo = vi.fn();
 const mockStrokePath = vi.fn();
+const mockAddGraphics = vi.fn(() => mockGraphics);
+const mockSetBackgroundColor = vi.fn();
 
 const mockGraphics = {
   lineStyle: mockLineStyle,
@@ -38,7 +40,7 @@ vi.mock("phaser", () => {
   class MockScene {
     scene = { start: mockSceneStart };
     add = {
-      graphics: () => mockGraphics,
+      graphics: mockAddGraphics,
       sprite: vi.fn(() => createMockSprite()),
       particles: vi.fn(() => ({
         explode: vi.fn(),
@@ -54,6 +56,7 @@ vi.mock("phaser", () => {
     cameras = {
       main: {
         shake: vi.fn(),
+        setBackgroundColor: mockSetBackgroundColor,
       },
     };
     textures = {
@@ -153,6 +156,17 @@ describe("MainScene", () => {
     scene.create();
     expect(mockLineStyle).toHaveBeenCalled();
     expect(mockStrokePath).toHaveBeenCalled();
+  });
+
+  it("create() initializes backdrop, tilemap, and grid theme layers for Neon City", () => {
+    const scene = new MainScene();
+    scene.create();
+
+    expect(mockAddGraphics).toHaveBeenCalledTimes(3);
+    expect(mockSetBackgroundColor).toHaveBeenCalledWith(0x0a0a0a);
+    expect(mockLineStyle).toHaveBeenCalledWith(2, 0x00f0ff, 0.12);
+    expect(mockLineStyle).toHaveBeenCalledWith(1, 0x00d5e2, 0.14);
+    expect(mockLineStyle).toHaveBeenCalledWith(1, 0x00f0ff, 0.08);
   });
 
   it("create() sets phase to 'start' via bridge", () => {
@@ -367,6 +381,40 @@ describe("MainScene", () => {
       `transition:${Biome.NeonCity}->${Biome.IceCavern}`,
       `enter:${Biome.IceCavern}`,
     ]);
+  });
+
+  it("redraws biome background and tilemap palette on transition", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.enterPhase("playing");
+    scene.getSnake()!.getTicker().setInterval(60_000);
+    mockAddGraphics.mockClear();
+    mockLineStyle.mockClear();
+    mockSetBackgroundColor.mockClear();
+
+    scene.update(0, 45_000); // Neon -> Ice
+
+    expect(scene.getCurrentBiome()).toBe(Biome.IceCavern);
+    expect(mockAddGraphics).toHaveBeenCalledTimes(3);
+    expect(mockSetBackgroundColor).toHaveBeenCalledWith(0x081624);
+    expect(mockLineStyle).toHaveBeenCalledWith(2, 0x8fdcff, 0.16);
+    expect(mockLineStyle).toHaveBeenCalledWith(1, 0x8ed5ff, 0.16);
+    expect(mockLineStyle).toHaveBeenCalledWith(1, 0x7dc6ff, 0.1);
+  });
+
+  it("applies distinct background colors across the full biome cycle", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.enterPhase("playing");
+    scene.getSnake()!.getTicker().setInterval(60_000);
+    mockSetBackgroundColor.mockClear();
+
+    scene.update(0, 45_000 * 3); // Neon -> Ice -> Molten -> Void
+
+    expect(scene.getCurrentBiome()).toBe(Biome.VoidRift);
+    expect(mockSetBackgroundColor).toHaveBeenCalledWith(0x081624);
+    expect(mockSetBackgroundColor).toHaveBeenCalledWith(0x1a0d05);
+    expect(mockSetBackgroundColor).toHaveBeenCalledWith(0x060510);
   });
 
   it("replay resets biome visit stats back to a fresh run", () => {
