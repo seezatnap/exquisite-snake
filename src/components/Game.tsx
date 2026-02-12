@@ -2,7 +2,7 @@
 
 import { useEffect, useRef } from "react";
 import Phaser from "phaser";
-import { ARENA_WIDTH, ARENA_HEIGHT } from "@/game/config";
+import { createGameConfig } from "@/game/config";
 
 export default function Game() {
   const gameRef = useRef<Phaser.Game | null>(null);
@@ -15,19 +15,7 @@ export default function Game() {
     const parent = containerRef.current;
     if (!parent) return;
 
-    const game = new Phaser.Game({
-      type: Phaser.AUTO,
-      width: ARENA_WIDTH,
-      height: ARENA_HEIGHT,
-      parent,
-      backgroundColor: "#0a0a0a",
-      scale: {
-        mode: Phaser.Scale.FIT,
-        autoCenter: Phaser.Scale.CENTER_BOTH,
-      },
-      // Scenes will be added by tasks #4 and #5
-      scene: [],
-    });
+    const game = new Phaser.Game(createGameConfig(parent));
 
     gameRef.current = game;
 
