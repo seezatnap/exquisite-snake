@@ -27,6 +27,12 @@ vi.mock("phaser", () => {
         strokePath: vi.fn(),
         setDepth: vi.fn(),
         destroy: vi.fn(),
+        clear: vi.fn(),
+        fillStyle: vi.fn(),
+        fillRect: vi.fn(),
+        setAlpha: vi.fn(),
+        setVisible: vi.fn(),
+        scene: true,
       }),
       sprite: vi.fn(() => createMockSprite()),
       particles: vi.fn(() => ({

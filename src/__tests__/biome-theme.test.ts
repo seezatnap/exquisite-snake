@@ -156,6 +156,12 @@ vi.mock("phaser", () => {
         strokePath: vi.fn(),
         destroy: vi.fn(),
         setDepth: vi.fn(),
+        clear: vi.fn(),
+        fillStyle: vi.fn(),
+        fillRect: vi.fn(),
+        setAlpha: vi.fn(),
+        setVisible: vi.fn(),
+        scene: true,
       }),
       sprite: vi.fn(() => createMockSprite()),
       particles: vi.fn(() => ({
@@ -243,10 +249,14 @@ describe("MainScene – biome theme application", () => {
     const snake = scene.getSnake()!;
     snake.reset({ col: 15, row: 15 }, "right", 1);
 
-    // Advance to trigger biome transition
+    // Advance to trigger biome transition (starts dissolve transition)
     scene.update(0, BIOME_DURATION_MS);
 
     if (gameBridge.getState().phase === "playing") {
+      // The dissolve transition applies the theme at its midpoint,
+      // so advance enough for the transition to complete
+      snake.reset({ col: 15, row: 15 }, "right", 1);
+      scene.update(0, 1000);
       expect(scene.getCurrentThemeBiome()).toBe(Biome.IceCavern);
     }
   });

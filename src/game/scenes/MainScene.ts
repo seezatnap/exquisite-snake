@@ -33,6 +33,7 @@ import {
   type BiomeRng,
   getDefaultBiomeMechanicConfigs,
 } from "../systems/BiomeMechanics";
+import { BiomeTransition } from "../systems/BiomeTransition";
 
 // ── Default spawn configuration ─────────────────────────────────
 
@@ -84,6 +85,9 @@ export class MainScene extends Phaser.Scene {
   /** Currently applied biome (for theme tracking). */
   private currentThemeBiome: Biome = Biome.NeonCity;
 
+  /** Biome transition effect manager. */
+  private biomeTransition = new BiomeTransition();
+
   /**
    * Injectable RNG function for deterministic replay sessions.
    * Returns a value in [0, 1). Defaults to Math.random.
@@ -106,6 +110,9 @@ export class MainScene extends Phaser.Scene {
   create(): void {
     this.drawGrid();
     gameBridge.setHighScore(loadHighScore());
+
+    // Initialize biome transition effect system
+    this.biomeTransition.init(this);
 
     // Listen for phase changes originating from React overlays
     // (e.g. StartScreen "press any key" → playing, GameOver "Play Again" → playing).
@@ -130,8 +137,16 @@ export class MainScene extends Phaser.Scene {
       gameBridge.setBiomeVisitStats(this.biomeManager.getVisitStats());
       // Enable/disable ice momentum based on biome
       this.iceMomentum.setEnabled(newBiome === Biome.IceCavern);
-      // Apply biome visual theme
-      this.applyBiomeTheme(newBiome);
+      // Play dissolve transition with synchronized theme swap
+      if (previousBiome !== null) {
+        const oldTheme = getBiomeTheme(previousBiome);
+        this.biomeTransition.start(oldTheme.colors.background, () => {
+          this.applyBiomeTheme(newBiome);
+        });
+      } else {
+        // First biome of a run — apply immediately, no transition
+        this.applyBiomeTheme(newBiome);
+      }
     };
     this.biomeManager.onChange(this.onBiomeChange);
 
@@ -148,6 +163,7 @@ export class MainScene extends Phaser.Scene {
       this.biomeManager.offChange(this.onBiomeChange);
       this.onBiomeChange = null;
     }
+    this.biomeTransition.destroy();
     this.biomeManager.reset();
     this.iceMomentum.reset();
     this.iceMomentum.setEnabled(false);
@@ -162,6 +178,9 @@ export class MainScene extends Phaser.Scene {
     // Advance biome timer and sync time-remaining to bridge
     this.biomeManager.update(delta);
     gameBridge.setBiomeTimeRemaining(this.biomeManager.getTimeRemaining());
+
+    // Advance biome transition effect (purely visual — does not affect gameplay)
+    this.biomeTransition.update(delta);
 
     if (!this.snake || !this.food) return;
 
@@ -247,6 +266,8 @@ export class MainScene extends Phaser.Scene {
 
   /** End the current run: kill snake, persist high-score, transition to gameOver. */
   endRun(): void {
+    // Finish any in-progress biome transition so overlay doesn't linger
+    this.biomeTransition.finishImmediate();
     shakeCamera(this);
     if (this.snake?.isAlive()) {
       this.snake.kill();
@@ -438,6 +459,11 @@ export class MainScene extends Phaser.Scene {
   /** Get the currently applied theme biome. */
   getCurrentThemeBiome(): Biome {
     return this.currentThemeBiome;
+  }
+
+  /** Get the biome transition effect manager (for tests). */
+  getBiomeTransition(): BiomeTransition {
+    return this.biomeTransition;
   }
 
   // ── Arena grid ──────────────────────────────────────────────
