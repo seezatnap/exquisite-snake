@@ -128,6 +128,7 @@ export class MainScene extends Phaser.Scene {
       DEFAULT_SNAKE_LENGTH,
     );
     this.snake.setupInput();
+    this.snake.setupTouchInput();
     this.food = new Food(this, this.snake, this.rng);
   }
 
