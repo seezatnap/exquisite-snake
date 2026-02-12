@@ -9,7 +9,7 @@ import {
 } from "../config";
 import { gameBridge, type GamePhase } from "../bridge";
 import { loadHighScore, saveHighScore } from "../utils/storage";
-import { isInBounds, type GridPos } from "../utils/grid";
+import { isInBounds, type Direction, type GridPos } from "../utils/grid";
 import { Snake } from "../entities/Snake";
 import { Food } from "../entities/Food";
 import { emitFoodParticles, shakeCamera } from "../systems/effects";
@@ -30,6 +30,11 @@ const DEFAULT_HEAD_POS: GridPos = {
 const DEFAULT_DIRECTION = "right" as const;
 const DEFAULT_SNAKE_LENGTH = 3;
 const ICE_CAVERN_TURN_MOMENTUM_TILES = 2;
+const VOID_RIFT_GRAVITY_PULL_CADENCE_STEPS = 3;
+const VOID_RIFT_CENTER: GridPos = {
+  col: Math.floor(GRID_COLS / 2),
+  row: Math.floor(GRID_ROWS / 2),
+};
 
 export interface MoltenLavaConfig {
   /** Milliseconds between spawn attempts while Molten Core is active. */
@@ -178,6 +183,9 @@ export class MainScene extends Phaser.Scene {
   /** Graphics object used to render biome-specific arena grid lines. */
   private gridGraphics: Phaser.GameObjects.Graphics | null = null;
 
+  /** Number of snake steps elapsed since entering Void Rift. */
+  private voidGravityStepCounter = 0;
+
   /**
    * Injectable RNG function for deterministic replay sessions.
    * Returns a value in [0, 1). Defaults to Math.random.
@@ -239,20 +247,18 @@ export class MainScene extends Phaser.Scene {
     const stepped = this.snake.update(delta);
 
     if (stepped) {
-      // Check collisions after the snake moved to its new grid position
       if (this.checkCollisions()) {
         return; // Game over — stop processing this frame
       }
 
-      // Check food consumption — emit particles at the old food position on eat
-      const foodSprite = this.food.getSprite();
-      const fx = foodSprite.x;
-      const fy = foodSprite.y;
-      const eaten = this.food.checkEat(this.snake, (points) =>
-        this.addScore(points),
-      );
-      if (eaten) {
-        emitFoodParticles(this, fx, fy);
+      this.resolveFoodConsumption();
+
+      const gravityApplied = this.applyVoidRiftGravityNudgeIfDue();
+      if (gravityApplied) {
+        if (this.checkCollisions()) {
+          return;
+        }
+        this.resolveFoodConsumption();
       }
     }
   }
@@ -281,6 +287,7 @@ export class MainScene extends Phaser.Scene {
     gameBridge.resetRun();
     this.biomeManager.startRun();
     this.resetMoltenCoreState();
+    this.voidGravityStepCounter = 0;
     this.handleBiomeEnter(this.biomeManager.getCurrentBiome());
     this.destroyEntities();
     this.createEntities();
@@ -468,6 +475,10 @@ export class MainScene extends Phaser.Scene {
       this.moltenLavaSpawnElapsedMs = 0;
     }
 
+    if (biome === Biome.VoidRift) {
+      this.voidGravityStepCounter = 0;
+    }
+
     const mechanics = createBiomeMechanicsState(biome);
     gameBridge.emitBiomeEnter(biome);
     this.events?.emit?.("biomeEnter", biome);
@@ -595,6 +606,60 @@ export class MainScene extends Phaser.Scene {
     const turnMomentumTiles =
       biome === Biome.IceCavern ? ICE_CAVERN_TURN_MOMENTUM_TILES : 0;
     this.snake.setTurnMomentumTiles(turnMomentumTiles);
+  }
+
+  private resolveFoodConsumption(): void {
+    if (!this.snake || !this.food) {
+      return;
+    }
+
+    const foodSprite = this.food.getSprite();
+    const fx = foodSprite.x;
+    const fy = foodSprite.y;
+    const eaten = this.food.checkEat(this.snake, (points) =>
+      this.addScore(points),
+    );
+    if (eaten) {
+      emitFoodParticles(this, fx, fy);
+    }
+  }
+
+  private applyVoidRiftGravityNudgeIfDue(): boolean {
+    if (!this.snake || this.biomeManager.getCurrentBiome() !== Biome.VoidRift) {
+      return false;
+    }
+
+    this.voidGravityStepCounter += 1;
+    if (this.voidGravityStepCounter % VOID_RIFT_GRAVITY_PULL_CADENCE_STEPS !== 0) {
+      return false;
+    }
+
+    const pullDirection = this.getVoidRiftPullDirection(this.snake.getHeadPosition());
+    if (!pullDirection) {
+      return false;
+    }
+
+    this.snake.applyExternalNudge(pullDirection);
+    return true;
+  }
+
+  private getVoidRiftPullDirection(head: GridPos): Direction | null {
+    const deltaCol = VOID_RIFT_CENTER.col - head.col;
+    const deltaRow = VOID_RIFT_CENTER.row - head.row;
+
+    if (deltaCol === 0 && deltaRow === 0) {
+      return null;
+    }
+
+    if (Math.abs(deltaCol) > Math.abs(deltaRow)) {
+      return deltaCol > 0 ? "right" : "left";
+    }
+    if (Math.abs(deltaRow) > Math.abs(deltaCol)) {
+      return deltaRow > 0 ? "down" : "up";
+    }
+
+    // Deterministic tie-breaker for diagonal pulls.
+    return deltaCol > 0 ? "right" : "left";
   }
 
   private applyBiomeVisualTheme(biome: Biome): void {

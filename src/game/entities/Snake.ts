@@ -237,11 +237,26 @@ export class Snake {
       }
     }
 
+    this.advanceSegments(this.direction);
+  }
+
+  /**
+   * Apply a deterministic one-tile external displacement.
+   *
+   * Used by biome mechanics such as Void Rift gravity. This does not mutate
+   * the snake's facing direction or consume buffered player turns.
+   */
+  applyExternalNudge(direction: Direction): void {
+    if (!this.alive) return;
+    this.advanceSegments(direction);
+  }
+
+  private advanceSegments(direction: Direction): void {
     // Save previous positions for interpolation
     this.prevSegments = this.segments.map((s) => ({ ...s }));
 
     // Compute new head position
-    const newHead = stepInDirection(this.segments[0], this.direction);
+    const newHead = stepInDirection(this.segments[0], direction);
 
     // Shift segments: add new head, optionally keep or remove tail
     this.segments.unshift(newHead);
