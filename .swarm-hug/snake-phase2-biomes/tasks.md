@@ -26,14 +26,14 @@
 ## Testing & QA
 
 - [x] (#12) Add automated tests for biome cycle timing/order, Ice momentum rules, Molten burn/despawn behavior, Void pull cadence, and biome-visit stat tracking [5 pts] (blocked by #3, #4, #5, #11) (A)
-- [ ] (#13) Execute end-to-end QA across multiple 45-second biome cycles to validate transitions, mechanics, HUD updates, and performance; capture and triage release-blocking defects [5 pts] (blocked by #8, #9, #10, #12)
+- [B] (#13) Execute end-to-end QA across multiple 45-second biome cycles to validate transitions, mechanics, HUD updates, and performance; capture and triage release-blocking defects [5 pts] (blocked by #8, #9, #10, #12)
 
 ## Follow-up tasks (from sprint review)
 - [x] (#14) Add GameOver component rendering test to verify the biomes-visited stat displays the correct count from bridge state (blocked by #11) (C)
 - [x] (#15) Mark task #11 as complete — biomes-visited GameOver stat, bridge wiring, and reset behavior are fully implemented by sprint 2 (C)
 
 ## Follow-up tasks (from sprint review)
-- [ ] (#16) Mark task #14 as complete — GameOver biome-visited rendering tests are fully implemented in sprint 3 (9+ test cases covering count display, ratio, visited/unvisited styling, reactivity, and reset behavior)
+- [A] (#16) Mark task #14 as complete — GameOver biome-visited rendering tests are fully implemented in sprint 3 (9+ test cases covering count display, ratio, visited/unvisited styling, reactivity, and reset behavior)
 
 ## Follow-up tasks (from sprint review)
-- [ ] (#17) Mark task #16 as complete — task #14 (GameOver biome-visited rendering tests) was fully delivered in sprint 4
+- [A] (#17) Mark task #16 as complete — task #14 (GameOver biome-visited rendering tests) was fully delivered in sprint 4
