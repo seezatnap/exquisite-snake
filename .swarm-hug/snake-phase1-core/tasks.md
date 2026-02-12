@@ -49,3 +49,7 @@
 ## Follow-up tasks (from sprint review)
 - [x] (#27) Replace `tests/start-screen-component.test.mjs` source-regex assertions with behavioral tests that render `StartScreen`, mock the `MainScene` bridge, and verify high-score rendering plus visibility changes between `start` and non-`start` phases. (C)
 - [x] (#28) Update `src/game/entities/Snake.ts` keyboard handling to call `preventDefault()` for any mapped direction key (including rejected opposite/duplicate/full-buffer inputs), and add regression coverage for rejected-key events. (A)
+
+## Follow-up tasks (from sprint review)
+- [ ] (#29) Integrate `Food` into `src/game/scenes/MainScene.ts` so each run spawns food and the update loop processes `food.tryEat(snake)` to drive real score increments and snake growth during gameplay.
+- [ ] (#30) Add `MainScene` integration tests that verify eating food updates score, triggers snake growth, and respawns food in a non-occupied cell.
