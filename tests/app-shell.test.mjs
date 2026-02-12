@@ -49,3 +49,33 @@ test("global styles define neon theme tokens and arena grid treatment", async ()
   assert.match(globalsSource, /repeating-linear-gradient\(\s*0deg,/);
   assert.match(globalsSource, /repeating-linear-gradient\(\s*90deg,/);
 });
+
+test("global styles keep body background, color, and font-family owned by layout utilities", async () => {
+  const globalsSource = await readSource("src/styles/globals.css");
+  const bodyRuleMatches = [
+    ...globalsSource.matchAll(/(^|})\s*([^{}]*\bbody\b[^{}]*)\{([^{}]*)\}/gms),
+  ];
+
+  assert.ok(bodyRuleMatches.length > 0, "expected at least one CSS rule targeting body");
+
+  for (const bodyRuleMatch of bodyRuleMatches) {
+    const selector = bodyRuleMatch[2].trim();
+    const declarations = bodyRuleMatch[3];
+
+    assert.doesNotMatch(
+      declarations,
+      /(^|[;\n\r])\s*background(?:-[a-z-]+)?\s*:/m,
+      `body rule "${selector}" should not set background properties`,
+    );
+    assert.doesNotMatch(
+      declarations,
+      /(^|[;\n\r])\s*color\s*:/m,
+      `body rule "${selector}" should not set color`,
+    );
+    assert.doesNotMatch(
+      declarations,
+      /(^|[;\n\r])\s*font-family\s*:/m,
+      `body rule "${selector}" should not set font-family`,
+    );
+  }
+});

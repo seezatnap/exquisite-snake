@@ -5,8 +5,8 @@
 - [x] (#1) Initialize a Next.js 14+ App Router project in TypeScript strict mode with Tailwind CSS and npm, configure static export (`next build && next export`) for client-only deployment, and scaffold the Phase 1 directory/file structure under `src/` (including empty `game/systems/` for future phases) [5 pts] (A)
 - [x] (#2) Implement `src/app/layout.tsx` and `src/app/page.tsx` to provide global Tailwind/font setup and mount a client-side `<Game />` entry point with proper overlay layering for menus/HUD [5 pts] (blocked by #1) (A)
 - [x] (#3) Build `src/components/Game.tsx` as a Phaser wrapper using `dynamic(..., { ssr: false })`, with safe game instance mount/unmount and cleanup to avoid duplicate canvas instances on rerender/navigation [5 pts] (blocked by #2) (A)
-- [ ] (#4) Create `src/game/config.ts` and `src/game/scenes/Boot.ts` with Phaser scale/config defaults, arena dimensions, and preload setup for assets/visual primitives needed by gameplay and neon UI polish [5 pts] (blocked by #3)
-- [ ] (#5) Define `src/game/scenes/MainScene.ts` core scene skeleton plus a Phaser↔React state bridge for game phase, score/high score, and elapsed survival time updates consumed by overlays [5 pts] (blocked by #3)
+- [x] (#4) Create `src/game/config.ts` and `src/game/scenes/Boot.ts` with Phaser scale/config defaults, arena dimensions, and preload setup for assets/visual primitives needed by gameplay and neon UI polish [5 pts] (blocked by #3) (A)
+- [x] (#5) Define `src/game/scenes/MainScene.ts` core scene skeleton plus a Phaser↔React state bridge for game phase, score/high score, and elapsed survival time updates consumed by overlays [5 pts] (blocked by #3) (B)
 
 ## Gameplay Mechanics
 
@@ -39,5 +39,9 @@
 - [x] (#22) Fix global style precedence in `src/styles/globals.css` by removing/reworking the hard-coded `body` `font-family`/`background`/`color` rule so `src/app/layout.tsx` Tailwind classes (`font-sans`, `bg-black`, `text-white`) actually apply. (B)
 
 ## Follow-up tasks (from sprint review)
-- [ ] (#23) Replace source-text regex checks in `tests/game-component.test.mjs` with behavioral tests that mount `<Game />`, mock Phaser, and verify single-instance creation plus `destroy(true)` and DOM cleanup on unmount.
-- [ ] (#24) Add a regression test that ensures `src/styles/globals.css` does not set `body` `background`, `color`, or `font-family`, so layout utility classes keep precedence after the global-style fix.
+- [x] (#23) Replace source-text regex checks in `tests/game-component.test.mjs` with behavioral tests that mount `<Game />`, mock Phaser, and verify single-instance creation plus `destroy(true)` and DOM cleanup on unmount. (A)
+- [x] (#24) Add a regression test that ensures `src/styles/globals.css` does not set `body` `background`, `color`, or `font-family`, so layout utility classes keep precedence after the global-style fix. (B)
+
+## Follow-up tasks (from sprint review)
+- [ ] (#25) Wire the real `MainScene` class into `src/game/config.ts` (`scene: [BootScene, MainScene]`) and remove the `MAIN_SCENE_PLACEHOLDER` so `BootScene` starts the implemented scene logic.
+- [ ] (#26) Update `tests/game-config-boot.test.mjs` to assert `GAME_CONFIG` registers the `MainScene` class (not a key-only placeholder) to prevent this wiring regression.
