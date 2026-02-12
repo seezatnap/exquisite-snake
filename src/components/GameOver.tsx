@@ -2,7 +2,11 @@
 
 import { useEffect, useState, useCallback, useRef } from "react";
 import { gameBridge, type GamePhase } from "@/game/bridge";
-import type { BiomeVisitStats } from "@/game/systems/BiomeManager";
+import {
+  BIOME_CYCLE,
+  BIOME_CONFIGS,
+  type BiomeVisitStats,
+} from "@/game/systems/BiomeManager";
 
 /**
  * Format milliseconds into a human-readable "Xm Ys" or "Xs" string.
@@ -169,8 +173,26 @@ export default function GameOver() {
             BIOMES VISITED
           </span>
           <p className="font-mono text-lg tabular-nums text-neon-purple">
-            {biomeVisitStats.uniqueCount}
+            {biomeVisitStats.uniqueCount} / {BIOME_CYCLE.length}
           </p>
+          <ul className="mt-1 flex flex-wrap justify-center gap-x-3 gap-y-1">
+            {BIOME_CYCLE.map((biome) => {
+              const visited = biomeVisitStats.visits[biome] > 0;
+              return (
+                <li
+                  key={biome}
+                  data-testid={`biome-${biome}`}
+                  className={`font-mono text-[10px] tracking-wide ${
+                    visited
+                      ? "text-neon-cyan"
+                      : "text-foreground/20 line-through"
+                  }`}
+                >
+                  {BIOME_CONFIGS[biome].name}
+                </li>
+              );
+            })}
+          </ul>
         </div>
       </div>
 
