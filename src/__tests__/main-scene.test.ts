@@ -56,8 +56,17 @@ const spySetHighScore = vi.spyOn(gameBridge, "setHighScore");
 const spySetElapsedTime = vi.spyOn(gameBridge, "setElapsedTime");
 const spyResetRun = vi.spyOn(gameBridge, "resetRun");
 
+/** Reset the singleton bridge to its initial state between tests. */
+function resetBridge(): void {
+  gameBridge.setPhase("start");
+  gameBridge.setScore(0);
+  gameBridge.setHighScore(0);
+  gameBridge.setElapsedTime(0);
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
+  resetBridge();
 });
 
 describe("MainScene", () => {
@@ -240,6 +249,38 @@ describe("MainScene", () => {
     expect(scene.getElapsedTime()).toBe(0);
     expect(spyResetRun).toHaveBeenCalled();
   });
+
+  // ── Single source of truth ─────────────────────────────────
+
+  it("getters always reflect gameBridge.getState()", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.enterPhase("playing");
+    scene.addScore(42);
+    scene.update(0, 1234);
+
+    const state = gameBridge.getState();
+    expect(scene.getPhase()).toBe(state.phase);
+    expect(scene.getScore()).toBe(state.score);
+    expect(scene.getHighScore()).toBe(state.highScore);
+    expect(scene.getElapsedTime()).toBe(state.elapsedTime);
+  });
+
+  it("external bridge mutations are visible through scene getters", () => {
+    const scene = new MainScene();
+    scene.create();
+
+    // Simulate an external consumer mutating bridge state directly
+    gameBridge.setScore(999);
+    gameBridge.setHighScore(5000);
+    gameBridge.setElapsedTime(42000);
+    gameBridge.setPhase("gameOver");
+
+    expect(scene.getScore()).toBe(999);
+    expect(scene.getHighScore()).toBe(5000);
+    expect(scene.getElapsedTime()).toBe(42000);
+    expect(scene.getPhase()).toBe("gameOver");
+  });
 });
 
 describe("MainScene – storage integration", () => {
@@ -302,6 +343,33 @@ describe("MainScene – storage integration", () => {
     expect(() => scene.endRun()).not.toThrow();
     expect(scene.getHighScore()).toBe(50);
     vi.restoreAllMocks();
+  });
+});
+
+describe("MainScene – no local state fields (single source of truth)", () => {
+  const source = fs.readFileSync(
+    path.join(ROOT, "src/game/scenes/MainScene.ts"),
+    "utf-8",
+  );
+
+  it("does not declare a local 'phase' field", () => {
+    expect(source).not.toMatch(/private\s+phase\b/);
+  });
+
+  it("does not declare a local 'score' field", () => {
+    expect(source).not.toMatch(/private\s+score\b/);
+  });
+
+  it("does not declare a local 'highScore' field", () => {
+    expect(source).not.toMatch(/private\s+highScore\b/);
+  });
+
+  it("does not declare a local 'elapsedTime' field", () => {
+    expect(source).not.toMatch(/private\s+elapsedTime\b/);
+  });
+
+  it("reads state from gameBridge.getState()", () => {
+    expect(source).toContain("gameBridge.getState()");
   });
 });
 
