@@ -31,3 +31,12 @@ test("HUD reserves biome, rewind, and parasite placeholder slots", async () => {
   assert.match(source, /label="Rewind"/);
   assert.match(source, /label="Parasites"/);
 });
+
+test("HUD subscribes to bridge state and stays hidden in start phase", async () => {
+  const source = await readSource("src/components/HUD.tsx");
+
+  assert.match(source, /getMainSceneStateSnapshot/);
+  assert.match(source, /subscribeToMainSceneState/);
+  assert.match(source, /if \(resolvedPhase === "start"\)/);
+  assert.match(source, /return null;/);
+});

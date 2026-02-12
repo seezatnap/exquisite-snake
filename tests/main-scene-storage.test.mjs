@@ -562,6 +562,48 @@ test("MainScene resetForReplay restores deterministic snake and overlay state", 
   assert.equal(resetSnapshot.highScore, 17);
 });
 
+test("requestMainSceneStart starts a run from the start phase", async () => {
+  const sceneModule = await loadMainSceneModule({
+    loadHighScore() {
+      return 4;
+    },
+    persistHighScore(score) {
+      return score;
+    },
+  });
+
+  const scene = new sceneModule.MainScene();
+  scene.create();
+
+  assert.equal(sceneModule.getMainSceneStateSnapshot().phase, "start");
+  const startAccepted = sceneModule.requestMainSceneStart();
+
+  assert.equal(startAccepted, true);
+  assert.equal(sceneModule.getMainSceneStateSnapshot().phase, "playing");
+  assert.equal(sceneModule.getMainSceneStateSnapshot().score, 0);
+  assert.equal(sceneModule.getMainSceneStateSnapshot().highScore, 4);
+});
+
+test("requestMainSceneStart is ignored unless an active scene is waiting to start", async () => {
+  const sceneModule = await loadMainSceneModule({
+    loadHighScore() {
+      return 0;
+    },
+    persistHighScore(score) {
+      return score;
+    },
+  });
+
+  assert.equal(sceneModule.requestMainSceneStart(), false);
+
+  const scene = new sceneModule.MainScene();
+  scene.create();
+  scene.startRun();
+
+  assert.equal(sceneModule.getMainSceneStateSnapshot().phase, "playing");
+  assert.equal(sceneModule.requestMainSceneStart(), false);
+});
+
 test("requestMainSceneReplay resets scene state and starts a fresh run", async () => {
   const sceneModule = await loadMainSceneModule({
     loadHighScore() {

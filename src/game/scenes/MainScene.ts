@@ -145,6 +145,21 @@ export const subscribeToMainSceneState = (
 export const getMainSceneStateSnapshot = (): OverlayGameState =>
   mainSceneStateBridge.getSnapshot();
 
+export const requestMainSceneStart = (): boolean => {
+  const activeScene = MainScene.getActiveScene();
+
+  if (!activeScene) {
+    return false;
+  }
+
+  if (mainSceneStateBridge.getSnapshot().phase !== "start") {
+    return false;
+  }
+
+  activeScene.startRun();
+  return true;
+};
+
 export const requestMainSceneReplay = (): boolean => {
   const activeScene = MainScene.getActiveScene();
 

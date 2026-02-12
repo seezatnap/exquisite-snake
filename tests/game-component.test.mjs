@@ -16,6 +16,8 @@ class MockElement {
     this.children = [];
     this.className = "";
     this.style = {};
+    this.tabIndex = undefined;
+    this.focusCalls = 0;
     this._forceConnected = forceConnected;
     this._clientWidth = 0;
     this._clientHeight = 0;
@@ -97,7 +99,14 @@ class MockElement {
       this.appendChild(child);
     }
   }
+
+  focus() {
+    this.focusCalls += 1;
+    MockElement.lastFocusedElement = this;
+  }
 }
+
+MockElement.lastFocusedElement = null;
 
 async function loadGameComponent(mockRequire, runtimeGlobals = {}) {
   const source = await readFile(
@@ -163,6 +172,7 @@ function createEventDispatcher() {
 function createHarness() {
   const root = new MockElement("root", true);
   root.setSize(1000, 700);
+  MockElement.lastFocusedElement = null;
 
   const destroyCalls = [];
   const gameInstances = [];
@@ -173,6 +183,13 @@ function createHarness() {
   let exportsPromise = null;
   let nextFrameId = 1;
   const frameQueue = new Map();
+  const mainSceneListeners = new Set();
+  let mainSceneState = {
+    phase: "start",
+    score: 0,
+    highScore: 0,
+    elapsedSurvivalMs: 0,
+  };
 
   const windowEvents = createEventDispatcher();
   const visualViewportEvents = createEventDispatcher();
@@ -323,6 +340,19 @@ function createHarness() {
       };
     }
 
+    if (specifier === "@/game/scenes/MainScene") {
+      return {
+        subscribeToMainSceneState(listener) {
+          mainSceneListeners.add(listener);
+          listener(mainSceneState);
+
+          return () => {
+            mainSceneListeners.delete(listener);
+          };
+        },
+      };
+    }
+
     throw new Error(`Unexpected module request: ${specifier}`);
   }
 
@@ -384,6 +414,10 @@ function createHarness() {
 
       if (typeof props.className === "string") {
         domNode.className = props.className;
+      }
+
+      if (Object.prototype.hasOwnProperty.call(props, "tabIndex")) {
+        domNode.tabIndex = props.tabIndex;
       }
 
       if (props.ref && typeof props.ref === "object") {
@@ -497,6 +531,22 @@ function createHarness() {
         observer.trigger();
       }
     },
+    emitMainSceneState(nextPatch) {
+      mainSceneState = {
+        ...mainSceneState,
+        ...nextPatch,
+      };
+
+      for (const listener of [...mainSceneListeners]) {
+        listener(mainSceneState);
+      }
+    },
+    mainSceneListenerCount() {
+      return mainSceneListeners.size;
+    },
+    getLastFocusedElement() {
+      return MockElement.lastFocusedElement;
+    },
     windowListenerCount(type) {
       return windowEvents.listenerCount(type);
     },
@@ -586,6 +636,29 @@ test("Game resize pipeline refreshes Phaser scale and keeps arena dimensions gri
   );
 
   mounted.unmount();
+});
+
+test("Game focuses the arena frame when scene phase enters playing", async () => {
+  const harness = createHarness();
+  const mounted = await harness.mountGame();
+  const frameNode = harness.root.children[0];
+
+  assert.ok(frameNode, "expected frame node to be mounted");
+  assert.equal(frameNode.tabIndex, -1);
+  assert.equal(harness.mainSceneListenerCount(), 1);
+  assert.equal(frameNode.focusCalls, 0);
+  assert.equal(harness.getLastFocusedElement(), null);
+
+  harness.emitMainSceneState({ phase: "game-over" });
+  assert.equal(frameNode.focusCalls, 0);
+  assert.equal(harness.getLastFocusedElement(), null);
+
+  harness.emitMainSceneState({ phase: "playing" });
+  assert.equal(frameNode.focusCalls, 1);
+  assert.equal(harness.getLastFocusedElement(), frameNode);
+
+  mounted.unmount();
+  assert.equal(harness.mainSceneListenerCount(), 0);
 });
 
 test("Game unmount destroys Phaser and unregisters resize resources", async () => {

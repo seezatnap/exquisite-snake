@@ -18,6 +18,7 @@ function clampNonNegativeInteger(value: number): number {
 export default function StartScreen() {
   const [phase, setPhase] = useState<StartPhase>("start");
   const [highScore, setHighScore] = useState(0);
+  const [requestStart, setRequestStart] = useState<(() => boolean) | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -26,27 +27,38 @@ export default function StartScreen() {
     setHighScore(loadHighScore());
 
     void import("@/game/scenes/MainScene")
-      .then(({ getMainSceneStateSnapshot, subscribeToMainSceneState }) => {
-        if (cancelled) {
-          return;
-        }
-
-        const applyState = ({
-          phase: nextPhase,
-          highScore: nextHighScore,
-        }: {
-          phase: StartPhase;
-          highScore: number;
+      .then(
+        ({
+          getMainSceneStateSnapshot,
+          requestMainSceneStart,
+          subscribeToMainSceneState,
         }) => {
-          setPhase(nextPhase);
-          setHighScore((currentHighScore) =>
-            Math.max(currentHighScore, clampNonNegativeInteger(nextHighScore)),
-          );
-        };
+          if (cancelled) {
+            return;
+          }
 
-        applyState(getMainSceneStateSnapshot());
-        unsubscribe = subscribeToMainSceneState(applyState);
-      })
+          const applyState = ({
+            phase: nextPhase,
+            highScore: nextHighScore,
+          }: {
+            phase: StartPhase;
+            highScore: number;
+          }) => {
+            setPhase(nextPhase);
+            setHighScore((currentHighScore) =>
+              Math.max(currentHighScore, clampNonNegativeInteger(nextHighScore)),
+            );
+          };
+
+          applyState(getMainSceneStateSnapshot());
+          setRequestStart(() =>
+            typeof requestMainSceneStart === "function"
+              ? requestMainSceneStart
+              : null,
+          );
+          unsubscribe = subscribeToMainSceneState(applyState);
+        },
+      )
       .catch(() => {
         // Keep UI responsive if scene bootstrapping is not ready yet.
       });
@@ -61,6 +73,10 @@ export default function StartScreen() {
     () => clampNonNegativeInteger(highScore).toString().padStart(4, "0"),
     [highScore],
   );
+
+  const handleStart = () => {
+    requestStart?.();
+  };
 
   if (phase !== "start") {
     return null;
@@ -104,6 +120,15 @@ export default function StartScreen() {
       <p className="mt-2 text-[0.65rem] uppercase tracking-[0.22em] text-foreground/65">
         to begin your run
       </p>
+
+      <button
+        type="button"
+        autoFocus
+        onClick={handleStart}
+        className="mt-6 inline-flex min-w-44 items-center justify-center rounded-xl border border-neon-cyan/70 bg-neon-cyan/10 px-5 py-2.5 font-mono text-xs uppercase tracking-[0.22em] text-neon-cyan transition hover:bg-neon-cyan/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-neon-pink focus-visible:ring-offset-2 focus-visible:ring-offset-surface-0"
+      >
+        Start Run
+      </button>
 
       <div className="mx-auto mt-6 inline-flex min-w-44 items-baseline justify-center gap-3 rounded-xl border border-neon-pink/35 bg-surface-1/75 px-4 py-2">
         <p className="text-[0.62rem] uppercase tracking-[0.24em] text-neon-pink/80">

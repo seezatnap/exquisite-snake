@@ -97,6 +97,7 @@ function PhaserGameMount() {
     let resizeObserver: ResizeObserver | null = null;
     let resizeFrameHandle: number | null = null;
     let handleViewportResize: (() => void) | null = null;
+    let unsubscribeFromMainScene: (() => void) | null = null;
     let arenaWidth = 0;
     let arenaHeight = 0;
     let gridCols = 0;
@@ -110,6 +111,18 @@ function PhaserGameMount() {
     }
 
     mountNode.replaceChildren();
+
+    const focusGameFrame = () => {
+      if (cancelled || !frameNode.isConnected || typeof frameNode.focus !== "function") {
+        return;
+      }
+
+      try {
+        frameNode.focus({ preventScroll: true });
+      } catch {
+        frameNode.focus();
+      }
+    };
 
     const applyResponsiveSizing = () => {
       if (arenaWidth <= 0 || arenaHeight <= 0 || gridCols <= 0 || gridRows <= 0) {
@@ -171,9 +184,11 @@ function PhaserGameMount() {
         const [
           { default: Phaser },
           { ARENA_HEIGHT, ARENA_WIDTH, GAME_CONFIG, GRID_COLS, GRID_ROWS },
+          { subscribeToMainSceneState },
         ] = await Promise.all([
           import("phaser"),
           import("@/game/config"),
+          import("@/game/scenes/MainScene"),
         ]);
 
         if (cancelled || !mountNode.isConnected || gameRef.current) {
@@ -190,6 +205,12 @@ function PhaserGameMount() {
         gameRef.current = new Phaser.Game({
           ...(GAME_CONFIG as Record<string, unknown>),
           parent: mountNode,
+        });
+
+        unsubscribeFromMainScene = subscribeToMainSceneState((nextState) => {
+          if (nextState.phase === "playing") {
+            focusGameFrame();
+          }
         });
 
         handleViewportResize = () => {
@@ -230,6 +251,9 @@ function PhaserGameMount() {
         resizeObserver.disconnect();
       }
 
+      unsubscribeFromMainScene?.();
+      unsubscribeFromMainScene = null;
+
       if (gameRef.current) {
         gameRef.current.destroy(true);
         gameRef.current = null;
@@ -242,7 +266,12 @@ function PhaserGameMount() {
   }, []);
 
   return (
-    <div ref={frameRef} className="flex h-full w-full items-center justify-center">
+    <div
+      ref={frameRef}
+      tabIndex={-1}
+      aria-label="Snake arena focus target"
+      className="flex h-full w-full items-center justify-center"
+    >
       <div ref={mountRef} className="max-h-full max-w-full overflow-hidden" />
     </div>
   );
