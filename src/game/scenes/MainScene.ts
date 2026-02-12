@@ -1,7 +1,12 @@
 import * as Phaser from "phaser";
-import { GRID_COLS, GRID_ROWS } from "../config";
+import { GRID_COLS, GRID_ROWS, TEXTURE_KEYS, TILE_SIZE } from "../config";
+import { Food } from "../entities/Food";
 import { Snake, type SnakeOptions } from "../entities/Snake";
-import { areGridPositionsEqual, isWithinGridBounds } from "../utils/grid";
+import {
+  areGridPositionsEqual,
+  isWithinGridBounds,
+  type GridPosition,
+} from "../utils/grid";
 import { loadHighScore, persistHighScore } from "../utils/storage";
 
 export const MAIN_SCENE_KEY = "MainScene" as const;
@@ -35,6 +40,16 @@ const PLAYFIELD_BOUNDS = Object.freeze({
   rows: GRID_ROWS,
 });
 
+const FOOD_PICKUP_PARTICLE_COUNT = 10;
+const FOOD_PICKUP_PARTICLE_LIFESPAN_MS = 220;
+const FOOD_PICKUP_PARTICLE_CLEANUP_DELAY_MS = 260;
+const FOOD_PICKUP_PARTICLE_SPEED = Object.freeze({
+  min: 48,
+  max: 132,
+});
+const DEATH_SHAKE_DURATION_MS = 120;
+const DEATH_SHAKE_INTENSITY = 0.0025;
+
 function clampNonNegativeInteger(value: number): number {
   if (!Number.isFinite(value)) {
     return 0;
@@ -42,6 +57,13 @@ function clampNonNegativeInteger(value: number): number {
 
   return Math.max(0, Math.floor(value));
 }
+
+const gridPositionToWorldCenter = (
+  position: GridPosition,
+): Readonly<{ x: number; y: number }> => ({
+  x: (position.x + 0.5) * TILE_SIZE,
+  y: (position.y + 0.5) * TILE_SIZE,
+});
 
 class MainSceneStateBridge {
   private state: OverlayGameState = INITIAL_STATE;
@@ -123,8 +145,29 @@ export const subscribeToMainSceneState = (
 export const getMainSceneStateSnapshot = (): OverlayGameState =>
   mainSceneStateBridge.getSnapshot();
 
+export const requestMainSceneReplay = (): boolean => {
+  const activeScene = MainScene.getActiveScene();
+
+  if (!activeScene) {
+    return false;
+  }
+
+  if (mainSceneStateBridge.getSnapshot().phase !== "game-over") {
+    return false;
+  }
+
+  activeScene.resetForReplay();
+  activeScene.startRun();
+  return true;
+};
+
 export class MainScene extends Phaser.Scene {
   static readonly KEY = MAIN_SCENE_KEY;
+  private static activeScene: MainScene | null = null;
+
+  static getActiveScene(): MainScene | null {
+    return MainScene.activeScene;
+  }
 
   private runStartMs: number | null = null;
 
@@ -132,14 +175,18 @@ export class MainScene extends Phaser.Scene {
 
   private snake = new Snake(DEFAULT_SNAKE_OPTIONS);
 
+  private food = this.createFoodForRun();
+
   constructor() {
     super(MAIN_SCENE_KEY);
   }
 
   create(): void {
+    MainScene.activeScene = this;
     mainSceneStateBridge.resetForNextRun();
     this.setPersistedHighScore(loadHighScore());
     this.rebuildSnakeForNextRun();
+    this.rebuildFoodForNextRun();
     this.bindSceneLifecycleEvents();
     this.bindStartInput();
   }
@@ -161,6 +208,8 @@ export class MainScene extends Phaser.Scene {
 
   startRun(): void {
     this.rebuildSnakeForNextRun();
+    this.rebuildFoodForNextRun();
+    this.food.spawnForSnake(this.snake);
     this.runStartMs = this.time.now;
     this.lastUpdateMs = this.time.now;
     mainSceneStateBridge.resetForNextRun();
@@ -209,6 +258,7 @@ export class MainScene extends Phaser.Scene {
     this.runStartMs = null;
     this.lastUpdateMs = null;
     this.rebuildSnakeForNextRun();
+    this.rebuildFoodForNextRun();
     mainSceneStateBridge.resetForNextRun();
   }
 
@@ -231,6 +281,10 @@ export class MainScene extends Phaser.Scene {
   }
 
   private handleShutdown(): void {
+    if (MainScene.activeScene === this) {
+      MainScene.activeScene = null;
+    }
+
     this.runStartMs = null;
     this.lastUpdateMs = null;
     this.snake.unbindKeyboardControls();
@@ -243,6 +297,17 @@ export class MainScene extends Phaser.Scene {
     this.snake.unbindKeyboardControls();
     this.snake.unbindTouchControls();
     this.snake = new Snake(DEFAULT_SNAKE_OPTIONS);
+  }
+
+  private createFoodForRun(): Food {
+    return new Food({
+      bounds: PLAYFIELD_BOUNDS,
+      onScore: (points) => this.addScore(points),
+    });
+  }
+
+  private rebuildFoodForNextRun(): void {
+    this.food = this.createFoodForRun();
   }
 
   private getFrameDeltaMs(currentTimeMs: number): number {
@@ -273,12 +338,58 @@ export class MainScene extends Phaser.Scene {
       }
 
       if (this.hasCollision()) {
+        this.triggerDeathScreenShake();
         this.endRun();
         return true;
+      }
+
+      const eatenFoodPosition = this.food.currentPosition;
+      if (this.food.tryEat(this.snake)) {
+        this.emitFoodPickupBurst(eatenFoodPosition);
       }
     }
 
     return false;
+  }
+
+  private emitFoodPickupBurst(foodPosition: GridPosition | null): void {
+    if (!foodPosition) {
+      return;
+    }
+
+    const burstOrigin = gridPositionToWorldCenter(foodPosition);
+    const emitter = this.add.particles(
+      burstOrigin.x,
+      burstOrigin.y,
+      TEXTURE_KEYS.PARTICLE,
+      {
+        angle: { min: 0, max: 360 },
+        speed: FOOD_PICKUP_PARTICLE_SPEED,
+        scale: { start: 0.55, end: 0 },
+        alpha: { start: 0.9, end: 0 },
+        lifespan: FOOD_PICKUP_PARTICLE_LIFESPAN_MS,
+        quantity: FOOD_PICKUP_PARTICLE_COUNT,
+        gravityY: 0,
+        blendMode: Phaser.BlendModes.ADD,
+        emitting: false,
+      },
+    );
+
+    emitter.explode(FOOD_PICKUP_PARTICLE_COUNT, burstOrigin.x, burstOrigin.y);
+    this.time.delayedCall(FOOD_PICKUP_PARTICLE_CLEANUP_DELAY_MS, () => {
+      emitter.stop();
+      emitter.destroy();
+    });
+  }
+
+  private triggerDeathScreenShake(): void {
+    const mainCamera = this.cameras.main;
+
+    if (!mainCamera || mainCamera.shakeEffect.isRunning) {
+      return;
+    }
+
+    mainCamera.shake(DEATH_SHAKE_DURATION_MS, DEATH_SHAKE_INTENSITY, true);
   }
 
   private hasCollision(): boolean {
