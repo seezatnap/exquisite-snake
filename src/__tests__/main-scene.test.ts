@@ -436,6 +436,48 @@ describe("MainScene", () => {
     expect(snake.getHeadPosition()).toEqual({ col: 10, row: 9 });
   });
 
+  it("Void Rift gravity does not apply outside the Void biome", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.enterPhase("playing");
+
+    const snake = scene.getSnake()!;
+    snake.reset({ col: 10, row: 0 }, "right", 1);
+    snake.getTicker().setInterval(100);
+
+    scene.update(0, 100);
+    scene.update(0, 100);
+    scene.update(0, 100);
+
+    expect(scene.getCurrentBiome()).toBe(Biome.NeonCity);
+    expect(snake.getHeadPosition()).toEqual({ col: 13, row: 0 });
+  });
+
+  it("Void Rift gravity nudges the snake toward arena center on cadence steps", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.enterPhase("playing");
+
+    const snake = scene.getSnake()!;
+    snake.getTicker().setInterval(200_000); // isolate biome timing from movement
+    scene.update(0, 45_000); // Neon -> Ice
+    scene.update(0, 45_000); // Ice -> Molten
+    scene.update(0, 45_000); // Molten -> Void
+    expect(scene.getCurrentBiome()).toBe(Biome.VoidRift);
+
+    snake.reset({ col: 10, row: 0 }, "right", 1);
+    snake.getTicker().setInterval(100);
+
+    scene.update(0, 100); // step 1 (no gravity)
+    expect(snake.getHeadPosition()).toEqual({ col: 11, row: 0 });
+
+    scene.update(0, 100); // step 2 (no gravity)
+    expect(snake.getHeadPosition()).toEqual({ col: 12, row: 0 });
+
+    scene.update(0, 100); // step 3 + gravity pull toward center (down)
+    expect(snake.getHeadPosition()).toEqual({ col: 13, row: 1 });
+  });
+
   // ── Replay lifecycle ───────────────────────────────────────
 
   it("entering 'playing' after gameOver resets score and time", () => {

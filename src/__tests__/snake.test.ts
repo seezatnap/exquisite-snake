@@ -221,6 +221,30 @@ describe("Snake movement", () => {
   });
 });
 
+describe("Snake external nudges", () => {
+  it("applies a one-tile nudge without changing the facing direction", () => {
+    const snake = createSnake({ col: 10, row: 10 }, "right", 3);
+
+    snake.applyExternalNudge("down");
+
+    expect(snake.getHeadPosition()).toEqual({ col: 10, row: 11 });
+    expect(snake.getDirection()).toBe("right");
+  });
+
+  it("shifts body segments while preserving length", () => {
+    const snake = createSnake({ col: 10, row: 10 }, "right", 3);
+
+    snake.applyExternalNudge("down");
+
+    expect(snake.getSegments()).toEqual([
+      { col: 10, row: 11 },
+      { col: 10, row: 10 },
+      { col: 9, row: 10 },
+    ]);
+    expect(snake.getLength()).toBe(3);
+  });
+});
+
 // ── Direction input buffering ────────────────────────────────────
 
 describe("Snake input buffering", () => {
