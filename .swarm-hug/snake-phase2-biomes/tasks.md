@@ -21,7 +21,7 @@
 ## HUD & Game Over
 
 - [ ] (#10) Update HUD biome indicator to show current biome name and icon, refreshing on each transition for all four biome states [5 pts] (blocked by #2, #7)
-- [C] (#11) Extend Game Over stats to include biomes visited from BiomeManager run data, including correct reset behavior between games [5 pts] (blocked by #2)
+- [x] (#11) Extend Game Over stats to include biomes visited from BiomeManager run data, including correct reset behavior between games [5 pts] (blocked by #2) (C)
 
 ## Testing & QA
 
@@ -30,4 +30,4 @@
 
 ## Follow-up tasks (from sprint review)
 - [ ] (#14) Add GameOver component rendering test to verify the biomes-visited stat displays the correct count from bridge state (blocked by #11)
-- [C] (#15) Mark task #11 as complete — biomes-visited GameOver stat, bridge wiring, and reset behavior are fully implemented by sprint 2
+- [x] (#15) Mark task #11 as complete — biomes-visited GameOver stat, bridge wiring, and reset behavior are fully implemented by sprint 2 (C)
