@@ -141,9 +141,13 @@ export class Snake {
   private keyboardEmitter?: KeyboardDirectionEmitter;
 
   private readonly keyboardListener = (event: KeyboardDirectionEvent): void => {
-    if (this.queueDirectionFromKeyboard(event)) {
-      event.preventDefault?.();
+    const direction = keyboardInputToDirection(event);
+    if (!direction) {
+      return;
     }
+
+    event.preventDefault?.();
+    this.queueDirection(direction);
   };
 
   constructor(options: SnakeOptions = {}) {

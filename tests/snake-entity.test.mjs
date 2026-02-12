@@ -149,11 +149,12 @@ test("Snake growth keeps tail segments and works with fixed-step tick timing", a
   assert.deepEqual(toPlain(snake.head), { x: 5, y: 2 });
 });
 
-test("Snake keyboard binding queues mapped directions and unregisters cleanly", async () => {
+test("Snake keyboard binding prevents defaults for mapped keys, including rejected turns", async () => {
   const snakeModule = await loadSnakeModule();
   const snake = new snakeModule.Snake({
     initialHeadPosition: { x: 4, y: 4 },
     initialDirection: "up",
+    inputBufferSize: 2,
   });
 
   let onCallCount = 0;
@@ -180,21 +181,24 @@ test("Snake keyboard binding queues mapped directions and unregisters cleanly", 
   assert.equal(onCallCount, 1);
 
   let preventedCount = 0;
-  listenerRef.call(listenerContext, {
-    key: "d",
-    preventDefault() {
-      preventedCount += 1;
-    },
-  });
-  listenerRef.call(listenerContext, {
-    key: "a",
-    preventDefault() {
-      preventedCount += 1;
-    },
-  });
+  const emitKey = (key) => {
+    listenerRef.call(listenerContext, {
+      key,
+      preventDefault() {
+        preventedCount += 1;
+      },
+    });
+  };
 
-  assert.equal(preventedCount, 1);
-  assert.deepEqual(toPlain(snake.queuedDirections), ["right"]);
+  emitKey("d"); // accepted
+  emitKey("a"); // rejected opposite
+  emitKey("d"); // rejected duplicate
+  emitKey("w"); // accepted (fills buffer)
+  emitKey("d"); // rejected full buffer
+  emitKey("Enter"); // unmapped, should not prevent default
+
+  assert.equal(preventedCount, 5);
+  assert.deepEqual(toPlain(snake.queuedDirections), ["right", "up"]);
 
   snake.unbindKeyboardControls();
   assert.equal(offCallCount, 1);
