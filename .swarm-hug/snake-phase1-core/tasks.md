@@ -3,7 +3,7 @@
 ## Foundation & Architecture
 
 - [x] (#1) Initialize a Next.js 14+ App Router project in TypeScript strict mode with Tailwind CSS and npm, configure static export (`next build && next export`) for client-only deployment, and scaffold the Phase 1 directory/file structure under `src/` (including empty `game/systems/` for future phases) [5 pts] (A)
-- [ ] (#2) Implement `src/app/layout.tsx` and `src/app/page.tsx` to provide global Tailwind/font setup and mount a client-side `<Game />` entry point with proper overlay layering for menus/HUD [5 pts] (blocked by #1)
+- [x] (#2) Implement `src/app/layout.tsx` and `src/app/page.tsx` to provide global Tailwind/font setup and mount a client-side `<Game />` entry point with proper overlay layering for menus/HUD [5 pts] (blocked by #1) (A)
 - [ ] (#3) Build `src/components/Game.tsx` as a Phaser wrapper using `dynamic(..., { ssr: false })`, with safe game instance mount/unmount and cleanup to avoid duplicate canvas instances on rerender/navigation [5 pts] (blocked by #2)
 - [ ] (#4) Create `src/game/config.ts` and `src/game/scenes/Boot.ts` with Phaser scale/config defaults, arena dimensions, and preload setup for assets/visual primitives needed by gameplay and neon UI polish [5 pts] (blocked by #3)
 - [ ] (#5) Define `src/game/scenes/MainScene.ts` core scene skeleton plus a Phaser↔React state bridge for game phase, score/high score, and elapsed survival time updates consumed by overlays [5 pts] (blocked by #3)
@@ -32,5 +32,8 @@
 - [ ] (#19) Execute performance and quality hardening for Phase 1: validate 60 FPS target under normal play, add focused tests for grid/input/storage logic, run end-to-end gameplay QA, and confirm static export output is production-ready [5 pts] (blocked by #12, #16, #18)
 
 ## Follow-up tasks (from sprint review)
-- [ ] (#20) Fix static-export npm scripts in `package.json` by replacing the broken `start` command (`next start` with `output: "export"`) with a static preview command that serves `out/`.
-- [ ] (#21) Update `README.md` to document the actual static-export workflow and local preview steps (build/export output in `out/` and how to run it).
+- [x] (#20) Fix static-export npm scripts in `package.json` by replacing the broken `start` command (`next start` with `output: "export"`) with a static preview command that serves `out/`. (B)
+- [x] (#21) Update `README.md` to document the actual static-export workflow and local preview steps (build/export output in `out/` and how to run it). (B)
+
+## Follow-up tasks (from sprint review)
+- [ ] (#22) Fix global style precedence in `src/styles/globals.css` by removing/reworking the hard-coded `body` `font-family`/`background`/`color` rule so `src/app/layout.tsx` Tailwind classes (`font-sans`, `bg-black`, `text-white`) actually apply.
