@@ -2,6 +2,23 @@
 
 import { useEffect, useState } from "react";
 import { gameBridge, type GamePhase } from "@/game/bridge";
+import { BIOME_CONFIG, Biome } from "@/game/systems/BiomeManager";
+
+type BiomeIconId = (typeof BIOME_CONFIG)[Biome]["icon"];
+
+const BIOME_ICON_SYMBOLS: Record<BiomeIconId, string> = {
+  city: "[]",
+  snowflake: "*",
+  flame: "^",
+  vortex: "@",
+};
+
+function normalizeBiome(value: unknown): Biome {
+  if (typeof value === "string" && value in BIOME_CONFIG) {
+    return value as Biome;
+  }
+  return Biome.NeonCity;
+}
 
 /**
  * HUD top bar overlay.
@@ -22,24 +39,33 @@ export default function HUD() {
   const [highScore, setHighScore] = useState<number>(
     () => gameBridge.getState().highScore,
   );
+  const [currentBiome, setCurrentBiome] = useState<Biome>(
+    () => normalizeBiome(gameBridge.getState().currentBiome),
+  );
 
   useEffect(() => {
     const onPhase = (p: GamePhase) => setPhase(p);
     const onScore = (s: number) => setScore(s);
     const onHighScore = (hs: number) => setHighScore(hs);
+    const onBiomeChange = (biome: Biome) => setCurrentBiome(biome);
 
     gameBridge.on("phaseChange", onPhase);
     gameBridge.on("scoreChange", onScore);
     gameBridge.on("highScoreChange", onHighScore);
+    gameBridge.on("biomeChange", onBiomeChange);
 
     return () => {
       gameBridge.off("phaseChange", onPhase);
       gameBridge.off("scoreChange", onScore);
       gameBridge.off("highScoreChange", onHighScore);
+      gameBridge.off("biomeChange", onBiomeChange);
     };
   }, []);
 
   if (phase !== "playing") return <div id="hud" />;
+
+  const biomeConfig = BIOME_CONFIG[currentBiome];
+  const biomeIcon = BIOME_ICON_SYMBOLS[biomeConfig.icon];
 
   return (
     <div
@@ -58,14 +84,21 @@ export default function HUD() {
         </span>
       </div>
 
-      {/* Future placeholder slots */}
+      {/* Runtime + future slots */}
       <div className="flex items-center gap-3">
-        {/* Biome indicator — Phase 2+ */}
         <div
-          className="h-5 w-16 rounded border border-surface-bright opacity-30"
-          aria-hidden="true"
+          className="flex h-5 items-center gap-2 rounded border border-neon-cyan/60 bg-surface/80 px-2 text-[10px] uppercase tracking-wide text-neon-cyan"
+          aria-label={`Current biome: ${biomeConfig.label}`}
           data-slot="biome"
-        />
+          data-testid="hud-biome-indicator"
+        >
+          <span aria-hidden="true" className="font-bold" data-testid="hud-biome-icon">
+            {biomeIcon}
+          </span>
+          <span className="text-foreground/80" data-testid="hud-biome-name">
+            {biomeConfig.label}
+          </span>
+        </div>
         {/* Rewind cooldown — Phase 2+ */}
         <div
           className="h-5 w-10 rounded border border-surface-bright opacity-30"

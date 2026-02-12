@@ -1,20 +1,29 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, act, cleanup } from "@testing-library/react";
 import type { GameBridge } from "@/game/bridge";
+import { Biome } from "@/game/systems/BiomeManager";
 
 // vi.hoisted runs before the mock factory, so bridge is available.
 const { bridge } = vi.hoisted(() => {
   type GamePhase = "start" | "playing" | "gameOver";
+  type Biome = "neon-city" | "ice-cavern" | "molten-core" | "void-rift";
   interface State {
     phase: GamePhase;
     score: number;
     highScore: number;
     elapsedTime: number;
+    currentBiome: Biome;
   }
   type Listener = (v: unknown) => void;
 
   class HoistedBridge {
-    private state: State = { phase: "start", score: 0, highScore: 0, elapsedTime: 0 };
+    private state: State = {
+      phase: "start",
+      score: 0,
+      highScore: 0,
+      elapsedTime: 0,
+      currentBiome: "neon-city",
+    };
     private listeners = new Map<string, Set<Listener>>();
 
     getState() { return this.state; }
@@ -23,11 +32,14 @@ const { bridge } = vi.hoisted(() => {
     setScore(s: number) { this.state.score = s; this.emit("scoreChange", s); }
     setHighScore(h: number) { this.state.highScore = h; this.emit("highScoreChange", h); }
     setElapsedTime(t: number) { this.state.elapsedTime = t; this.emit("elapsedTimeChange", t); }
+    setCurrentBiome(b: Biome) { this.state.currentBiome = b; this.emit("biomeChange", b); }
     resetRun() {
       this.state.score = 0;
       this.state.elapsedTime = 0;
+      this.state.currentBiome = "neon-city";
       this.emit("scoreChange", 0);
       this.emit("elapsedTimeChange", 0);
+      this.emit("biomeChange", "neon-city");
     }
 
     on(event: string, fn: Listener) {
@@ -60,6 +72,7 @@ describe("HUD component", () => {
     bridge.setPhase("start");
     bridge.setScore(0);
     bridge.setHighScore(0);
+    bridge.setCurrentBiome(Biome.NeonCity);
   });
 
   // ── Visibility ────────────────────────────────────────────
@@ -146,12 +159,37 @@ describe("HUD component", () => {
     expect(hud!.textContent).toBe("");
   });
 
-  // ── Placeholder slots ─────────────────────────────────────
+  // ── Biome indicator ───────────────────────────────────────
 
-  it("renders biome placeholder slot", () => {
+  it("renders biome indicator with current biome name and icon", () => {
     bridge.setPhase("playing");
     const { container } = render(<HUD />);
-    expect(container.querySelector('[data-slot="biome"]')).toBeTruthy();
+    const indicator = container.querySelector('[data-testid="hud-biome-indicator"]');
+    expect(indicator).toBeTruthy();
+    expect(indicator!.textContent).toContain("Neon City");
+    expect(indicator!.textContent).toContain("[]");
+  });
+
+  it("refreshes biome indicator for all four biome transitions", () => {
+    bridge.setPhase("playing");
+    const { container } = render(<HUD />);
+    const indicator = () => container.querySelector('[data-testid="hud-biome-indicator"]');
+
+    act(() => bridge.setCurrentBiome(Biome.IceCavern));
+    expect(indicator()!.textContent).toContain("Ice Cavern");
+    expect(indicator()!.textContent).toContain("*");
+
+    act(() => bridge.setCurrentBiome(Biome.MoltenCore));
+    expect(indicator()!.textContent).toContain("Molten Core");
+    expect(indicator()!.textContent).toContain("^");
+
+    act(() => bridge.setCurrentBiome(Biome.VoidRift));
+    expect(indicator()!.textContent).toContain("Void Rift");
+    expect(indicator()!.textContent).toContain("@");
+
+    act(() => bridge.setCurrentBiome(Biome.NeonCity));
+    expect(indicator()!.textContent).toContain("Neon City");
+    expect(indicator()!.textContent).toContain("[]");
   });
 
   it("renders rewind placeholder slot", () => {
@@ -169,8 +207,8 @@ describe("HUD component", () => {
   it("placeholder slots are aria-hidden", () => {
     bridge.setPhase("playing");
     const { container } = render(<HUD />);
-    const slots = container.querySelectorAll("[data-slot]");
-    expect(slots.length).toBe(3);
+    const slots = container.querySelectorAll('[data-slot]:not([data-slot="biome"])');
+    expect(slots.length).toBe(2);
     slots.forEach((slot) => {
       expect(slot.getAttribute("aria-hidden")).toBe("true");
     });
@@ -201,11 +239,12 @@ describe("HUD component", () => {
     const offSpy = vi.spyOn(bridge, "off");
     unmount();
 
-    expect(offSpy).toHaveBeenCalledTimes(3);
+    expect(offSpy).toHaveBeenCalledTimes(4);
     const events = offSpy.mock.calls.map((c) => c[0]);
     expect(events).toContain("phaseChange");
     expect(events).toContain("scoreChange");
     expect(events).toContain("highScoreChange");
+    expect(events).toContain("biomeChange");
 
     offSpy.mockRestore();
   });

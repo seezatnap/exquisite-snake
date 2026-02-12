@@ -2,10 +2,12 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, act, cleanup, fireEvent } from "@testing-library/react";
 import { createElement } from "react";
 import type { GameBridge } from "@/game/bridge";
+import { Biome } from "@/game/systems/BiomeManager";
 
 // ── Shared hoisted bridge mock ──────────────────────────────────
 const { bridge } = vi.hoisted(() => {
   type GamePhase = "start" | "playing" | "gameOver";
+  type Biome = "neon-city" | "ice-cavern" | "molten-core" | "void-rift";
   interface BiomeVisitStats {
     "neon-city": number;
     "ice-cavern": number;
@@ -17,6 +19,7 @@ const { bridge } = vi.hoisted(() => {
     score: number;
     highScore: number;
     elapsedTime: number;
+    currentBiome: Biome;
     biomeVisitStats: BiomeVisitStats;
   }
   type Listener = (v: unknown) => void;
@@ -34,6 +37,7 @@ const { bridge } = vi.hoisted(() => {
       score: 0,
       highScore: 0,
       elapsedTime: 0,
+      currentBiome: "neon-city",
       biomeVisitStats: createInitialBiomeVisitStats(),
     };
     private listeners = new Map<string, Set<Listener>>();
@@ -44,6 +48,7 @@ const { bridge } = vi.hoisted(() => {
     setScore(s: number) { this.state.score = s; this.emit("scoreChange", s); }
     setHighScore(h: number) { this.state.highScore = h; this.emit("highScoreChange", h); }
     setElapsedTime(t: number) { this.state.elapsedTime = t; this.emit("elapsedTimeChange", t); }
+    setCurrentBiome(b: Biome) { this.state.currentBiome = b; this.emit("biomeChange", b); }
     setBiomeVisitStats(stats: BiomeVisitStats) {
       this.state.biomeVisitStats = { ...stats };
       this.emit("biomeVisitStatsChange", this.state.biomeVisitStats);
@@ -51,9 +56,11 @@ const { bridge } = vi.hoisted(() => {
     resetRun() {
       this.state.score = 0;
       this.state.elapsedTime = 0;
+      this.state.currentBiome = "neon-city";
       this.state.biomeVisitStats = createInitialBiomeVisitStats();
       this.emit("scoreChange", 0);
       this.emit("elapsedTimeChange", 0);
+      this.emit("biomeChange", "neon-city");
       this.emit("biomeVisitStatsChange", this.state.biomeVisitStats);
     }
 
@@ -97,6 +104,7 @@ describe("Game loop integration", () => {
     bridge.setScore(0);
     bridge.setHighScore(0);
     bridge.setElapsedTime(0);
+    bridge.setCurrentBiome(Biome.NeonCity);
     bridge.setBiomeVisitStats({
       "neon-city": 1,
       "ice-cavern": 0,
@@ -208,6 +216,7 @@ describe("GameOver keyboard navigation", () => {
     bridge.setScore(0);
     bridge.setHighScore(0);
     bridge.setElapsedTime(0);
+    bridge.setCurrentBiome(Biome.NeonCity);
     bridge.setBiomeVisitStats({
       "neon-city": 1,
       "ice-cavern": 0,
