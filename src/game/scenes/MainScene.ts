@@ -1,4 +1,5 @@
 import Phaser from "phaser";
+import { loadHighScore, persistHighScore } from "../utils/storage";
 
 export const MAIN_SCENE_KEY = "MainScene" as const;
 
@@ -119,6 +120,7 @@ export class MainScene extends Phaser.Scene {
 
   create(): void {
     mainSceneStateBridge.resetForNextRun();
+    this.setPersistedHighScore(loadHighScore());
     this.bindSceneLifecycleEvents();
     this.bindStartInput();
   }
@@ -162,6 +164,9 @@ export class MainScene extends Phaser.Scene {
       mainSceneStateBridge.setElapsedSurvivalMs(this.time.now - this.runStartMs);
     }
 
+    this.setPersistedHighScore(
+      persistHighScore(mainSceneStateBridge.getSnapshot().highScore),
+    );
     this.runStartMs = null;
     mainSceneStateBridge.setPhase("game-over");
   }
