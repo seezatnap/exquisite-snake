@@ -41,3 +41,7 @@
 ## Follow-up tasks (from sprint review)
 - [x] (#23) Replace source-text regex checks in `tests/game-component.test.mjs` with behavioral tests that mount `<Game />`, mock Phaser, and verify single-instance creation plus `destroy(true)` and DOM cleanup on unmount. (A)
 - [x] (#24) Add a regression test that ensures `src/styles/globals.css` does not set `body` `background`, `color`, or `font-family`, so layout utility classes keep precedence after the global-style fix. (B)
+
+## Follow-up tasks (from sprint review)
+- [ ] (#25) Wire the real `MainScene` class into `src/game/config.ts` (`scene: [BootScene, MainScene]`) and remove the `MAIN_SCENE_PLACEHOLDER` so `BootScene` starts the implemented scene logic.
+- [ ] (#26) Update `tests/game-config-boot.test.mjs` to assert `GAME_CONFIG` registers the `MainScene` class (not a key-only placeholder) to prevent this wiring regression.
