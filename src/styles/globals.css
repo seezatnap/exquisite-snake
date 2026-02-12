@@ -103,6 +103,11 @@ body {
   border-radius: 0.5rem;
 }
 
+/* ── Overlay Backdrop ──────────────────────────────────────────── */
+.overlay-backdrop {
+  background: rgba(10, 10, 10, 0.85);
+}
+
 /* ── Focus Accessibility ────────────────────────────────────────── */
 :focus-visible {
   outline: 2px solid var(--neon-cyan);

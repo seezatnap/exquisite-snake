@@ -74,6 +74,29 @@ export default function GameOver() {
     gameBridge.setPhase("playing");
   }, []);
 
+  const returnToStart = useCallback(() => {
+    if (gameBridge.getState().phase !== "gameOver") return;
+    gameBridge.setPhase("start");
+  }, []);
+
+  // Keyboard shortcuts: Enter/Space → play again, Escape → start screen
+  useEffect(() => {
+    if (phase !== "gameOver") return;
+
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        playAgain();
+      } else if (e.key === "Escape") {
+        e.preventDefault();
+        returnToStart();
+      }
+    };
+
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [phase, playAgain, returnToStart]);
+
   if (phase !== "gameOver") return <div id="game-over" />;
 
   const isNewHighScore = score > 0 && score >= highScore;
@@ -134,16 +157,35 @@ export default function GameOver() {
         </div>
       </div>
 
-      {/* Play Again button */}
-      <button
-        ref={playAgainRef}
-        className="neon-border-cyan rounded border px-6 py-3 font-mono text-sm font-bold tracking-widest text-neon-cyan transition-all hover:bg-neon-cyan/10 focus-visible:bg-neon-cyan/10"
-        data-testid="play-again"
-        onClick={playAgain}
-        type="button"
+      {/* Action buttons */}
+      <div className="flex flex-col items-center gap-3">
+        <button
+          ref={playAgainRef}
+          className="neon-border-cyan rounded border px-6 py-3 font-mono text-sm font-bold tracking-widest text-neon-cyan transition-all hover:bg-neon-cyan/10 focus-visible:bg-neon-cyan/10"
+          data-testid="play-again"
+          onClick={playAgain}
+          type="button"
+        >
+          PLAY AGAIN
+        </button>
+        <button
+          className="rounded border border-surface-bright px-4 py-2 font-mono text-xs tracking-wide text-foreground/50 transition-all hover:border-neon-pink/40 hover:text-foreground/80 focus-visible:border-neon-pink/40 focus-visible:text-foreground/80"
+          data-testid="return-to-start"
+          onClick={returnToStart}
+          type="button"
+        >
+          MENU
+        </button>
+      </div>
+
+      {/* Keyboard hint */}
+      <p
+        className="mt-4 font-mono text-[10px] tracking-wide text-foreground/30"
+        data-testid="keyboard-hint"
+        aria-hidden="true"
       >
-        PLAY AGAIN
-      </button>
+        ENTER — PLAY &nbsp;&nbsp; ESC — MENU
+      </p>
     </div>
   );
 }

@@ -53,12 +53,34 @@ export class MainScene extends Phaser.Scene {
     super({ key: "MainScene" });
   }
 
+  /** Bound listener for bridge phase changes (stored for cleanup). */
+  private onBridgePhaseChange: ((phase: GamePhase) => void) | null = null;
+
   // ── Phaser lifecycle ────────────────────────────────────────
 
   create(): void {
     this.drawGrid();
     gameBridge.setHighScore(loadHighScore());
+
+    // Listen for phase changes originating from React overlays
+    // (e.g. StartScreen "press any key" → playing, GameOver "Play Again" → playing).
+    this.onBridgePhaseChange = (phase: GamePhase) => {
+      if (phase === "playing") {
+        this.startRun();
+      }
+    };
+    gameBridge.on("phaseChange", this.onBridgePhaseChange);
+
     this.enterPhase("start");
+  }
+
+  /** Phaser shutdown callback — clean up bridge listener. */
+  shutdown(): void {
+    if (this.onBridgePhaseChange) {
+      gameBridge.off("phaseChange", this.onBridgePhaseChange);
+      this.onBridgePhaseChange = null;
+    }
+    this.destroyEntities();
   }
 
   update(_time: number, delta: number): void {
@@ -91,13 +113,15 @@ export class MainScene extends Phaser.Scene {
 
   // ── Phase management ────────────────────────────────────────
 
-  /** Transition to a new game phase and notify the bridge. */
+  /**
+   * Transition to a new game phase and notify the bridge.
+   *
+   * When the phase is set to "playing" (from any source — this scene or
+   * React overlays), the bridge listener created in `create()` will call
+   * `startRun()` automatically, keeping a single code path.
+   */
   enterPhase(next: GamePhase): void {
     gameBridge.setPhase(next);
-
-    if (next === "playing") {
-      this.startRun();
-    }
   }
 
   getPhase(): GamePhase {
