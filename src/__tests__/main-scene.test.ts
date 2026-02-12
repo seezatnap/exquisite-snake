@@ -43,6 +43,7 @@ vi.mock("phaser", () => {
     input = {
       keyboard: {
         on: mockKeyboardOn,
+        off: vi.fn(),
       },
     };
     constructor(public config?: { key: string }) {}

@@ -5,6 +5,7 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 const mockDestroy = vi.fn();
 const mockSetPosition = vi.fn();
 const mockKeyboardOn = vi.fn();
+const mockKeyboardOff = vi.fn();
 
 function createMockSprite() {
   return {
@@ -23,6 +24,7 @@ vi.mock("phaser", () => {
     input = {
       keyboard: {
         on: mockKeyboardOn,
+        off: mockKeyboardOff,
       },
     };
     constructor(public config?: { key: string }) {}
@@ -580,6 +582,67 @@ describe("Snake destroy", () => {
     const snake = createSnake();
     snake.destroy();
     expect(snake.isAlive()).toBe(false);
+  });
+
+  it("removes the keyboard keydown listener on destroy", () => {
+    const scene = createScene();
+    const snake = new Snake(scene, { col: 10, row: 10 }, "right", 3);
+
+    snake.setupInput();
+
+    // Capture the handler that was registered
+    const handler = mockKeyboardOn.mock.calls[mockKeyboardOn.mock.calls.length - 1][1];
+
+    mockKeyboardOff.mockClear();
+    snake.destroy();
+
+    expect(mockKeyboardOff).toHaveBeenCalledWith("keydown", handler);
+  });
+
+  it("does not call keyboard.off if setupInput was never called", () => {
+    const snake = createSnake({ col: 10, row: 10 }, "right", 3);
+
+    mockKeyboardOff.mockClear();
+    snake.destroy();
+
+    expect(mockKeyboardOff).not.toHaveBeenCalled();
+  });
+
+  it("handles missing keyboard gracefully on destroy", () => {
+    const scene = createScene();
+    const snake = new Snake(scene, { col: 10, row: 10 }, "right", 3);
+
+    snake.setupInput();
+
+    // Remove keyboard before destroy
+    (scene as unknown as { input: { keyboard: null } }).input = { keyboard: null };
+
+    expect(() => snake.destroy()).not.toThrow();
+  });
+
+  it("prevents duplicate handlers across replay cycles", () => {
+    const scene = createScene();
+
+    // Simulate two replay cycles: create snake, setup, destroy, repeat
+    const snake1 = new Snake(scene, { col: 10, row: 10 }, "right", 3);
+    snake1.setupInput();
+    const handler1 = mockKeyboardOn.mock.calls[mockKeyboardOn.mock.calls.length - 1][1];
+
+    mockKeyboardOff.mockClear();
+    snake1.destroy();
+    expect(mockKeyboardOff).toHaveBeenCalledWith("keydown", handler1);
+
+    // Second snake on the same scene
+    const snake2 = new Snake(scene, { col: 10, row: 10 }, "right", 3);
+    snake2.setupInput();
+    const handler2 = mockKeyboardOn.mock.calls[mockKeyboardOn.mock.calls.length - 1][1];
+
+    mockKeyboardOff.mockClear();
+    snake2.destroy();
+    expect(mockKeyboardOff).toHaveBeenCalledWith("keydown", handler2);
+
+    // Each snake registered and removed its own unique handler
+    expect(handler1).not.toBe(handler2);
   });
 });
 
