@@ -1,5 +1,6 @@
 import * as Phaser from "phaser";
 import { GRID_COLS, GRID_ROWS } from "../config";
+import { Food } from "../entities/Food";
 import { Snake, type SnakeOptions } from "../entities/Snake";
 import { areGridPositionsEqual, isWithinGridBounds } from "../utils/grid";
 import { loadHighScore, persistHighScore } from "../utils/storage";
@@ -132,6 +133,8 @@ export class MainScene extends Phaser.Scene {
 
   private snake = new Snake(DEFAULT_SNAKE_OPTIONS);
 
+  private food = this.createFoodForRun();
+
   constructor() {
     super(MAIN_SCENE_KEY);
   }
@@ -140,6 +143,7 @@ export class MainScene extends Phaser.Scene {
     mainSceneStateBridge.resetForNextRun();
     this.setPersistedHighScore(loadHighScore());
     this.rebuildSnakeForNextRun();
+    this.rebuildFoodForNextRun();
     this.bindSceneLifecycleEvents();
     this.bindStartInput();
   }
@@ -161,6 +165,8 @@ export class MainScene extends Phaser.Scene {
 
   startRun(): void {
     this.rebuildSnakeForNextRun();
+    this.rebuildFoodForNextRun();
+    this.food.spawnForSnake(this.snake);
     this.runStartMs = this.time.now;
     this.lastUpdateMs = this.time.now;
     mainSceneStateBridge.resetForNextRun();
@@ -209,6 +215,7 @@ export class MainScene extends Phaser.Scene {
     this.runStartMs = null;
     this.lastUpdateMs = null;
     this.rebuildSnakeForNextRun();
+    this.rebuildFoodForNextRun();
     mainSceneStateBridge.resetForNextRun();
   }
 
@@ -245,6 +252,17 @@ export class MainScene extends Phaser.Scene {
     this.snake = new Snake(DEFAULT_SNAKE_OPTIONS);
   }
 
+  private createFoodForRun(): Food {
+    return new Food({
+      bounds: PLAYFIELD_BOUNDS,
+      onScore: (points) => this.addScore(points),
+    });
+  }
+
+  private rebuildFoodForNextRun(): void {
+    this.food = this.createFoodForRun();
+  }
+
   private getFrameDeltaMs(currentTimeMs: number): number {
     if (this.lastUpdateMs === null) {
       this.lastUpdateMs = currentTimeMs;
@@ -276,6 +294,8 @@ export class MainScene extends Phaser.Scene {
         this.endRun();
         return true;
       }
+
+      this.food.tryEat(this.snake);
     }
 
     return false;
