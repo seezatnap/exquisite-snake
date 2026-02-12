@@ -2,12 +2,12 @@
 
 import { useEffect, useState } from "react";
 import { gameBridge, type GamePhase } from "@/game/bridge";
+import { type Biome, BIOME_CONFIGS } from "@/game/systems/BiomeManager";
 
 /**
  * HUD top bar overlay.
  *
- * Displays score and high score during gameplay, with reserved placeholder
- * slots for future biome indicator, rewind cooldown, and parasite inventory.
+ * Displays score, high score, and current biome indicator during gameplay.
  * Subscribes to the Phaser↔React bridge for real-time state updates.
  *
  * Only visible during the "playing" phase.
@@ -22,24 +22,32 @@ export default function HUD() {
   const [highScore, setHighScore] = useState<number>(
     () => gameBridge.getState().highScore,
   );
+  const [currentBiome, setCurrentBiome] = useState<Biome>(
+    () => gameBridge.getState().currentBiome,
+  );
 
   useEffect(() => {
     const onPhase = (p: GamePhase) => setPhase(p);
     const onScore = (s: number) => setScore(s);
     const onHighScore = (hs: number) => setHighScore(hs);
+    const onBiome = (b: Biome) => setCurrentBiome(b);
 
     gameBridge.on("phaseChange", onPhase);
     gameBridge.on("scoreChange", onScore);
     gameBridge.on("highScoreChange", onHighScore);
+    gameBridge.on("biomeChange", onBiome);
 
     return () => {
       gameBridge.off("phaseChange", onPhase);
       gameBridge.off("scoreChange", onScore);
       gameBridge.off("highScoreChange", onHighScore);
+      gameBridge.off("biomeChange", onBiome);
     };
   }, []);
 
   if (phase !== "playing") return <div id="hud" />;
+
+  const biomeName = BIOME_CONFIGS[currentBiome].name;
 
   return (
     <div
@@ -58,14 +66,16 @@ export default function HUD() {
         </span>
       </div>
 
-      {/* Future placeholder slots */}
+      {/* Status slots */}
       <div className="flex items-center gap-3">
-        {/* Biome indicator — Phase 2+ */}
+        {/* Biome indicator */}
         <div
-          className="h-5 w-16 rounded border border-surface-bright opacity-30"
-          aria-hidden="true"
+          className="rounded border border-neon-purple/50 px-2 py-0.5 text-xs text-neon-purple"
           data-slot="biome"
-        />
+          data-testid="hud-biome"
+        >
+          {biomeName}
+        </div>
         {/* Rewind cooldown — Phase 2+ */}
         <div
           className="h-5 w-10 rounded border border-surface-bright opacity-30"

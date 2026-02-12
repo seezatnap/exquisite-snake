@@ -13,6 +13,11 @@ import { isInBounds, type GridPos } from "../utils/grid";
 import { Snake } from "../entities/Snake";
 import { Food } from "../entities/Food";
 import { emitFoodParticles, shakeCamera } from "../systems/effects";
+import {
+  BiomeManager,
+  type Biome,
+  type BiomeChangeListener,
+} from "../systems/BiomeManager";
 
 // ── Default spawn configuration ─────────────────────────────────
 
@@ -43,6 +48,12 @@ export class MainScene extends Phaser.Scene {
   /** The food entity for the current run (null when not playing). */
   private food: Food | null = null;
 
+  /** Biome rotation manager — persists across runs (reset between runs). */
+  private biomeManager = new BiomeManager();
+
+  /** Bound listener for biome change events (stored for cleanup). */
+  private onBiomeChange: BiomeChangeListener | null = null;
+
   /**
    * Injectable RNG function for deterministic replay sessions.
    * Returns a value in [0, 1). Defaults to Math.random.
@@ -71,6 +82,13 @@ export class MainScene extends Phaser.Scene {
     };
     gameBridge.on("phaseChange", this.onBridgePhaseChange);
 
+    // Subscribe to biome transitions and sync to bridge
+    this.onBiomeChange = (newBiome: Biome) => {
+      gameBridge.setBiome(newBiome);
+      gameBridge.setBiomeVisitStats(this.biomeManager.getVisitStats());
+    };
+    this.biomeManager.onChange(this.onBiomeChange);
+
     this.enterPhase("start");
   }
 
@@ -80,6 +98,11 @@ export class MainScene extends Phaser.Scene {
       gameBridge.off("phaseChange", this.onBridgePhaseChange);
       this.onBridgePhaseChange = null;
     }
+    if (this.onBiomeChange) {
+      this.biomeManager.offChange(this.onBiomeChange);
+      this.onBiomeChange = null;
+    }
+    this.biomeManager.reset();
     this.destroyEntities();
   }
 
@@ -87,6 +110,10 @@ export class MainScene extends Phaser.Scene {
     if (gameBridge.getState().phase !== "playing") return;
 
     gameBridge.setElapsedTime(gameBridge.getState().elapsedTime + delta);
+
+    // Advance biome timer and sync time-remaining to bridge
+    this.biomeManager.update(delta);
+    gameBridge.setBiomeTimeRemaining(this.biomeManager.getTimeRemaining());
 
     if (!this.snake || !this.food) return;
 
@@ -133,6 +160,12 @@ export class MainScene extends Phaser.Scene {
   /** Reset per-run state and begin a new game. */
   private startRun(): void {
     gameBridge.resetRun();
+    this.biomeManager.reset();
+    this.biomeManager.start();
+    // Sync initial biome state to bridge
+    gameBridge.setBiome(this.biomeManager.getCurrentBiome());
+    gameBridge.setBiomeTimeRemaining(this.biomeManager.getTimeRemaining());
+    gameBridge.setBiomeVisitStats(this.biomeManager.getVisitStats());
     this.destroyEntities();
     this.createEntities();
   }
@@ -143,6 +176,8 @@ export class MainScene extends Phaser.Scene {
     if (this.snake?.isAlive()) {
       this.snake.kill();
     }
+    // Snapshot final biome stats before stopping the manager
+    gameBridge.setBiomeVisitStats(this.biomeManager.getVisitStats());
     const { score, highScore } = gameBridge.getState();
     if (score > highScore) {
       gameBridge.setHighScore(score);
@@ -246,6 +281,10 @@ export class MainScene extends Phaser.Scene {
 
   getFood(): Food | null {
     return this.food;
+  }
+
+  getBiomeManager(): BiomeManager {
+    return this.biomeManager;
   }
 
   // ── Arena grid ──────────────────────────────────────────────

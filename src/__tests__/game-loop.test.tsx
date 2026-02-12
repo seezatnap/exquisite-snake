@@ -11,11 +11,23 @@ const { bridge } = vi.hoisted(() => {
     score: number;
     highScore: number;
     elapsedTime: number;
+    currentBiome: string;
+    biomeTimeRemaining: number;
+    biomeVisitStats: { visits: Record<string, number>; uniqueCount: number };
   }
   type Listener = (v: unknown) => void;
 
+  const defaultBiomeVisitStats = {
+    visits: { NeonCity: 0, IceCavern: 0, MoltenCore: 0, VoidRift: 0 },
+    uniqueCount: 0,
+  };
+
   class HoistedBridge {
-    private state: State = { phase: "start", score: 0, highScore: 0, elapsedTime: 0 };
+    private state: State = {
+      phase: "start", score: 0, highScore: 0, elapsedTime: 0,
+      currentBiome: "NeonCity", biomeTimeRemaining: 0,
+      biomeVisitStats: { ...defaultBiomeVisitStats },
+    };
     private listeners = new Map<string, Set<Listener>>();
 
     getState() { return this.state; }
@@ -24,11 +36,20 @@ const { bridge } = vi.hoisted(() => {
     setScore(s: number) { this.state.score = s; this.emit("scoreChange", s); }
     setHighScore(h: number) { this.state.highScore = h; this.emit("highScoreChange", h); }
     setElapsedTime(t: number) { this.state.elapsedTime = t; this.emit("elapsedTimeChange", t); }
+    setBiome(b: string) { this.state.currentBiome = b; this.emit("biomeChange", b); }
+    setBiomeTimeRemaining(ms: number) { this.state.biomeTimeRemaining = ms; this.emit("biomeTimeRemainingChange", ms); }
+    setBiomeVisitStats(s: State["biomeVisitStats"]) { this.state.biomeVisitStats = s; this.emit("biomeVisitStatsChange", s); }
     resetRun() {
       this.state.score = 0;
       this.state.elapsedTime = 0;
+      this.state.currentBiome = "NeonCity";
+      this.state.biomeTimeRemaining = 0;
+      this.state.biomeVisitStats = { ...defaultBiomeVisitStats };
       this.emit("scoreChange", 0);
       this.emit("elapsedTimeChange", 0);
+      this.emit("biomeChange", "NeonCity");
+      this.emit("biomeTimeRemainingChange", 0);
+      this.emit("biomeVisitStatsChange", { ...defaultBiomeVisitStats });
     }
 
     on(event: string, fn: Listener) {
