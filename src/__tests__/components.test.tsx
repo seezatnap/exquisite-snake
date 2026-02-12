@@ -1,5 +1,24 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { render } from "@testing-library/react";
+
+// Mock Phaser before importing Game, since Game now imports Phaser
+vi.mock("phaser", () => {
+  class MockGame {
+    constructor() {}
+    destroy() {}
+  }
+  return {
+    default: {
+      Game: MockGame,
+      AUTO: 0,
+      Scale: { FIT: 1, CENTER_BOTH: 1 },
+    },
+    Game: MockGame,
+    AUTO: 0,
+    Scale: { FIT: 1, CENTER_BOTH: 1 },
+  };
+});
+
 import Game from "@/components/Game";
 import HUD from "@/components/HUD";
 import StartScreen from "@/components/StartScreen";
