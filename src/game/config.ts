@@ -1,5 +1,6 @@
 import * as Phaser from "phaser";
 import { BootScene } from "./scenes/Boot";
+import { MainScene } from "./scenes/MainScene";
 
 export const SCENE_KEYS = {
   BOOT: "Boot",
@@ -32,8 +33,6 @@ export const TEXTURE_KEYS = {
   UI_FRAME: "ui-frame",
 } as const;
 
-const MAIN_SCENE_PLACEHOLDER = { key: SCENE_KEYS.MAIN };
-
 export const GAME_CONFIG: Phaser.Types.Core.GameConfig = {
   type: Phaser.AUTO,
   width: ARENA_WIDTH,
@@ -50,6 +49,7 @@ export const GAME_CONFIG: Phaser.Types.Core.GameConfig = {
     mode: Phaser.Scale.FIT,
     autoCenter: Phaser.Scale.CENTER_BOTH,
     expandParent: true,
+    autoRound: true,
   },
   physics: {
     default: "arcade",
@@ -61,5 +61,5 @@ export const GAME_CONFIG: Phaser.Types.Core.GameConfig = {
       debug: false,
     },
   },
-  scene: [BootScene, MAIN_SCENE_PLACEHOLDER],
+  scene: [BootScene, MainScene],
 };

@@ -15,7 +15,50 @@ class MockElement {
     this.parentNode = null;
     this.children = [];
     this.className = "";
+    this.style = {};
     this._forceConnected = forceConnected;
+    this._clientWidth = 0;
+    this._clientHeight = 0;
+  }
+
+  setSize(width, height) {
+    this._clientWidth = Math.max(0, Number(width) || 0);
+    this._clientHeight = Math.max(0, Number(height) || 0);
+  }
+
+  get clientWidth() {
+    if (this._clientWidth > 0) {
+      return this._clientWidth;
+    }
+
+    return this.parentNode?.clientWidth ?? 0;
+  }
+
+  get clientHeight() {
+    if (this._clientHeight > 0) {
+      return this._clientHeight;
+    }
+
+    return this.parentNode?.clientHeight ?? 0;
+  }
+
+  getBoundingClientRect() {
+    const width = this.clientWidth;
+    const height = this.clientHeight;
+
+    return {
+      width,
+      height,
+      top: 0,
+      right: width,
+      bottom: height,
+      left: 0,
+      x: 0,
+      y: 0,
+      toJSON() {
+        return {};
+      },
+    };
   }
 
   get isConnected() {
@@ -56,7 +99,7 @@ class MockElement {
   }
 }
 
-async function loadGameComponent(mockRequire) {
+async function loadGameComponent(mockRequire, runtimeGlobals = {}) {
   const source = await readFile(
     path.join(projectRoot, "src/components/Game.tsx"),
     "utf8",
@@ -79,17 +122,117 @@ async function loadGameComponent(mockRequire) {
     Promise,
     setTimeout,
     clearTimeout,
+    ...runtimeGlobals,
   });
 
   vm.runInContext(transpiled.outputText, context, { filename: "Game.cjs" });
-  return compiledModule.exports.default;
+  return compiledModule.exports;
+}
+
+function createEventDispatcher() {
+  const listeners = new Map();
+
+  return {
+    add(type, listener) {
+      if (!listeners.has(type)) {
+        listeners.set(type, new Set());
+      }
+
+      listeners.get(type).add(listener);
+    },
+    remove(type, listener) {
+      listeners.get(type)?.delete(listener);
+    },
+    emit(type) {
+      const handlers = listeners.get(type);
+
+      if (!handlers) {
+        return;
+      }
+
+      for (const handler of [...handlers]) {
+        handler({ type });
+      }
+    },
+    listenerCount(type) {
+      return listeners.get(type)?.size ?? 0;
+    },
+  };
 }
 
 function createHarness() {
   const root = new MockElement("root", true);
+  root.setSize(1000, 700);
+
   const destroyCalls = [];
   const gameInstances = [];
+  const scaleRefreshCalls = [];
+  const resizeObservers = [];
+  let resizeObserverDisconnects = 0;
   let currentInstance = null;
+  let exportsPromise = null;
+  let nextFrameId = 1;
+  const frameQueue = new Map();
+
+  const windowEvents = createEventDispatcher();
+  const visualViewportEvents = createEventDispatcher();
+
+  const windowMock = {
+    addEventListener(type, listener) {
+      windowEvents.add(type, listener);
+    },
+    removeEventListener(type, listener) {
+      windowEvents.remove(type, listener);
+    },
+    requestAnimationFrame(callback) {
+      const id = nextFrameId++;
+      frameQueue.set(id, callback);
+      return id;
+    },
+    cancelAnimationFrame(id) {
+      frameQueue.delete(id);
+    },
+    visualViewport: {
+      addEventListener(type, listener) {
+        visualViewportEvents.add(type, listener);
+      },
+      removeEventListener(type, listener) {
+        visualViewportEvents.remove(type, listener);
+      },
+    },
+  };
+
+  class ResizeObserverMock {
+    constructor(callback) {
+      this.callback = callback;
+      this.targets = new Set();
+      this.disconnected = false;
+      resizeObservers.push(this);
+    }
+
+    observe(target) {
+      this.targets.add(target);
+    }
+
+    disconnect() {
+      this.disconnected = true;
+      this.targets.clear();
+      resizeObserverDisconnects += 1;
+    }
+
+    trigger() {
+      if (this.disconnected || this.targets.size === 0) {
+        return;
+      }
+
+      const entries = [...this.targets].map((target) => ({
+        target,
+        contentRect: target.getBoundingClientRect(),
+      }));
+
+      this.callback(entries, this);
+    }
+  }
 
   function useRef(initialValue) {
     assert.ok(currentInstance, "useRef was called outside component render");
@@ -127,6 +270,11 @@ function createHarness() {
     constructor(config) {
       this.config = config;
       this.canvas = null;
+      this.scale = {
+        refresh: () => {
+          scaleRefreshCalls.push(this);
+        },
+      };
 
       if (config.parent) {
         this.canvas = new MockElement("canvas");
@@ -163,7 +311,16 @@ function createHarness() {
     }
 
     if (specifier === "@/game/config") {
-      return { GAME_CONFIG: { width: 640, height: 640 } };
+      return {
+        ARENA_WIDTH: 960,
+        ARENA_HEIGHT: 720,
+        GRID_COLS: 40,
+        GRID_ROWS: 30,
+        GAME_CONFIG: {
+          width: 960,
+          height: 720,
+        },
+      };
     }
 
     throw new Error(`Unexpected module request: ${specifier}`);
@@ -223,6 +380,7 @@ function createHarness() {
     if (typeof element.type === "string") {
       const domNode = new MockElement(element.type);
       const props = element.props ?? {};
+      const mountedChildren = [];
 
       if (typeof props.className === "string") {
         domNode.className = props.className;
@@ -234,9 +392,25 @@ function createHarness() {
 
       parentNode.appendChild(domNode);
 
+      const children = Array.isArray(props.children)
+        ? props.children
+        : props.children == null
+          ? []
+          : [props.children];
+
+      for (const child of children) {
+        if (child && typeof child === "object") {
+          mountedChildren.push(await mountElement(child, domNode));
+        }
+      }
+
       return {
         node: domNode,
         unmount() {
+          for (let index = mountedChildren.length - 1; index >= 0; index -= 1) {
+            mountedChildren[index].unmount();
+          }
+
           if (props.ref && typeof props.ref === "object") {
             props.ref.current = null;
           }
@@ -257,10 +431,39 @@ function createHarness() {
     }
   }
 
+  async function flushAnimationFrames(iterations = 10) {
+    for (let count = 0; count < iterations; count += 1) {
+      if (frameQueue.size === 0) {
+        return;
+      }
+
+      const pendingFrames = [...frameQueue.entries()];
+      frameQueue.clear();
+
+      for (const [, callback] of pendingFrames) {
+        callback(count * 16);
+      }
+
+      await Promise.resolve();
+    }
+  }
+
+  async function getModuleExports() {
+    if (!exportsPromise) {
+      exportsPromise = loadGameComponent(mockRequire, {
+        window: windowMock,
+        ResizeObserver: ResizeObserverMock,
+      });
+    }
+
+    return exportsPromise;
+  }
+
   async function mountGame() {
-    const Game = await loadGameComponent(mockRequire);
+    const { default: Game } = await getModuleExports();
     const mountedTree = await mountElement(jsx(Game, {}), root);
     await flushMicrotasks();
+    await flushAnimationFrames();
 
     return {
       unmount() {
@@ -269,29 +472,123 @@ function createHarness() {
     };
   }
 
+  function setViewportSize(width, height) {
+    root.setSize(width, height);
+  }
+
   return {
     destroyCalls,
     gameInstances,
+    scaleRefreshCalls,
+    resizeObservers,
     root,
+    getModuleExports,
     mountGame,
+    setViewportSize,
+    flushAnimationFrames,
+    emitWindowEvent(type) {
+      windowEvents.emit(type);
+    },
+    emitVisualViewportResize() {
+      visualViewportEvents.emit("resize");
+    },
+    emitResizeObserver() {
+      for (const observer of resizeObservers) {
+        observer.trigger();
+      }
+    },
+    windowListenerCount(type) {
+      return windowEvents.listenerCount(type);
+    },
+    visualViewportListenerCount(type) {
+      return visualViewportEvents.listenerCount(type);
+    },
+    get resizeObserverDisconnects() {
+      return resizeObserverDisconnects;
+    },
   };
 }
 
-test("Game mount creates exactly one Phaser.Game instance", async () => {
+test("fitArenaToContainer snaps responsive dimensions to whole-grid cell sizes", async () => {
+  const harness = createHarness();
+  const { fitArenaToContainer } = await harness.getModuleExports();
+
+  const landscapeFit = fitArenaToContainer(1000, 700, 960, 720, 40, 30);
+  assert.equal(landscapeFit.width, 920);
+  assert.equal(landscapeFit.height, 690);
+  assert.equal(landscapeFit.scale, 920 / 960);
+
+  const portraitFit = fitArenaToContainer(700, 1000, 960, 720, 40, 30);
+  assert.equal(portraitFit.width, 680);
+  assert.equal(portraitFit.height, 510);
+  assert.equal(portraitFit.scale, 680 / 960);
+
+  const zeroBoundsFit = fitArenaToContainer(0, 1000, 960, 720, 40, 30);
+  assert.equal(zeroBoundsFit.width, 0);
+  assert.equal(zeroBoundsFit.height, 0);
+  assert.equal(zeroBoundsFit.scale, 0);
+});
+
+test("Game mount creates exactly one Phaser.Game instance and fits the arena size", async () => {
   const harness = createHarness();
   const mounted = await harness.mountGame();
 
   assert.equal(harness.gameInstances.length, 1);
+  assert.ok(harness.scaleRefreshCalls.length >= 1, "expected initial scale refresh");
 
   const [instance] = harness.gameInstances;
   assert.ok(instance.config.parent, "Phaser game parent node should be provided");
   assert.equal(instance.config.parent.children.length, 1);
   assert.equal(instance.config.parent.children[0].tagName, "CANVAS");
+  assert.equal(instance.config.parent.style.width, "920px");
+  assert.equal(instance.config.parent.style.height, "690px");
 
   mounted.unmount();
 });
 
-test("Game unmount destroys Phaser and clears mount DOM node", async () => {
+test("Game resize pipeline refreshes Phaser scale and keeps arena dimensions grid-aligned", async () => {
+  const harness = createHarness();
+  const mounted = await harness.mountGame();
+  const mountNode = harness.gameInstances[0].config.parent;
+
+  assert.equal(harness.windowListenerCount("resize"), 1);
+  assert.equal(harness.windowListenerCount("orientationchange"), 1);
+  assert.equal(harness.visualViewportListenerCount("resize"), 1);
+  assert.equal(harness.resizeObservers.length, 1);
+
+  const initialRefreshCount = harness.scaleRefreshCalls.length;
+
+  harness.setViewportSize(700, 1000);
+  harness.emitWindowEvent("resize");
+  await harness.flushAnimationFrames();
+
+  assert.equal(mountNode.style.width, "680px");
+  assert.equal(mountNode.style.height, "510px");
+  assert.ok(
+    harness.scaleRefreshCalls.length > initialRefreshCount,
+    "expected a scale refresh after window resize",
+  );
+
+  const beforeVisualViewportRefresh = harness.scaleRefreshCalls.length;
+  harness.emitVisualViewportResize();
+  await harness.flushAnimationFrames();
+  assert.ok(
+    harness.scaleRefreshCalls.length > beforeVisualViewportRefresh,
+    "expected a scale refresh after visual viewport resize",
+  );
+
+  const beforeObserverRefresh = harness.scaleRefreshCalls.length;
+  harness.emitResizeObserver();
+  await harness.flushAnimationFrames();
+  assert.ok(
+    harness.scaleRefreshCalls.length > beforeObserverRefresh,
+    "expected a scale refresh after observer-triggered resize",
+  );
+
+  mounted.unmount();
+});
+
+test("Game unmount destroys Phaser and unregisters resize resources", async () => {
   const harness = createHarness();
   const mounted = await harness.mountGame();
   const mountNode = harness.gameInstances[0].config.parent;
@@ -303,4 +600,8 @@ test("Game unmount destroys Phaser and clears mount DOM node", async () => {
   assert.deepEqual(harness.destroyCalls, [[true]]);
   assert.equal(mountNode.children.length, 0);
   assert.equal(harness.root.children.length, 0);
+  assert.equal(harness.windowListenerCount("resize"), 0);
+  assert.equal(harness.windowListenerCount("orientationchange"), 0);
+  assert.equal(harness.visualViewportListenerCount("resize"), 0);
+  assert.equal(harness.resizeObserverDisconnects, 1);
 });
