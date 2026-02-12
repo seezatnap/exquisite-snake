@@ -11,6 +11,7 @@ import {
   MoveTicker,
 } from "../utils/grid";
 import { TouchInput } from "../utils/touchInput";
+import type { IceMomentum } from "../systems/IceMomentum";
 
 // ── Constants ────────────────────────────────────────────────────
 
@@ -67,6 +68,9 @@ export class Snake {
 
   /** Stored keyboard handler reference for cleanup in destroy(). */
   private keydownHandler: ((event: { code: string }) => void) | null = null;
+
+  /** Optional Ice Cavern momentum handler (set by MainScene on biome changes). */
+  private iceMomentum: IceMomentum | null = null;
 
   constructor(
     scene: Phaser.Scene,
@@ -196,17 +200,42 @@ export class Snake {
   /**
    * Move the snake one grid step forward.
    * Consumes the next buffered direction if available.
+   *
+   * When Ice Cavern momentum is active and the player requests a turn,
+   * the snake slides `ICE_SLIDE_TILES` extra steps in the old direction
+   * before the turn is applied.
    */
   private step(): void {
-    // Consume next buffered direction
-    if (this.inputBuffer.length > 0) {
-      this.direction = this.inputBuffer.shift()!;
+    const ice = this.iceMomentum;
+    let deferredDirection: Direction | null = null;
+
+    if (ice && ice.isSliding()) {
+      // Mid-slide: advance the slide counter. If it completes, defer the
+      // direction change to AFTER this step's movement so the snake still
+      // moves in the old direction for this tile.
+      const resolved = ice.advanceSlide();
+      if (resolved !== null) {
+        deferredDirection = resolved;
+      }
+      // During a slide, do NOT consume from the input buffer (the turn is
+      // already captured by ice momentum).
+    } else if (this.inputBuffer.length > 0) {
+      const nextDir = this.inputBuffer.shift()!;
+
+      if (ice && ice.isEnabled()) {
+        // Ice Cavern: capture the turn and begin sliding in the old direction
+        ice.beginSlide(nextDir);
+        // direction stays the same for this step (slide in old direction)
+      } else {
+        // Normal: apply the direction change immediately
+        this.direction = nextDir;
+      }
     }
 
     // Save previous positions for interpolation
     this.prevSegments = this.segments.map((s) => ({ ...s }));
 
-    // Compute new head position
+    // Compute new head position (uses current direction, before deferred change)
     const newHead = stepInDirection(this.segments[0], this.direction);
 
     // Shift segments: add new head, optionally keep or remove tail
@@ -220,6 +249,11 @@ export class Snake {
       this.prevSegments.unshift({ ...this.prevSegments[0] });
     } else {
       this.segments.pop();
+    }
+
+    // Apply deferred direction change after movement (ice slide completion)
+    if (deferredDirection !== null) {
+      this.direction = deferredDirection;
     }
   }
 
@@ -323,6 +357,16 @@ export class Snake {
   /** Get the movement ticker (for external progress queries). */
   getTicker(): MoveTicker {
     return this.ticker;
+  }
+
+  /** Set the Ice Cavern momentum handler. Pass null to remove. */
+  setIceMomentum(momentum: IceMomentum | null): void {
+    this.iceMomentum = momentum;
+  }
+
+  /** Get the current Ice Cavern momentum handler. */
+  getIceMomentum(): IceMomentum | null {
+    return this.iceMomentum;
   }
 
   // ── Cleanup ────────────────────────────────────────────────────

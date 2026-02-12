@@ -23,6 +23,7 @@ import {
   LAVA_BURN_SEGMENTS,
   LAVA_SURVIVAL_THRESHOLD,
 } from "../entities/LavaPool";
+import { IceMomentum } from "../systems/IceMomentum";
 
 // ── Default spawn configuration ─────────────────────────────────
 
@@ -58,6 +59,9 @@ export class MainScene extends Phaser.Scene {
 
   /** Lava pool manager for the Molten Core biome (null when not playing). */
   private lavaPoolManager: LavaPoolManager | null = null;
+
+  /** Ice Cavern momentum handler — persists across runs (reset between runs). */
+  private iceMomentum = new IceMomentum();
 
   /** Bound listener for biome change events (stored for cleanup). */
   private onBiomeChange: BiomeChangeListener | null = null;
@@ -98,6 +102,8 @@ export class MainScene extends Phaser.Scene {
       }
       gameBridge.setBiome(newBiome);
       gameBridge.setBiomeVisitStats(this.biomeManager.getVisitStats());
+      // Enable/disable ice momentum based on biome
+      this.iceMomentum.setEnabled(newBiome === Biome.IceCavern);
     };
     this.biomeManager.onChange(this.onBiomeChange);
 
@@ -115,6 +121,8 @@ export class MainScene extends Phaser.Scene {
       this.onBiomeChange = null;
     }
     this.biomeManager.reset();
+    this.iceMomentum.reset();
+    this.iceMomentum.setEnabled(false);
     this.destroyEntities();
   }
 
@@ -188,9 +196,13 @@ export class MainScene extends Phaser.Scene {
     this.biomeManager.reset();
     this.biomeManager.start();
     // Sync initial biome state to bridge
-    gameBridge.setBiome(this.biomeManager.getCurrentBiome());
+    const initialBiome = this.biomeManager.getCurrentBiome();
+    gameBridge.setBiome(initialBiome);
     gameBridge.setBiomeTimeRemaining(this.biomeManager.getTimeRemaining());
     gameBridge.setBiomeVisitStats(this.biomeManager.getVisitStats());
+    // Reset and configure ice momentum for the starting biome
+    this.iceMomentum.reset();
+    this.iceMomentum.setEnabled(initialBiome === Biome.IceCavern);
     this.destroyEntities();
     this.createEntities();
   }
@@ -221,6 +233,7 @@ export class MainScene extends Phaser.Scene {
       DEFAULT_DIRECTION,
       DEFAULT_SNAKE_LENGTH,
     );
+    this.snake.setIceMomentum(this.iceMomentum);
     this.snake.setupInput();
     this.snake.setupTouchInput();
     this.food = new Food(this, this.snake, this.rng);
@@ -348,6 +361,10 @@ export class MainScene extends Phaser.Scene {
 
   getLavaPoolManager(): LavaPoolManager | null {
     return this.lavaPoolManager;
+  }
+
+  getIceMomentum(): IceMomentum {
+    return this.iceMomentum;
   }
 
   // ── Arena grid ──────────────────────────────────────────────
