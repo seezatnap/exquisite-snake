@@ -242,6 +242,69 @@ describe("MainScene", () => {
   });
 });
 
+describe("MainScene – storage integration", () => {
+  beforeEach(() => {
+    localStorage.clear();
+  });
+
+  it("create() loads persisted high score from localStorage", () => {
+    localStorage.setItem("exquisite-snake:highScore", "99");
+    const scene = new MainScene();
+    scene.create();
+    expect(scene.getHighScore()).toBe(99);
+    expect(spySetHighScore).toHaveBeenCalledWith(99);
+  });
+
+  it("create() defaults to 0 when no high score is stored", () => {
+    const scene = new MainScene();
+    scene.create();
+    expect(scene.getHighScore()).toBe(0);
+  });
+
+  it("endRun() persists new high score to localStorage", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.enterPhase("playing");
+    scene.addScore(75);
+    scene.endRun();
+    expect(localStorage.getItem("exquisite-snake:highScore")).toBe("75");
+  });
+
+  it("endRun() does not write to localStorage when score is not a new high", () => {
+    localStorage.setItem("exquisite-snake:highScore", "100");
+    const scene = new MainScene();
+    scene.create();
+    scene.enterPhase("playing");
+    scene.addScore(50);
+    scene.endRun();
+    // Should still be the original value
+    expect(localStorage.getItem("exquisite-snake:highScore")).toBe("100");
+  });
+
+  it("survives localStorage being unavailable on create", () => {
+    vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => {
+      throw new Error("SecurityError");
+    });
+    const scene = new MainScene();
+    expect(() => scene.create()).not.toThrow();
+    expect(scene.getHighScore()).toBe(0);
+    vi.restoreAllMocks();
+  });
+
+  it("survives localStorage being unavailable on endRun", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.enterPhase("playing");
+    scene.addScore(50);
+    vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+      throw new Error("QuotaExceededError");
+    });
+    expect(() => scene.endRun()).not.toThrow();
+    expect(scene.getHighScore()).toBe(50);
+    vi.restoreAllMocks();
+  });
+});
+
 describe("MainScene source file", () => {
   const source = fs.readFileSync(
     path.join(ROOT, "src/game/scenes/MainScene.ts"),
