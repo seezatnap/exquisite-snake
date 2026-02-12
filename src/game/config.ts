@@ -1,5 +1,6 @@
 import Phaser from "phaser";
 import { Boot } from "./scenes/Boot";
+import { MainScene } from "./scenes/MainScene";
 
 // ── Arena Dimensions ─────────────────────────────────────────────
 export const ARENA_WIDTH = 800;
@@ -52,6 +53,6 @@ export function createGameConfig(
         debug: false,
       },
     },
-    scene: [Boot],
+    scene: [Boot, MainScene],
   };
 }
