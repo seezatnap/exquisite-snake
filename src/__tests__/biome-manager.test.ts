@@ -105,6 +105,31 @@ describe("BiomeManager run lifecycle", () => {
     expect(manager.getElapsedInBiomeMs()).toBe(0);
   });
 
+  it("tracks biome visit counts across repeated full-cycle rotations", () => {
+    const manager = new BiomeManager();
+    manager.startRun();
+
+    manager.update(BIOME_ROTATION_INTERVAL_MS * 8);
+
+    expect(manager.getCurrentBiome()).toBe(Biome.NeonCity);
+    expect(manager.getVisitStats()).toEqual({
+      [Biome.NeonCity]: 3,
+      [Biome.IceCavern]: 2,
+      [Biome.MoltenCore]: 2,
+      [Biome.VoidRift]: 2,
+    });
+  });
+
+  it("returns a defensive copy for biome visit stats", () => {
+    const manager = new BiomeManager();
+    manager.startRun();
+
+    const stats = manager.getVisitStats();
+    stats[Biome.IceCavern] = 999;
+
+    expect(manager.getVisitStats()[Biome.IceCavern]).toBe(0);
+  });
+
   it("startRun always resets biome state and visit stats for a fresh run", () => {
     const manager = new BiomeManager();
     manager.startRun();

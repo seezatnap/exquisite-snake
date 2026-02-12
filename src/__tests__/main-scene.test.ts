@@ -425,6 +425,29 @@ describe("MainScene", () => {
     });
   });
 
+  it("tracks biome visit stats across repeated cycle rotations", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.enterPhase("playing");
+
+    scene.getSnake()!.getTicker().setInterval(1_000_000);
+    scene.update(0, 45_000 * 8);
+
+    expect(scene.getCurrentBiome()).toBe(Biome.NeonCity);
+    expect(scene.getBiomeVisitStats()).toEqual({
+      [Biome.NeonCity]: 3,
+      [Biome.IceCavern]: 2,
+      [Biome.MoltenCore]: 2,
+      [Biome.VoidRift]: 2,
+    });
+    expect(gameBridge.getState().biomeVisitStats).toEqual({
+      [Biome.NeonCity]: 3,
+      [Biome.IceCavern]: 2,
+      [Biome.MoltenCore]: 2,
+      [Biome.VoidRift]: 2,
+    });
+  });
+
   it("emits biome exit → transition → enter events per rotation", () => {
     const scene = new MainScene();
     scene.create();
@@ -773,6 +796,32 @@ describe("MainScene", () => {
 
     scene.update(0, 100); // step 3 + gravity pull toward center (down)
     expect(snake.getHeadPosition()).toEqual({ col: 13, row: 1 });
+  });
+
+  it("resets Void Rift pull cadence when the biome is re-entered", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.enterPhase("playing");
+
+    const snake = scene.getSnake()!;
+    snake.getTicker().setInterval(1_000_000);
+    scene.update(0, 45_000 * 3); // Neon -> Ice -> Molten -> Void
+    expect(scene.getCurrentBiome()).toBe(Biome.VoidRift);
+
+    snake.reset({ col: 10, row: 0 }, "right", 1);
+    snake.getTicker().setInterval(100);
+    scene.update(0, 100); // cadence step 1
+    scene.update(0, 100); // cadence step 2
+    expect(snake.getHeadPosition()).toEqual({ col: 12, row: 0 });
+
+    snake.getTicker().setInterval(1_000_000);
+    scene.update(0, 45_000 * 4); // Void -> Neon -> Ice -> Molten -> Void
+    expect(scene.getCurrentBiome()).toBe(Biome.VoidRift);
+
+    snake.reset({ col: 10, row: 0 }, "right", 1);
+    snake.getTicker().setInterval(100);
+    scene.update(0, 100); // should be cadence step 1 again after re-enter
+    expect(snake.getHeadPosition()).toEqual({ col: 11, row: 0 });
   });
 
   it("shared biome config allows tuning Ice momentum slide distance", () => {
