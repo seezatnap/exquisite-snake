@@ -117,7 +117,18 @@ const BIOME_LAYER_DEPTH = {
   BACKDROP: -30,
   TILEMAP: -20,
   GRID: -10,
+  TRANSITION_OVERLAY: 40,
 } as const;
+
+const BIOME_TRANSITION_DURATION_MS = 320;
+const BIOME_TRANSITION_SHAKE_DURATION_MS = 110;
+const BIOME_TRANSITION_SHAKE_INTENSITY = 0.0035;
+const BIOME_TRANSITION_OVERLAY_ALPHA = 0.9;
+
+interface BiomeTransitionEffectState {
+  from: Biome;
+  elapsedMs: number;
+}
 
 interface BiomeMechanicsState {
   iceMomentumActive: boolean;
@@ -175,6 +186,13 @@ export class MainScene extends Phaser.Scene {
   /** Graphics object used to render biome-specific arena grid lines. */
   private gridGraphics: Phaser.GameObjects.Graphics | null = null;
 
+  /** Graphics object used to render biome transition wipes over gameplay. */
+  private biomeTransitionOverlayGraphics: Phaser.GameObjects.Graphics | null =
+    null;
+
+  /** Active biome transition wipe metadata (null when no transition is animating). */
+  private biomeTransitionEffect: BiomeTransitionEffectState | null = null;
+
   /** Number of snake steps elapsed since entering Void Rift. */
   private voidGravityStepCounter = 0;
 
@@ -218,6 +236,7 @@ export class MainScene extends Phaser.Scene {
     }
     this.biomeManager.stopRun();
     this.resetMoltenCoreState();
+    this.clearBiomeTransitionEffect();
     this.destroyEntities();
     this.backdropGraphics?.destroy?.();
     this.backdropGraphics = null;
@@ -279,6 +298,7 @@ export class MainScene extends Phaser.Scene {
     gameBridge.resetRun();
     this.biomeManager.startRun();
     this.resetMoltenCoreState();
+    this.clearBiomeTransitionEffect();
     this.voidGravityStepCounter = 0;
     this.handleBiomeEnter(this.biomeManager.getCurrentBiome());
     this.destroyEntities();
@@ -290,6 +310,7 @@ export class MainScene extends Phaser.Scene {
     shakeCamera(this);
     this.biomeManager.stopRun();
     this.resetMoltenCoreState();
+    this.clearBiomeTransitionEffect();
     if (this.snake?.isAlive()) {
       this.snake.kill();
     }
@@ -438,6 +459,7 @@ export class MainScene extends Phaser.Scene {
   // ── Arena grid ──────────────────────────────────────────────
 
   private updateBiomeState(delta: number): void {
+    this.updateBiomeTransitionEffect(delta);
     const transitions = this.biomeManager.update(delta);
     if (transitions.length === 0) {
       return;
@@ -453,6 +475,7 @@ export class MainScene extends Phaser.Scene {
     this.syncBiomeRuntimeToBridge();
     gameBridge.emitBiomeTransition(transition);
     this.handleBiomeEnter(transition.to);
+    this.startBiomeTransitionEffect(transition.from);
   }
 
   private handleBiomeEnter(biome: Biome): void {
@@ -663,6 +686,131 @@ export class MainScene extends Phaser.Scene {
     this.drawBackdrop(biome, theme);
     this.drawTilemap(biome, theme);
     this.drawGrid(theme.gridLineColor, theme.gridLineAlpha);
+  }
+
+  private startBiomeTransitionEffect(from: Biome): void {
+    this.biomeTransitionEffect = {
+      from,
+      elapsedMs: 0,
+    };
+
+    this.cameras.main?.shake?.(
+      BIOME_TRANSITION_SHAKE_DURATION_MS,
+      BIOME_TRANSITION_SHAKE_INTENSITY,
+    );
+
+    this.biomeTransitionOverlayGraphics?.destroy?.();
+    const overlay = this.add.graphics();
+    this.biomeTransitionOverlayGraphics = overlay;
+    overlay.setDepth?.(BIOME_LAYER_DEPTH.TRANSITION_OVERLAY);
+
+    this.drawBiomeTransitionOverlay(from, 0);
+  }
+
+  private updateBiomeTransitionEffect(delta: number): void {
+    if (!this.biomeTransitionEffect) {
+      return;
+    }
+
+    this.biomeTransitionEffect.elapsedMs += Math.max(0, delta);
+    const progress = Math.min(
+      1,
+      this.biomeTransitionEffect.elapsedMs / BIOME_TRANSITION_DURATION_MS,
+    );
+    this.drawBiomeTransitionOverlay(this.biomeTransitionEffect.from, progress);
+
+    if (progress >= 1) {
+      this.clearBiomeTransitionEffect();
+    }
+  }
+
+  private drawBiomeTransitionOverlay(from: Biome, progress: number): void {
+    const gfx = this.biomeTransitionOverlayGraphics;
+    if (!gfx) {
+      return;
+    }
+
+    const theme = BIOME_VISUAL_THEMES[from];
+    const clampedProgress = Math.max(0, Math.min(1, progress));
+    const centerX = ARENA_WIDTH / 2;
+    const centerY = ARENA_HEIGHT / 2;
+    const maxRevealRadius = Math.hypot(centerX, centerY);
+    const revealRadius =
+      clampedProgress * (maxRevealRadius + TILE_SIZE) - TILE_SIZE;
+
+    gfx.clear?.();
+    gfx.fillStyle?.(theme.backgroundColor, BIOME_TRANSITION_OVERLAY_ALPHA);
+
+    for (let col = 0; col < GRID_COLS; col++) {
+      for (let row = 0; row < GRID_ROWS; row++) {
+        if (!this.isTransitionCellCovered(col, row, revealRadius)) {
+          continue;
+        }
+        gfx.fillRect?.(col * TILE_SIZE, row * TILE_SIZE, TILE_SIZE, TILE_SIZE);
+      }
+    }
+
+    gfx.lineStyle?.(
+      1,
+      theme.tilemapPrimaryColor,
+      Math.min(1, theme.tilemapPrimaryAlpha + 0.24),
+    );
+    for (let col = 0; col < GRID_COLS; col++) {
+      for (let row = 0; row < GRID_ROWS; row++) {
+        if (!this.isTransitionCellCovered(col, row, revealRadius)) {
+          continue;
+        }
+        if (!this.shouldDrawTilePrimary(from, col, row)) {
+          continue;
+        }
+        const x = col * TILE_SIZE;
+        const y = row * TILE_SIZE;
+        gfx.moveTo?.(x + 2, y + TILE_SIZE / 2);
+        gfx.lineTo?.(x + TILE_SIZE - 2, y + TILE_SIZE / 2);
+      }
+    }
+    gfx.strokePath?.();
+
+    gfx.lineStyle?.(
+      1,
+      theme.tilemapAccentColor,
+      Math.min(1, theme.tilemapAccentAlpha + 0.2),
+    );
+    for (let col = 0; col < GRID_COLS; col++) {
+      for (let row = 0; row < GRID_ROWS; row++) {
+        if (!this.isTransitionCellCovered(col, row, revealRadius)) {
+          continue;
+        }
+        if (!this.shouldDrawTileAccent(from, col, row)) {
+          continue;
+        }
+        const x = col * TILE_SIZE;
+        const y = row * TILE_SIZE;
+        gfx.moveTo?.(x + TILE_SIZE / 2, y + 2);
+        gfx.lineTo?.(x + TILE_SIZE / 2, y + TILE_SIZE - 2);
+      }
+    }
+    gfx.strokePath?.();
+  }
+
+  private isTransitionCellCovered(
+    col: number,
+    row: number,
+    revealRadius: number,
+  ): boolean {
+    const centerX = ARENA_WIDTH / 2;
+    const centerY = ARENA_HEIGHT / 2;
+    const tileCenterX = col * TILE_SIZE + TILE_SIZE / 2;
+    const tileCenterY = row * TILE_SIZE + TILE_SIZE / 2;
+    return (
+      Math.hypot(tileCenterX - centerX, tileCenterY - centerY) > revealRadius
+    );
+  }
+
+  private clearBiomeTransitionEffect(): void {
+    this.biomeTransitionEffect = null;
+    this.biomeTransitionOverlayGraphics?.destroy?.();
+    this.biomeTransitionOverlayGraphics = null;
   }
 
   private drawBackdrop(biome: Biome, theme: BiomeVisualTheme): void {
