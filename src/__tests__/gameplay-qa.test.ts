@@ -129,7 +129,9 @@ describe("End-to-end gameplay QA", () => {
     const scene = new MainScene();
     scene.create();
 
-    // Use deterministic RNG so food spawns at a predictable position
+    // Use deterministic RNG so food spawns at a predictable interior position.
+    // With rng = () => 0.5 the food lands roughly in the middle of the free-cell
+    // list, which is always well inside the 40×30 grid.
     scene.setRng(() => 0.5);
 
     scene.enterPhase("playing");
@@ -138,19 +140,27 @@ describe("End-to-end gameplay QA", () => {
     const food = scene.getFood()!;
     const foodPos = food.getPosition();
 
-    // Reset snake to be adjacent to food and heading toward it
-    const headCol = foodPos.col - 1;
-    if (headCol >= 0) {
-      snake.reset({ col: headCol, row: foodPos.row }, "right", 1);
+    // Sanity: food must be inside the grid so we can place the snake adjacent
+    expect(foodPos.col).toBeGreaterThanOrEqual(1);
+    expect(foodPos.col).toBeLessThan(GRID_COLS);
+    expect(foodPos.row).toBeGreaterThanOrEqual(0);
+    expect(foodPos.row).toBeLessThan(GRID_ROWS);
 
-      const interval = snake.getTicker().interval;
-      scene.update(0, interval);
+    // Deterministically place the snake one cell to the left of food, heading
+    // right, with length 1 so no body segments interfere.
+    snake.reset({ col: foodPos.col - 1, row: foodPos.row }, "right", 1);
 
-      // If snake reached food, score should be > 0
-      if (gridEquals(snake.getHeadPosition(), foodPos)) {
-        expect(scene.getScore()).toBeGreaterThan(0);
-      }
-    }
+    expect(scene.getScore()).toBe(0);
+
+    // One full tick moves the snake onto the food cell
+    const interval = snake.getTicker().interval;
+    scene.update(0, interval);
+
+    // The snake must now be on the food's original position
+    expect(gridEquals(snake.getHeadPosition(), foodPos)).toBe(true);
+
+    // Score must have incremented — unconditional assertion
+    expect(scene.getScore()).toBeGreaterThan(0);
   });
 
   it("high score persists across game sessions", () => {
