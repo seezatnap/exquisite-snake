@@ -6,6 +6,7 @@
     "dev": "next dev",
     "build": "next build",
     "export": "next build",
+    "test": "node --test",
     "start": "next start",
     "lint": "eslint",
     "typecheck": "tsc --noEmit"
