@@ -12,14 +12,25 @@ const mockLineStyle = vi.fn();
 const mockMoveTo = vi.fn();
 const mockLineTo = vi.fn();
 const mockStrokePath = vi.fn();
+const mockFillStyle = vi.fn();
+const mockFillRect = vi.fn();
+const mockGraphicsClear = vi.fn();
+const mockGraphicsDestroy = vi.fn();
+const mockGraphicsSetDepth = vi.fn();
 const mockAddGraphics = vi.fn(() => mockGraphics);
 const mockSetBackgroundColor = vi.fn();
+const mockCameraShake = vi.fn();
 
 const mockGraphics = {
   lineStyle: mockLineStyle,
   moveTo: mockMoveTo,
   lineTo: mockLineTo,
   strokePath: mockStrokePath,
+  fillStyle: mockFillStyle,
+  fillRect: mockFillRect,
+  clear: mockGraphicsClear,
+  destroy: mockGraphicsDestroy,
+  setDepth: mockGraphicsSetDepth,
 };
 
 const mockSceneStart = vi.fn();
@@ -55,7 +66,7 @@ vi.mock("phaser", () => {
     };
     cameras = {
       main: {
-        shake: vi.fn(),
+        shake: mockCameraShake,
         setBackgroundColor: mockSetBackgroundColor,
       },
     };
@@ -411,7 +422,7 @@ describe("MainScene", () => {
     ]);
   });
 
-  it("redraws biome background and tilemap palette on transition", () => {
+  it("redraws biome background/tilemap and starts the transition wipe on biome swap", () => {
     const scene = new MainScene();
     scene.create();
     scene.enterPhase("playing");
@@ -419,15 +430,53 @@ describe("MainScene", () => {
     mockAddGraphics.mockClear();
     mockLineStyle.mockClear();
     mockSetBackgroundColor.mockClear();
+    mockFillRect.mockClear();
+    mockCameraShake.mockClear();
 
     scene.update(0, 45_000); // Neon -> Ice
 
     expect(scene.getCurrentBiome()).toBe(Biome.IceCavern);
-    expect(mockAddGraphics).toHaveBeenCalledTimes(3);
+    expect(mockAddGraphics).toHaveBeenCalledTimes(4);
     expect(mockSetBackgroundColor).toHaveBeenCalledWith(0x081624);
     expect(mockLineStyle).toHaveBeenCalledWith(2, 0x8fdcff, 0.16);
     expect(mockLineStyle).toHaveBeenCalledWith(1, 0x8ed5ff, 0.16);
     expect(mockLineStyle).toHaveBeenCalledWith(1, 0x7dc6ff, 0.1);
+    expect(mockCameraShake).toHaveBeenCalledWith(110, 0.0035);
+    expect(mockFillRect).toHaveBeenCalled();
+
+    const swapOrder = mockSetBackgroundColor.mock.invocationCallOrder[0];
+    const wipeOrder = mockFillRect.mock.invocationCallOrder[0];
+    expect(swapOrder).toBeLessThan(wipeOrder);
+  });
+
+  it("keeps gameplay updates in sync while transition FX animates and then cleans up", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.enterPhase("playing");
+
+    const snake = scene.getSnake()!;
+    snake.getTicker().setInterval(60_000); // isolate initial biome transition timing
+    scene.update(0, 45_000); // Neon -> Ice, starts transition FX
+
+    const internals = scene as unknown as {
+      biomeTransitionEffect: { from: Biome; elapsedMs: number } | null;
+      biomeTransitionOverlayGraphics: unknown;
+    };
+
+    expect(internals.biomeTransitionEffect).not.toBeNull();
+
+    snake.reset({ col: 10, row: 10 }, "right", 1);
+    snake.getTicker().setInterval(100);
+
+    scene.update(0, 100);
+    expect(scene.getPhase()).toBe("playing");
+    expect(snake.getHeadPosition()).toEqual({ col: 11, row: 10 });
+
+    scene.update(0, 300);
+    expect(scene.getPhase()).toBe("playing");
+    expect(snake.getHeadPosition()).toEqual({ col: 12, row: 10 });
+    expect(internals.biomeTransitionEffect).toBeNull();
+    expect(internals.biomeTransitionOverlayGraphics).toBeNull();
   });
 
   it("applies distinct background colors across the full biome cycle", () => {
