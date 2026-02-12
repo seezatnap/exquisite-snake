@@ -1,4 +1,7 @@
 import * as Phaser from "phaser";
+import { GRID_COLS, GRID_ROWS } from "../config";
+import { Snake, type SnakeOptions } from "../entities/Snake";
+import { areGridPositionsEqual, isWithinGridBounds } from "../utils/grid";
 import { loadHighScore, persistHighScore } from "../utils/storage";
 
 export const MAIN_SCENE_KEY = "MainScene" as const;
@@ -19,6 +22,17 @@ const INITIAL_STATE: OverlayGameState = Object.freeze({
   score: 0,
   highScore: 0,
   elapsedSurvivalMs: 0,
+});
+
+const DEFAULT_SNAKE_OPTIONS: SnakeOptions = Object.freeze({
+  initialHeadPosition: Object.freeze({ x: 8, y: 8 }),
+  initialDirection: "right",
+  initialLength: 3,
+});
+
+const PLAYFIELD_BOUNDS = Object.freeze({
+  cols: GRID_COLS,
+  rows: GRID_ROWS,
 });
 
 function clampNonNegativeInteger(value: number): number {
@@ -114,6 +128,10 @@ export class MainScene extends Phaser.Scene {
 
   private runStartMs: number | null = null;
 
+  private lastUpdateMs: number | null = null;
+
+  private snake = new Snake(DEFAULT_SNAKE_OPTIONS);
+
   constructor() {
     super(MAIN_SCENE_KEY);
   }
@@ -121,6 +139,7 @@ export class MainScene extends Phaser.Scene {
   create(): void {
     mainSceneStateBridge.resetForNextRun();
     this.setPersistedHighScore(loadHighScore());
+    this.rebuildSnakeForNextRun();
     this.bindSceneLifecycleEvents();
     this.bindStartInput();
   }
@@ -133,13 +152,21 @@ export class MainScene extends Phaser.Scene {
       return;
     }
 
+    if (this.advanceSnakeWithCollisionChecks(this.getFrameDeltaMs(time))) {
+      return;
+    }
+
     mainSceneStateBridge.setElapsedSurvivalMs(time - this.runStartMs);
   }
 
   startRun(): void {
+    this.rebuildSnakeForNextRun();
     this.runStartMs = this.time.now;
+    this.lastUpdateMs = this.time.now;
     mainSceneStateBridge.resetForNextRun();
     mainSceneStateBridge.setPhase("playing");
+    this.snake.bindKeyboardControls(this.input.keyboard ?? null);
+    this.snake.bindTouchControls(this.input);
   }
 
   addScore(points = 1): void {
@@ -160,6 +187,10 @@ export class MainScene extends Phaser.Scene {
   }
 
   endRun(): void {
+    if (mainSceneStateBridge.getSnapshot().phase === "game-over") {
+      return;
+    }
+
     if (this.runStartMs !== null) {
       mainSceneStateBridge.setElapsedSurvivalMs(this.time.now - this.runStartMs);
     }
@@ -168,22 +199,22 @@ export class MainScene extends Phaser.Scene {
       persistHighScore(mainSceneStateBridge.getSnapshot().highScore),
     );
     this.runStartMs = null;
+    this.lastUpdateMs = null;
+    this.snake.unbindKeyboardControls();
+    this.snake.unbindTouchControls();
     mainSceneStateBridge.setPhase("game-over");
   }
 
   resetForReplay(): void {
     this.runStartMs = null;
+    this.lastUpdateMs = null;
+    this.rebuildSnakeForNextRun();
     mainSceneStateBridge.resetForNextRun();
   }
 
   private bindStartInput(): void {
-    const keyboard = this.input.keyboard;
-
-    if (!keyboard) {
-      return;
-    }
-
-    keyboard.on("keydown", this.handleAnyKeyToStart, this);
+    this.input.keyboard?.on("keydown", this.handleAnyInputToStart, this);
+    this.input.on("pointerdown", this.handleAnyInputToStart, this);
   }
 
   private bindSceneLifecycleEvents(): void {
@@ -191,7 +222,7 @@ export class MainScene extends Phaser.Scene {
     this.events.once(Phaser.Scenes.Events.DESTROY, this.handleShutdown, this);
   }
 
-  private handleAnyKeyToStart(): void {
+  private handleAnyInputToStart(): void {
     if (mainSceneStateBridge.getSnapshot().phase !== "start") {
       return;
     }
@@ -201,6 +232,66 @@ export class MainScene extends Phaser.Scene {
 
   private handleShutdown(): void {
     this.runStartMs = null;
-    this.input.keyboard?.off("keydown", this.handleAnyKeyToStart, this);
+    this.lastUpdateMs = null;
+    this.snake.unbindKeyboardControls();
+    this.snake.unbindTouchControls();
+    this.input.keyboard?.off("keydown", this.handleAnyInputToStart, this);
+    this.input.off("pointerdown", this.handleAnyInputToStart, this);
+  }
+
+  private rebuildSnakeForNextRun(): void {
+    this.snake.unbindKeyboardControls();
+    this.snake.unbindTouchControls();
+    this.snake = new Snake(DEFAULT_SNAKE_OPTIONS);
+  }
+
+  private getFrameDeltaMs(currentTimeMs: number): number {
+    if (this.lastUpdateMs === null) {
+      this.lastUpdateMs = currentTimeMs;
+      return 0;
+    }
+
+    const frameDeltaMs = currentTimeMs - this.lastUpdateMs;
+    this.lastUpdateMs = currentTimeMs;
+
+    if (!Number.isFinite(frameDeltaMs) || frameDeltaMs <= 0) {
+      return 0;
+    }
+
+    return frameDeltaMs;
+  }
+
+  private advanceSnakeWithCollisionChecks(frameDeltaMs: number): boolean {
+    let remainingDeltaMs = frameDeltaMs;
+
+    while (remainingDeltaMs > 0) {
+      const tickDeltaMs = Math.min(remainingDeltaMs, this.snake.stepDurationMs);
+      remainingDeltaMs -= tickDeltaMs;
+
+      if (this.snake.tick(tickDeltaMs) === 0) {
+        continue;
+      }
+
+      if (this.hasCollision()) {
+        this.endRun();
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  private hasCollision(): boolean {
+    return this.hasWallCollision() || this.hasSelfCollision();
+  }
+
+  private hasWallCollision(): boolean {
+    return !isWithinGridBounds(this.snake.head, PLAYFIELD_BOUNDS);
+  }
+
+  private hasSelfCollision(): boolean {
+    const [head, ...body] = this.snake.getSegments();
+
+    return body.some((segment) => areGridPositionsEqual(segment, head));
   }
 }

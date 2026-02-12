@@ -82,6 +82,62 @@ test("Snake maps arrow keys and WASD inputs to directions", async () => {
   assert.equal(snakeModule.keyboardInputToDirection({ key: "Enter" }), null);
 });
 
+test("Snake maps swipe gestures into dominant-axis directions", async () => {
+  const snakeModule = await loadSnakeModule();
+
+  assert.equal(
+    snakeModule.swipeInputToDirection({
+      startX: 20,
+      startY: 20,
+      endX: 60,
+      endY: 24,
+    }),
+    "right",
+  );
+  assert.equal(
+    snakeModule.swipeInputToDirection({
+      startX: 80,
+      startY: 25,
+      endX: 28,
+      endY: 20,
+    }),
+    "left",
+  );
+  assert.equal(
+    snakeModule.swipeInputToDirection(
+      {
+        startX: 40,
+        startY: 80,
+        endX: 44,
+        endY: 24,
+      },
+      20,
+    ),
+    "up",
+  );
+  assert.equal(
+    snakeModule.swipeInputToDirection(
+      {
+        startX: 100,
+        startY: 10,
+        endX: 90,
+        endY: 36,
+      },
+      20,
+    ),
+    "down",
+  );
+  assert.equal(
+    snakeModule.swipeInputToDirection({
+      startX: 12,
+      startY: 8,
+      endX: 26,
+      endY: 12,
+    }),
+    null,
+  );
+});
+
 test("Snake buffers turns while rejecting 180-degree reversals", async () => {
   const snakeModule = await loadSnakeModule();
   const snake = new snakeModule.Snake({
@@ -95,6 +151,58 @@ test("Snake buffers turns while rejecting 180-degree reversals", async () => {
   assert.equal(snake.queueDirection("down"), false);
   assert.equal(snake.queueDirection("left"), true);
   assert.equal(snake.queueDirection("up"), false);
+  assert.deepEqual(toPlain(snake.queuedDirections), ["up", "left"]);
+});
+
+test("Snake queues swipe input through the same buffered turn rules", async () => {
+  const snakeModule = await loadSnakeModule();
+  const snake = new snakeModule.Snake({
+    initialHeadPosition: { x: 5, y: 5 },
+    initialDirection: "right",
+    touchSwipeThresholdPx: 16,
+    touchSwipeDebounceMs: 90,
+  });
+
+  assert.equal(
+    snake.queueDirectionFromSwipe({
+      startX: 50,
+      startY: 80,
+      endX: 50,
+      endY: 20,
+      eventTimeMs: 100,
+    }),
+    true,
+  );
+  assert.equal(
+    snake.queueDirectionFromSwipe({
+      startX: 40,
+      startY: 20,
+      endX: 10,
+      endY: 20,
+      eventTimeMs: 140,
+    }),
+    false,
+  );
+  assert.equal(
+    snake.queueDirectionFromSwipe({
+      startX: 40,
+      startY: 20,
+      endX: 10,
+      endY: 20,
+      eventTimeMs: 220,
+    }),
+    true,
+  );
+  assert.equal(
+    snake.queueDirectionFromSwipe({
+      startX: 10,
+      startY: 10,
+      endX: 50,
+      endY: 14,
+      eventTimeMs: 400,
+    }),
+    false,
+  );
   assert.deepEqual(toPlain(snake.queuedDirections), ["up", "left"]);
 });
 
@@ -149,11 +257,12 @@ test("Snake growth keeps tail segments and works with fixed-step tick timing", a
   assert.deepEqual(toPlain(snake.head), { x: 5, y: 2 });
 });
 
-test("Snake keyboard binding queues mapped directions and unregisters cleanly", async () => {
+test("Snake keyboard binding prevents defaults for mapped keys, including rejected turns", async () => {
   const snakeModule = await loadSnakeModule();
   const snake = new snakeModule.Snake({
     initialHeadPosition: { x: 4, y: 4 },
     initialDirection: "up",
+    inputBufferSize: 2,
   });
 
   let onCallCount = 0;
@@ -180,22 +289,96 @@ test("Snake keyboard binding queues mapped directions and unregisters cleanly", 
   assert.equal(onCallCount, 1);
 
   let preventedCount = 0;
-  listenerRef.call(listenerContext, {
-    key: "d",
-    preventDefault() {
-      preventedCount += 1;
-    },
-  });
-  listenerRef.call(listenerContext, {
-    key: "a",
-    preventDefault() {
-      preventedCount += 1;
-    },
-  });
+  const emitKey = (key) => {
+    listenerRef.call(listenerContext, {
+      key,
+      preventDefault() {
+        preventedCount += 1;
+      },
+    });
+  };
 
-  assert.equal(preventedCount, 1);
-  assert.deepEqual(toPlain(snake.queuedDirections), ["right"]);
+  emitKey("d"); // accepted
+  emitKey("a"); // rejected opposite
+  emitKey("d"); // rejected duplicate
+  emitKey("w"); // accepted (fills buffer)
+  emitKey("d"); // rejected full buffer
+  emitKey("Enter"); // unmapped, should not prevent default
+
+  assert.equal(preventedCount, 5);
+  assert.deepEqual(toPlain(snake.queuedDirections), ["right", "up"]);
 
   snake.unbindKeyboardControls();
   assert.equal(offCallCount, 1);
+});
+
+test("Snake touch binding queues swipes and unregisters cleanly", async () => {
+  const snakeModule = await loadSnakeModule();
+  const snake = new snakeModule.Snake({
+    initialHeadPosition: { x: 4, y: 4 },
+    initialDirection: "right",
+  });
+
+  const listenersByEvent = new Map();
+  const contextsByEvent = new Map();
+  let onCallCount = 0;
+  let offCallCount = 0;
+
+  const touchEmitter = {
+    on(eventName, listener, context) {
+      onCallCount += 1;
+      listenersByEvent.set(eventName, listener);
+      contextsByEvent.set(eventName, context);
+    },
+    off(eventName, listener, context) {
+      offCallCount += 1;
+      assert.equal(listener, listenersByEvent.get(eventName));
+      assert.equal(context, contextsByEvent.get(eventName));
+    },
+  };
+
+  snake.bindTouchControls(touchEmitter);
+  snake.bindTouchControls(touchEmitter);
+  assert.equal(onCallCount, 2);
+
+  listenersByEvent.get("pointerdown").call(contextsByEvent.get("pointerdown"), {
+    id: 9,
+    x: 100,
+    y: 100,
+  });
+  listenersByEvent.get("pointerup").call(contextsByEvent.get("pointerup"), {
+    id: 9,
+    x: 104,
+    y: 40,
+    upTime: 500,
+  });
+
+  listenersByEvent.get("pointerdown").call(contextsByEvent.get("pointerdown"), {
+    id: 9,
+    x: 120,
+    y: 42,
+  });
+  listenersByEvent.get("pointerup").call(contextsByEvent.get("pointerup"), {
+    id: 9,
+    x: 80,
+    y: 42,
+    upTime: 540,
+  });
+
+  listenersByEvent.get("pointerdown").call(contextsByEvent.get("pointerdown"), {
+    id: 9,
+    x: 120,
+    y: 42,
+  });
+  listenersByEvent.get("pointerup").call(contextsByEvent.get("pointerup"), {
+    id: 9,
+    x: 80,
+    y: 42,
+    upTime: 620,
+  });
+
+  assert.deepEqual(toPlain(snake.queuedDirections), ["up", "left"]);
+
+  snake.unbindTouchControls();
+  assert.equal(offCallCount, 2);
 });

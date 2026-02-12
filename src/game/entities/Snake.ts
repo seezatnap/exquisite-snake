@@ -9,7 +9,10 @@ import {
 export const DEFAULT_SNAKE_LENGTH = 3;
 export const DEFAULT_SNAKE_DIRECTION: Direction = "right";
 export const DEFAULT_SNAKE_INPUT_BUFFER_SIZE = 3;
+export const DEFAULT_TOUCH_SWIPE_THRESHOLD_PX = 24;
+export const DEFAULT_TOUCH_SWIPE_DEBOUNCE_MS = 80;
 const DEFAULT_HEAD_POSITION: GridPosition = Object.freeze({ x: 8, y: 8 });
+const FALLBACK_TOUCH_POINTER_ID = -1;
 
 type KeyboardDirectionEvent = Readonly<{
   key?: string | null;
@@ -20,6 +23,25 @@ type KeyboardDirectionEvent = Readonly<{
 export type KeyboardDirectionInput = Readonly<{
   key?: string | null;
   code?: string | null;
+}>;
+
+type TouchDirectionEvent = Readonly<{
+  id?: number | null;
+  x?: number | null;
+  y?: number | null;
+  upTime?: number | null;
+  time?: number | null;
+  event?: Readonly<{
+    timeStamp?: number | null;
+  }> | null;
+}>;
+
+export type SwipeDirectionInput = Readonly<{
+  startX?: number | null;
+  startY?: number | null;
+  endX?: number | null;
+  endY?: number | null;
+  eventTimeMs?: number | null;
 }>;
 
 export type KeyboardDirectionEmitter = {
@@ -35,12 +57,27 @@ export type KeyboardDirectionEmitter = {
   ): unknown;
 };
 
+export type TouchDirectionEmitter = {
+  on(
+    eventName: "pointerdown" | "pointerup",
+    listener: (event?: TouchDirectionEvent, ...args: unknown[]) => void,
+    context?: unknown,
+  ): unknown;
+  off(
+    eventName: "pointerdown" | "pointerup",
+    listener: (event?: TouchDirectionEvent, ...args: unknown[]) => void,
+    context?: unknown,
+  ): unknown;
+};
+
 export type SnakeOptions = Readonly<{
   initialHeadPosition?: GridPosition;
   initialDirection?: Direction;
   initialLength?: number;
   inputBufferSize?: number;
   stepDurationMs?: number;
+  touchSwipeThresholdPx?: number;
+  touchSwipeDebounceMs?: number;
 }>;
 
 const KEYBOARD_DIRECTION_MAP: Readonly<Record<string, Direction>> = Object.freeze(
@@ -75,6 +112,25 @@ const sanitizeNonNegativeInteger = (value: number): number => {
   }
 
   return Math.max(0, Math.floor(value));
+};
+
+const sanitizeNonNegativeIntegerWithFallback = (
+  value: number,
+  fallback: number,
+): number => {
+  if (!Number.isFinite(value)) {
+    return fallback;
+  }
+
+  return Math.max(0, Math.floor(value));
+};
+
+const normalizeFiniteNumber = (value?: number | null): number | null => {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return null;
+  }
+
+  return value;
 };
 
 const cloneGridPosition = (position: GridPosition): GridPosition => ({
@@ -125,6 +181,75 @@ export const keyboardInputToDirection = (
   return KEYBOARD_DIRECTION_MAP[normalizedKey] ?? null;
 };
 
+export const swipeInputToDirection = (
+  input: SwipeDirectionInput,
+  swipeThresholdPx = DEFAULT_TOUCH_SWIPE_THRESHOLD_PX,
+): Direction | null => {
+  const startX = normalizeFiniteNumber(input.startX);
+  const startY = normalizeFiniteNumber(input.startY);
+  const endX = normalizeFiniteNumber(input.endX);
+  const endY = normalizeFiniteNumber(input.endY);
+
+  if (startX === null || startY === null || endX === null || endY === null) {
+    return null;
+  }
+
+  const deltaX = endX - startX;
+  const deltaY = endY - startY;
+  const absDeltaX = Math.abs(deltaX);
+  const absDeltaY = Math.abs(deltaY);
+  const threshold = sanitizePositiveInteger(
+    swipeThresholdPx,
+    DEFAULT_TOUCH_SWIPE_THRESHOLD_PX,
+  );
+
+  if (absDeltaX >= absDeltaY) {
+    if (absDeltaX < threshold) {
+      return null;
+    }
+
+    return deltaX >= 0 ? "right" : "left";
+  }
+
+  if (absDeltaY < threshold) {
+    return null;
+  }
+
+  return deltaY >= 0 ? "down" : "up";
+};
+
+const normalizePointerId = (pointerId?: number | null): number => {
+  const normalizedPointerId = normalizeFiniteNumber(pointerId);
+  if (normalizedPointerId === null) {
+    return FALLBACK_TOUCH_POINTER_ID;
+  }
+
+  return Math.floor(normalizedPointerId);
+};
+
+const resolveTouchEventTimeMs = (
+  event?: TouchDirectionEvent,
+): number | null => {
+  if (!event) {
+    return null;
+  }
+
+  const upTime = normalizeFiniteNumber(event.upTime);
+  if (upTime !== null) {
+    return upTime;
+  }
+
+  const explicitTime = normalizeFiniteNumber(event.time);
+  if (explicitTime !== null) {
+    return explicitTime;
+  }
+
+  return normalizeFiniteNumber(event.event?.timeStamp ?? null);
+};
+
+const resolveSwipeEventTimeMs = (input: SwipeDirectionInput): number | null =>
+  normalizeFiniteNumber(input.eventTimeMs);
+
 export class Snake {
   private segments: GridPosition[];
 
@@ -140,10 +265,71 @@ export class Snake {
 
   private keyboardEmitter?: KeyboardDirectionEmitter;
 
+  private touchEmitter?: TouchDirectionEmitter;
+
+  private readonly touchStartByPointerId = new Map<number, GridPosition>();
+
+  private readonly touchSwipeThresholdPx: number;
+
+  private readonly touchSwipeDebounceMs: number;
+
+  private lastQueuedSwipeAtMs: number | null = null;
+
   private readonly keyboardListener = (event: KeyboardDirectionEvent): void => {
-    if (this.queueDirectionFromKeyboard(event)) {
-      event.preventDefault?.();
+    const direction = keyboardInputToDirection(event);
+    if (!direction) {
+      return;
     }
+
+    event.preventDefault?.();
+    this.queueDirection(direction);
+  };
+
+  private readonly touchPointerDownListener = (
+    event?: TouchDirectionEvent,
+  ): void => {
+    if (!event) {
+      return;
+    }
+
+    const x = normalizeFiniteNumber(event.x);
+    const y = normalizeFiniteNumber(event.y);
+
+    if (x === null || y === null) {
+      return;
+    }
+
+    this.touchStartByPointerId.set(normalizePointerId(event.id), { x, y });
+  };
+
+  private readonly touchPointerUpListener = (
+    event?: TouchDirectionEvent,
+  ): void => {
+    if (!event) {
+      return;
+    }
+
+    const pointerId = normalizePointerId(event.id);
+    const startPosition = this.touchStartByPointerId.get(pointerId);
+    this.touchStartByPointerId.delete(pointerId);
+
+    if (!startPosition) {
+      return;
+    }
+
+    const endX = normalizeFiniteNumber(event.x);
+    const endY = normalizeFiniteNumber(event.y);
+    if (endX === null || endY === null) {
+      return;
+    }
+
+    this.queueDirectionFromSwipe({
+      startX: startPosition.x,
+      startY: startPosition.y,
+      endX,
+      endY,
+      eventTimeMs: resolveTouchEventTimeMs(event),
+    });
   };
 
   constructor(options: SnakeOptions = {}) {
@@ -158,6 +344,14 @@ export class Snake {
     this.inputBufferSize = sanitizePositiveInteger(
       options.inputBufferSize ?? DEFAULT_SNAKE_INPUT_BUFFER_SIZE,
       DEFAULT_SNAKE_INPUT_BUFFER_SIZE,
+    );
+    this.touchSwipeThresholdPx = sanitizePositiveInteger(
+      options.touchSwipeThresholdPx ?? DEFAULT_TOUCH_SWIPE_THRESHOLD_PX,
+      DEFAULT_TOUCH_SWIPE_THRESHOLD_PX,
+    );
+    this.touchSwipeDebounceMs = sanitizeNonNegativeIntegerWithFallback(
+      options.touchSwipeDebounceMs ?? DEFAULT_TOUCH_SWIPE_DEBOUNCE_MS,
+      DEFAULT_TOUCH_SWIPE_DEBOUNCE_MS,
     );
     this.stepClock = createGridStepClock(options.stepDurationMs);
     this.segments = buildInitialSegments(
@@ -229,6 +423,29 @@ export class Snake {
     return this.queueDirection(direction);
   }
 
+  queueDirectionFromSwipe(input: SwipeDirectionInput): boolean {
+    const direction = swipeInputToDirection(input, this.touchSwipeThresholdPx);
+    if (!direction) {
+      return false;
+    }
+
+    const swipeEventTimeMs = resolveSwipeEventTimeMs(input);
+    if (
+      swipeEventTimeMs !== null &&
+      this.lastQueuedSwipeAtMs !== null &&
+      swipeEventTimeMs - this.lastQueuedSwipeAtMs < this.touchSwipeDebounceMs
+    ) {
+      return false;
+    }
+
+    const hasQueuedDirection = this.queueDirection(direction);
+    if (hasQueuedDirection && swipeEventTimeMs !== null) {
+      this.lastQueuedSwipeAtMs = swipeEventTimeMs;
+    }
+
+    return hasQueuedDirection;
+  }
+
   bindKeyboardControls(keyboardEmitter: KeyboardDirectionEmitter | null): void {
     if (!keyboardEmitter) {
       this.unbindKeyboardControls();
@@ -251,6 +468,33 @@ export class Snake {
 
     this.keyboardEmitter.off("keydown", this.keyboardListener, this);
     this.keyboardEmitter = undefined;
+  }
+
+  bindTouchControls(touchEmitter: TouchDirectionEmitter | null): void {
+    if (!touchEmitter) {
+      this.unbindTouchControls();
+      return;
+    }
+
+    if (this.touchEmitter === touchEmitter) {
+      return;
+    }
+
+    this.unbindTouchControls();
+    touchEmitter.on("pointerdown", this.touchPointerDownListener, this);
+    touchEmitter.on("pointerup", this.touchPointerUpListener, this);
+    this.touchEmitter = touchEmitter;
+  }
+
+  unbindTouchControls(): void {
+    if (this.touchEmitter) {
+      this.touchEmitter.off("pointerdown", this.touchPointerDownListener, this);
+      this.touchEmitter.off("pointerup", this.touchPointerUpListener, this);
+      this.touchEmitter = undefined;
+    }
+
+    this.touchStartByPointerId.clear();
+    this.lastQueuedSwipeAtMs = null;
   }
 
   grow(segments = 1): void {
