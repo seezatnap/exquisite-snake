@@ -29,7 +29,7 @@
 
 - [x] (#17) Implement `src/styles/globals.css` neon theme tokens and Tailwind-driven dark-cyberpunk styling (pink/cyan on dark), including visible arena grid lines and responsive layout polish for surrounding UI [5 pts] (blocked by #2) (A)
 - [x] (#18) Add gameplay effects: particle burst on food pickup and subtle screen-shake on collision/death, tuned to remain readable and non-disorienting [5 pts] (blocked by #8, #9, #17) (A)
-- [A] (#19) Execute performance and quality hardening for Phase 1: validate 60 FPS target under normal play, add focused tests for grid/input/storage logic, run end-to-end gameplay QA, and confirm static export output is production-ready [5 pts] (blocked by #12, #16, #18)
+- [x] (#19) Execute performance and quality hardening for Phase 1: validate 60 FPS target under normal play, add focused tests for grid/input/storage logic, run end-to-end gameplay QA, and confirm static export output is production-ready [5 pts] (blocked by #12, #16, #18) (A)
 
 ## Follow-up tasks (from sprint review)
 - [x] (#20) Restore SSR-safe Phaser loading in `src/components/Game.tsx` — sprint 4 replaced the `dynamic(..., { ssr: false })` wrapper and async `import("phaser")` from task #3 with a direct top-level `import Phaser from "phaser"`, which will crash during Next.js server-side rendering since Phaser requires browser globals (`window`, `document`) (blocked by #4) (C)
