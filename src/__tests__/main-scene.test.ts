@@ -113,6 +113,18 @@ function resetBridge(): void {
   });
 }
 
+function injectMoltenLavaPool(
+  scene: MainScene,
+  pos: { col: number; row: number },
+): void {
+  const pools = (
+    scene as unknown as {
+      moltenLavaPools: Map<string, { col: number; row: number }>;
+    }
+  ).moltenLavaPools;
+  pools.set(`${pos.col}:${pos.row}`, { ...pos });
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   resetBridge();
@@ -434,6 +446,112 @@ describe("MainScene", () => {
     expect(scene.getPhase()).toBe("playing");
     expect(snake.getDirection()).toBe("up");
     expect(snake.getHeadPosition()).toEqual({ col: 10, row: 9 });
+  });
+
+  it("Molten Core spawns lava pools on empty cells with configurable cap/frequency", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.enterPhase("playing");
+    scene.setMoltenLavaConfig({
+      spawnIntervalMs: 1,
+      spawnChancePerInterval: 1,
+      maxPools: 3,
+    });
+    scene.setRng(() => 0.2);
+
+    const snake = scene.getSnake()!;
+    snake.getTicker().setInterval(60_000);
+
+    // Neon -> Ice (no molten pools yet)
+    scene.update(0, 45_000);
+    expect(scene.getMoltenLavaPools()).toHaveLength(0);
+
+    // Ice -> Molten (spawns up to cap)
+    scene.update(0, 45_000);
+    const pools = scene.getMoltenLavaPools();
+    const foodPos = scene.getFood()!.getPosition();
+
+    expect(scene.getCurrentBiome()).toBe(Biome.MoltenCore);
+    expect(pools).toHaveLength(3);
+    for (const pool of pools) {
+      expect(snake.isOnSnake(pool)).toBe(false);
+      expect(pool).not.toEqual(foodPos);
+    }
+  });
+
+  it("Molten Core collision burns 3 tail segments when snake is long enough", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.enterPhase("playing");
+    scene.setMoltenLavaConfig({
+      spawnChancePerInterval: 0,
+      burnTailSegments: 3,
+    });
+
+    const snake = scene.getSnake()!;
+    snake.getTicker().setInterval(60_000);
+    scene.update(0, 45_000); // Neon -> Ice
+    scene.update(0, 45_000); // Ice -> Molten
+
+    snake.reset({ col: 5, row: 5 }, "right", 6);
+    snake.getTicker().setInterval(125);
+    const interval = snake.getTicker().interval;
+    injectMoltenLavaPool(scene, { col: 6, row: 5 });
+
+    scene.update(0, interval);
+
+    expect(scene.getPhase()).toBe("playing");
+    expect(snake.isAlive()).toBe(true);
+    expect(snake.getLength()).toBe(3);
+  });
+
+  it("Molten Core collision kills the snake when length is too short", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.enterPhase("playing");
+    scene.setMoltenLavaConfig({
+      spawnChancePerInterval: 0,
+      burnTailSegments: 3,
+    });
+
+    const snake = scene.getSnake()!;
+    snake.getTicker().setInterval(60_000);
+    scene.update(0, 45_000); // Neon -> Ice
+    scene.update(0, 45_000); // Ice -> Molten
+
+    snake.reset({ col: 5, row: 5 }, "right", 3);
+    snake.getTicker().setInterval(125);
+    const interval = snake.getTicker().interval;
+    injectMoltenLavaPool(scene, { col: 6, row: 5 });
+
+    scene.update(0, interval);
+
+    expect(scene.getPhase()).toBe("gameOver");
+    expect(snake.isAlive()).toBe(false);
+  });
+
+  it("cleans up all Molten Core lava pools when biome changes", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.enterPhase("playing");
+    scene.setMoltenLavaConfig({
+      spawnIntervalMs: 1,
+      spawnChancePerInterval: 1,
+      maxPools: 4,
+    });
+    scene.setRng(() => 0.3);
+
+    const snake = scene.getSnake()!;
+    snake.getTicker().setInterval(60_000);
+
+    scene.update(0, 45_000); // Neon -> Ice
+    scene.update(0, 45_000); // Ice -> Molten
+    expect(scene.getMoltenLavaPools().length).toBeGreaterThan(0);
+
+    scene.update(0, 45_000); // Molten -> Void
+
+    expect(scene.getCurrentBiome()).toBe(Biome.VoidRift);
+    expect(scene.getMoltenLavaPools()).toHaveLength(0);
   });
 
   // ── Replay lifecycle ───────────────────────────────────────

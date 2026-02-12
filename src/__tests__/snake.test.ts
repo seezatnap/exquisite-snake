@@ -479,6 +479,35 @@ describe("Snake growth", () => {
   });
 });
 
+// ── Tail burn (Molten Core) ──────────────────────────────────────
+
+describe("Snake tail burn", () => {
+  it("burnTailSegments removes tail segments and their sprites", () => {
+    const snake = createSnake({ col: 10, row: 10 }, "right", 6);
+    mockDestroy.mockClear();
+
+    expect(snake.burnTailSegments(3)).toBe(true);
+    expect(snake.getLength()).toBe(3);
+    expect(mockDestroy).toHaveBeenCalledTimes(3);
+  });
+
+  it("burnTailSegments fails when burn would consume the head", () => {
+    const snake = createSnake({ col: 10, row: 10 }, "right", 3);
+    const before = snake.getSegments().map((segment) => ({ ...segment }));
+
+    expect(snake.burnTailSegments(3)).toBe(false);
+    expect(snake.getLength()).toBe(3);
+    expect(snake.getSegments()).toEqual(before);
+  });
+
+  it("burnTailSegments treats non-positive burns as a no-op", () => {
+    const snake = createSnake({ col: 10, row: 10 }, "right", 4);
+
+    expect(snake.burnTailSegments(0)).toBe(true);
+    expect(snake.getLength()).toBe(4);
+  });
+});
+
 // ── Collision detection ──────────────────────────────────────────
 
 describe("Snake collision detection", () => {

@@ -278,6 +278,31 @@ export class Snake {
     this.pendingGrowth += amount;
   }
 
+  /**
+   * Burn tail segments from the snake.
+   *
+   * Returns `false` when burning would consume the head segment.
+   */
+  burnTailSegments(amount: number): boolean {
+    const burnCount = Math.max(0, Math.floor(amount));
+    if (burnCount === 0) {
+      return true;
+    }
+
+    // Keep at least the head segment alive.
+    if (this.segments.length <= burnCount) {
+      return false;
+    }
+
+    for (let i = 0; i < burnCount; i++) {
+      this.segments.pop();
+      this.prevSegments.pop();
+      this.sprites.pop()?.destroy();
+    }
+
+    return true;
+  }
+
   // ── State queries ──────────────────────────────────────────────
 
   /** Get the head grid position. */
