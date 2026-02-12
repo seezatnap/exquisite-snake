@@ -30,6 +30,24 @@ const DEFAULT_HEAD_POS: GridPos = {
 const DEFAULT_DIRECTION = "right" as const;
 const DEFAULT_SNAKE_LENGTH = 3;
 
+export interface MoltenLavaConfig {
+  /** Milliseconds between spawn attempts while Molten Core is active. */
+  spawnIntervalMs: number;
+  /** Probability [0,1] that a spawn attempt succeeds. */
+  spawnChancePerInterval: number;
+  /** Hard cap on concurrent lava pools in the arena. */
+  maxPools: number;
+  /** Tail segments removed when the snake touches lava. */
+  burnTailSegments: number;
+}
+
+const DEFAULT_MOLTEN_LAVA_CONFIG: MoltenLavaConfig = {
+  spawnIntervalMs: 1_500,
+  spawnChancePerInterval: 0.35,
+  maxPools: 10,
+  burnTailSegments: 3,
+};
+
 interface BiomeVisualTheme {
   backgroundColor: number;
   gridLineColor: number;
@@ -95,6 +113,15 @@ export class MainScene extends Phaser.Scene {
   /** Biome rotation/timing owner for the current run. */
   private readonly biomeManager = new BiomeManager();
 
+  /** Tunable Molten Core lava behavior for spawn cadence/caps/burn amount. */
+  private moltenLavaConfig: MoltenLavaConfig = { ...DEFAULT_MOLTEN_LAVA_CONFIG };
+
+  /** Active lava pools keyed by `col:row`. */
+  private moltenLavaPools = new Map<string, GridPos>();
+
+  /** Spawn timer accumulator used while Molten Core is active. */
+  private moltenLavaSpawnElapsedMs = 0;
+
   /** Graphics object used to render biome-specific arena grid lines. */
   private gridGraphics: Phaser.GameObjects.Graphics | null = null;
 
@@ -137,6 +164,7 @@ export class MainScene extends Phaser.Scene {
       this.onBridgePhaseChange = null;
     }
     this.biomeManager.stopRun();
+    this.resetMoltenCoreState();
     this.destroyEntities();
     this.gridGraphics?.destroy?.();
     this.gridGraphics = null;
@@ -149,6 +177,7 @@ export class MainScene extends Phaser.Scene {
     this.updateBiomeState(delta);
 
     if (!this.snake || !this.food) return;
+    this.updateMoltenCoreMechanics(delta);
 
     const stepped = this.snake.update(delta);
 
@@ -194,6 +223,7 @@ export class MainScene extends Phaser.Scene {
   private startRun(): void {
     gameBridge.resetRun();
     this.biomeManager.startRun();
+    this.resetMoltenCoreState();
     this.syncBiomeRuntimeToBridge();
     this.handleBiomeEnter(this.biomeManager.getCurrentBiome());
     this.destroyEntities();
@@ -204,6 +234,7 @@ export class MainScene extends Phaser.Scene {
   endRun(): void {
     shakeCamera(this);
     this.biomeManager.stopRun();
+    this.resetMoltenCoreState();
     if (this.snake?.isAlive()) {
       this.snake.kill();
     }
@@ -265,6 +296,10 @@ export class MainScene extends Phaser.Scene {
       return true;
     }
 
+    if (this.handleMoltenLavaCollision(head)) {
+      return true;
+    }
+
     return false;
   }
 
@@ -298,6 +333,10 @@ export class MainScene extends Phaser.Scene {
     return this.biomeManager.getVisitStats();
   }
 
+  getMoltenLavaPools(): readonly GridPos[] {
+    return Array.from(this.moltenLavaPools.values(), (pool) => ({ ...pool }));
+  }
+
   // ── RNG / Deterministic replay ────────────────────────────────
 
   /** Set the RNG function for deterministic replay. */
@@ -308,6 +347,33 @@ export class MainScene extends Phaser.Scene {
   /** Get the current RNG function. */
   getRng(): () => number {
     return this.rng;
+  }
+
+  /** Override Molten Core spawn/burn knobs (used by balancing and tests). */
+  setMoltenLavaConfig(config: Partial<MoltenLavaConfig>): void {
+    this.moltenLavaConfig = {
+      spawnIntervalMs: Math.max(
+        1,
+        Math.floor(config.spawnIntervalMs ?? this.moltenLavaConfig.spawnIntervalMs),
+      ),
+      spawnChancePerInterval: Math.max(
+        0,
+        Math.min(
+          1,
+          config.spawnChancePerInterval ?? this.moltenLavaConfig.spawnChancePerInterval,
+        ),
+      ),
+      maxPools: Math.max(
+        0,
+        Math.floor(config.maxPools ?? this.moltenLavaConfig.maxPools),
+      ),
+      burnTailSegments: Math.max(
+        1,
+        Math.floor(config.burnTailSegments ?? this.moltenLavaConfig.burnTailSegments),
+      ),
+    };
+
+    this.trimMoltenLavaPoolsToCap();
   }
 
   // ── Entity accessors (for tests and external integration) ────
@@ -341,6 +407,10 @@ export class MainScene extends Phaser.Scene {
   }
 
   private handleBiomeEnter(biome: Biome): void {
+    if (biome === Biome.MoltenCore) {
+      this.moltenLavaSpawnElapsedMs = 0;
+    }
+
     const mechanics = createBiomeMechanicsState(biome);
     gameBridge.emitBiomeEnter(biome);
     this.events?.emit?.("biomeEnter", biome);
@@ -350,8 +420,109 @@ export class MainScene extends Phaser.Scene {
   }
 
   private handleBiomeExit(biome: Biome): void {
+    if (biome === Biome.MoltenCore) {
+      this.resetMoltenCoreState();
+    }
+
     gameBridge.emitBiomeExit(biome);
     this.events?.emit?.("biomeExit", biome);
+  }
+
+  private updateMoltenCoreMechanics(delta: number): void {
+    if (!this.snake || !this.food || this.biomeManager.getCurrentBiome() !== Biome.MoltenCore) {
+      this.moltenLavaSpawnElapsedMs = 0;
+      return;
+    }
+
+    this.moltenLavaSpawnElapsedMs += delta;
+
+    while (this.moltenLavaSpawnElapsedMs >= this.moltenLavaConfig.spawnIntervalMs) {
+      this.moltenLavaSpawnElapsedMs -= this.moltenLavaConfig.spawnIntervalMs;
+      this.trySpawnMoltenLavaPool();
+    }
+  }
+
+  private trySpawnMoltenLavaPool(): void {
+    if (this.moltenLavaPools.size >= this.moltenLavaConfig.maxPools) {
+      return;
+    }
+
+    if (this.rng() >= this.moltenLavaConfig.spawnChancePerInterval) {
+      return;
+    }
+
+    const freeCells = this.getMoltenLavaSpawnCandidates();
+    if (freeCells.length === 0) {
+      return;
+    }
+
+    const poolIndex = Math.floor(this.rng() * freeCells.length);
+    const poolPos = freeCells[poolIndex];
+    this.moltenLavaPools.set(this.gridPosKey(poolPos), poolPos);
+  }
+
+  private getMoltenLavaSpawnCandidates(): GridPos[] {
+    if (!this.snake || !this.food) {
+      return [];
+    }
+
+    const foodPos = this.food.getPosition();
+    const candidates: GridPos[] = [];
+
+    for (let col = 0; col < GRID_COLS; col++) {
+      for (let row = 0; row < GRID_ROWS; row++) {
+        const pos: GridPos = { col, row };
+        if (this.snake.isOnSnake(pos)) {
+          continue;
+        }
+        if (foodPos.col === col && foodPos.row === row) {
+          continue;
+        }
+        if (this.moltenLavaPools.has(this.gridPosKey(pos))) {
+          continue;
+        }
+        candidates.push(pos);
+      }
+    }
+
+    return candidates;
+  }
+
+  private handleMoltenLavaCollision(head: GridPos): boolean {
+    if (!this.snake || this.biomeManager.getCurrentBiome() !== Biome.MoltenCore) {
+      return false;
+    }
+
+    if (!this.moltenLavaPools.has(this.gridPosKey(head))) {
+      return false;
+    }
+
+    const survived = this.snake.burnTailSegments(this.moltenLavaConfig.burnTailSegments);
+    if (!survived) {
+      this.endRun();
+      return true;
+    }
+
+    return false;
+  }
+
+  private resetMoltenCoreState(): void {
+    this.moltenLavaPools.clear();
+    this.moltenLavaSpawnElapsedMs = 0;
+  }
+
+  private trimMoltenLavaPoolsToCap(): void {
+    while (this.moltenLavaPools.size > this.moltenLavaConfig.maxPools) {
+      const firstKey = this.moltenLavaPools.keys().next().value;
+      if (firstKey === undefined) {
+        return;
+      }
+      this.moltenLavaPools.delete(firstKey);
+    }
+  }
+
+  private gridPosKey(pos: GridPos): string {
+    return `${pos.col}:${pos.row}`;
   }
 
   private syncBiomeRuntimeToBridge(): void {
