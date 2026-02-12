@@ -8,6 +8,7 @@ import {
   COLORS,
 } from "../config";
 import { gameBridge, type GamePhase } from "../bridge";
+import { loadHighScore, saveHighScore } from "../utils/storage";
 
 /**
  * Primary gameplay scene.
@@ -33,6 +34,8 @@ export class MainScene extends Phaser.Scene {
 
   create(): void {
     this.drawGrid();
+    this.highScore = loadHighScore();
+    gameBridge.setHighScore(this.highScore);
     this.enterPhase("start");
   }
 
@@ -73,6 +76,7 @@ export class MainScene extends Phaser.Scene {
     if (this.score > this.highScore) {
       this.highScore = this.score;
       gameBridge.setHighScore(this.highScore);
+      saveHighScore(this.highScore);
     }
     this.enterPhase("gameOver");
   }
