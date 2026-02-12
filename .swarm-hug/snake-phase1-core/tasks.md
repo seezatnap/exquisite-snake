@@ -30,3 +30,7 @@
 - [ ] (#17) Implement `src/styles/globals.css` neon theme tokens and Tailwind-driven dark-cyberpunk styling (pink/cyan on dark), including visible arena grid lines and responsive layout polish for surrounding UI [5 pts] (blocked by #2)
 - [ ] (#18) Add gameplay effects: particle burst on food pickup and subtle screen-shake on collision/death, tuned to remain readable and non-disorienting [5 pts] (blocked by #8, #9, #17)
 - [ ] (#19) Execute performance and quality hardening for Phase 1: validate 60 FPS target under normal play, add focused tests for grid/input/storage logic, run end-to-end gameplay QA, and confirm static export output is production-ready [5 pts] (blocked by #12, #16, #18)
+
+## Follow-up tasks (from sprint review)
+- [ ] (#20) Fix static-export npm scripts in `package.json` by replacing the broken `start` command (`next start` with `output: "export"`) with a static preview command that serves `out/`.
+- [ ] (#21) Update `README.md` to document the actual static-export workflow and local preview steps (build/export output in `out/` and how to run it).
