@@ -13,6 +13,12 @@ import { isInBounds, type GridPos } from "../utils/grid";
 import { Snake } from "../entities/Snake";
 import { Food } from "../entities/Food";
 import { emitFoodParticles, shakeCamera } from "../systems/effects";
+import {
+  Biome,
+  BiomeManager,
+  type BiomeTransition,
+  type BiomeVisitStats,
+} from "../systems/BiomeManager";
 
 // ── Default spawn configuration ─────────────────────────────────
 
@@ -24,6 +30,49 @@ const DEFAULT_HEAD_POS: GridPos = {
 const DEFAULT_DIRECTION = "right" as const;
 const DEFAULT_SNAKE_LENGTH = 3;
 
+interface BiomeVisualTheme {
+  backgroundColor: number;
+  gridLineColor: number;
+  gridLineAlpha: number;
+}
+
+const BIOME_VISUAL_THEMES: Record<Biome, BiomeVisualTheme> = {
+  [Biome.NeonCity]: {
+    backgroundColor: COLORS.BACKGROUND,
+    gridLineColor: COLORS.GRID_LINE,
+    gridLineAlpha: 0.08,
+  },
+  [Biome.IceCavern]: {
+    backgroundColor: 0x081624,
+    gridLineColor: 0x7dc6ff,
+    gridLineAlpha: 0.1,
+  },
+  [Biome.MoltenCore]: {
+    backgroundColor: 0x1a0d05,
+    gridLineColor: 0xff8a3d,
+    gridLineAlpha: 0.13,
+  },
+  [Biome.VoidRift]: {
+    backgroundColor: 0x060510,
+    gridLineColor: 0x8a63ff,
+    gridLineAlpha: 0.11,
+  },
+};
+
+interface BiomeMechanicsState {
+  iceMomentumActive: boolean;
+  moltenLavaActive: boolean;
+  voidGravityActive: boolean;
+}
+
+function createBiomeMechanicsState(biome: Biome): BiomeMechanicsState {
+  return {
+    iceMomentumActive: biome === Biome.IceCavern,
+    moltenLavaActive: biome === Biome.MoltenCore,
+    voidGravityActive: biome === Biome.VoidRift,
+  };
+}
+
 /**
  * Primary gameplay scene.
  *
@@ -32,7 +81,7 @@ const DEFAULT_SNAKE_LENGTH = 3;
  * checks wall- and self-collision every grid step, and provides
  * deterministic reset logic (injectable RNG) for replay sessions.
  *
- * All score / high-score / elapsed survival time state is delegated to
+ * All score / high-score / elapsed survival time / biome runtime state is delegated to
  * the Phaser↔React bridge (single source of truth) so overlay
  * components and external consumers stay in sync.
  */
@@ -42,6 +91,12 @@ export class MainScene extends Phaser.Scene {
 
   /** The food entity for the current run (null when not playing). */
   private food: Food | null = null;
+
+  /** Biome rotation/timing owner for the current run. */
+  private readonly biomeManager = new BiomeManager();
+
+  /** Graphics object used to render biome-specific arena grid lines. */
+  private gridGraphics: Phaser.GameObjects.Graphics | null = null;
 
   /**
    * Injectable RNG function for deterministic replay sessions.
@@ -59,7 +114,8 @@ export class MainScene extends Phaser.Scene {
   // ── Phaser lifecycle ────────────────────────────────────────
 
   create(): void {
-    this.drawGrid();
+    this.syncBiomeRuntimeToBridge();
+    this.applyBiomeVisualTheme(this.biomeManager.getCurrentBiome());
     gameBridge.setHighScore(loadHighScore());
 
     // Listen for phase changes originating from React overlays
@@ -80,13 +136,17 @@ export class MainScene extends Phaser.Scene {
       gameBridge.off("phaseChange", this.onBridgePhaseChange);
       this.onBridgePhaseChange = null;
     }
+    this.biomeManager.stopRun();
     this.destroyEntities();
+    this.gridGraphics?.destroy?.();
+    this.gridGraphics = null;
   }
 
   update(_time: number, delta: number): void {
     if (gameBridge.getState().phase !== "playing") return;
 
     gameBridge.setElapsedTime(gameBridge.getState().elapsedTime + delta);
+    this.updateBiomeState(delta);
 
     if (!this.snake || !this.food) return;
 
@@ -133,6 +193,9 @@ export class MainScene extends Phaser.Scene {
   /** Reset per-run state and begin a new game. */
   private startRun(): void {
     gameBridge.resetRun();
+    this.biomeManager.startRun();
+    this.syncBiomeRuntimeToBridge();
+    this.handleBiomeEnter(this.biomeManager.getCurrentBiome());
     this.destroyEntities();
     this.createEntities();
   }
@@ -140,6 +203,7 @@ export class MainScene extends Phaser.Scene {
   /** End the current run: kill snake, persist high-score, transition to gameOver. */
   endRun(): void {
     shakeCamera(this);
+    this.biomeManager.stopRun();
     if (this.snake?.isAlive()) {
       this.snake.kill();
     }
@@ -226,6 +290,14 @@ export class MainScene extends Phaser.Scene {
     return gameBridge.getState().elapsedTime;
   }
 
+  getCurrentBiome(): Biome {
+    return this.biomeManager.getCurrentBiome();
+  }
+
+  getBiomeVisitStats(): BiomeVisitStats {
+    return this.biomeManager.getVisitStats();
+  }
+
   // ── RNG / Deterministic replay ────────────────────────────────
 
   /** Set the RNG function for deterministic replay. */
@@ -250,9 +322,54 @@ export class MainScene extends Phaser.Scene {
 
   // ── Arena grid ──────────────────────────────────────────────
 
-  private drawGrid(): void {
+  private updateBiomeState(delta: number): void {
+    const transitions = this.biomeManager.update(delta);
+    if (transitions.length === 0) {
+      return;
+    }
+
+    for (const transition of transitions) {
+      this.handleBiomeTransition(transition);
+    }
+  }
+
+  private handleBiomeTransition(transition: BiomeTransition): void {
+    this.handleBiomeExit(transition.from);
+    this.syncBiomeRuntimeToBridge();
+    gameBridge.emitBiomeTransition(transition);
+    this.handleBiomeEnter(transition.to);
+  }
+
+  private handleBiomeEnter(biome: Biome): void {
+    const mechanics = createBiomeMechanicsState(biome);
+    gameBridge.emitBiomeEnter(biome);
+    this.events?.emit?.("biomeEnter", biome);
+    this.events?.emit?.("biomeMechanicsChange", mechanics);
+    this.applyBiomeVisualTheme(biome);
+    this.events?.emit?.("biomeVisualChange", biome);
+  }
+
+  private handleBiomeExit(biome: Biome): void {
+    gameBridge.emitBiomeExit(biome);
+    this.events?.emit?.("biomeExit", biome);
+  }
+
+  private syncBiomeRuntimeToBridge(): void {
+    gameBridge.setCurrentBiome(this.biomeManager.getCurrentBiome());
+    gameBridge.setBiomeVisitStats(this.biomeManager.getVisitStats());
+  }
+
+  private applyBiomeVisualTheme(biome: Biome): void {
+    const theme = BIOME_VISUAL_THEMES[biome];
+    this.cameras.main?.setBackgroundColor?.(theme.backgroundColor);
+    this.drawGrid(theme.gridLineColor, theme.gridLineAlpha);
+  }
+
+  private drawGrid(lineColor: number, lineAlpha: number): void {
+    this.gridGraphics?.destroy?.();
     const gfx = this.add.graphics();
-    gfx.lineStyle(1, COLORS.GRID_LINE, 0.08);
+    this.gridGraphics = gfx;
+    gfx.lineStyle(1, lineColor, lineAlpha);
 
     // Vertical lines
     for (let col = 1; col < GRID_COLS; col++) {
