@@ -301,6 +301,25 @@ export class Snake {
     return removable;
   }
 
+  // ── Position nudge (Void Rift gravity well) ─────────────────────
+
+  /**
+   * Shift the head position by a delta vector.
+   *
+   * Used by the Void Rift gravity well to pull the snake toward the
+   * arena center. The nudge is applied after normal movement so the
+   * player can anticipate it (deterministic cadence).
+   *
+   * Only the head segment is moved; the body will follow naturally on
+   * subsequent steps.
+   */
+  applyPositionNudge(delta: GridPos): void {
+    this.segments[0] = {
+      col: this.segments[0].col + delta.col,
+      row: this.segments[0].row + delta.row,
+    };
+  }
+
   // ── State queries ──────────────────────────────────────────────
 
   /** Get the head grid position. */

@@ -24,6 +24,7 @@ import {
   LAVA_SURVIVAL_THRESHOLD,
 } from "../entities/LavaPool";
 import { IceMomentum } from "../systems/IceMomentum";
+import { GravityWellManager } from "../entities/GravityWell";
 
 // ── Default spawn configuration ─────────────────────────────────
 
@@ -63,6 +64,9 @@ export class MainScene extends Phaser.Scene {
   /** Ice Cavern momentum handler — persists across runs (reset between runs). */
   private iceMomentum = new IceMomentum();
 
+  /** Gravity well manager for the Void Rift biome (null when not playing). */
+  private gravityWellManager: GravityWellManager | null = null;
+
   /** Bound listener for biome change events (stored for cleanup). */
   private onBiomeChange: BiomeChangeListener | null = null;
 
@@ -99,6 +103,10 @@ export class MainScene extends Phaser.Scene {
       // Clean up lava pools when leaving Molten Core
       if (previousBiome === Biome.MoltenCore) {
         this.lavaPoolManager?.clearAll();
+      }
+      // Reset gravity well counter when leaving Void Rift
+      if (previousBiome === Biome.VoidRift) {
+        this.gravityWellManager?.reset();
       }
       gameBridge.setBiome(newBiome);
       gameBridge.setBiomeVisitStats(this.biomeManager.getVisitStats());
@@ -148,6 +156,14 @@ export class MainScene extends Phaser.Scene {
     const stepped = this.snake.update(delta);
 
     if (stepped) {
+      // Apply Void Rift gravity nudge after normal movement, before collisions
+      if (
+        this.biomeManager.getCurrentBiome() === Biome.VoidRift &&
+        this.gravityWellManager
+      ) {
+        this.gravityWellManager.onSnakeStep(this.snake);
+      }
+
       // Check collisions after the snake moved to its new grid position
       if (this.checkCollisions()) {
         return; // Game over — stop processing this frame
@@ -238,6 +254,7 @@ export class MainScene extends Phaser.Scene {
     this.snake.setupTouchInput();
     this.food = new Food(this, this.snake, this.rng);
     this.lavaPoolManager = new LavaPoolManager(this, this.rng);
+    this.gravityWellManager = new GravityWellManager();
   }
 
   /** Destroy existing snake and food entities. */
@@ -253,6 +270,10 @@ export class MainScene extends Phaser.Scene {
     if (this.lavaPoolManager) {
       this.lavaPoolManager.destroy();
       this.lavaPoolManager = null;
+    }
+    if (this.gravityWellManager) {
+      this.gravityWellManager.destroy();
+      this.gravityWellManager = null;
     }
   }
 
@@ -365,6 +386,10 @@ export class MainScene extends Phaser.Scene {
 
   getIceMomentum(): IceMomentum {
     return this.iceMomentum;
+  }
+
+  getGravityWellManager(): GravityWellManager | null {
+    return this.gravityWellManager;
   }
 
   // ── Arena grid ──────────────────────────────────────────────
