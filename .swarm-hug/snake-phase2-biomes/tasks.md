@@ -31,3 +31,6 @@
 ## Follow-up tasks (from sprint review)
 - [ ] (#14) Add GameOver component rendering test to verify the biomes-visited stat displays the correct count from bridge state (blocked by #11)
 - [x] (#15) Mark task #11 as complete — biomes-visited GameOver stat, bridge wiring, and reset behavior are fully implemented by sprint 2 (C)
+
+## Follow-up tasks (from sprint review)
+- [ ] (#16) Mark task #14 as complete — GameOver biome-visited rendering tests are fully implemented in sprint 3 (9+ test cases covering count display, ratio, visited/unvisited styling, reactivity, and reset behavior)
