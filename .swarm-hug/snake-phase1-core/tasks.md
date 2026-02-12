@@ -12,10 +12,10 @@
 
 - [x] (#6) Implement `src/game/utils/grid.ts` and movement timing primitives for grid-based logic with smooth interpolation between tiles (no jerky tile-snapping) [5 pts] (blocked by #4) (A)
 - [x] (#7) Implement `src/game/entities/Snake.ts` with arrow-key/WASD movement, buffered input queueing, anti-180-degree turn rules, and segment growth support [5 pts] (blocked by #6) (A)
-- [A] (#8) Implement `src/game/entities/Food.ts` spawn/eat behavior with safe spawn positions (not inside snake), score increment hooks, and snake growth trigger integration [5 pts] (blocked by #7)
-- [A] (#9) Implement wall-collision and self-collision detection in `MainScene`, transition to game-over state, and deterministic reset logic for replay sessions [5 pts] (blocked by #7)
+- [x] (#8) Implement `src/game/entities/Food.ts` spawn/eat behavior with safe spawn positions (not inside snake), score increment hooks, and snake growth trigger integration [5 pts] (blocked by #7) (A)
+- [x] (#9) Implement wall-collision and self-collision detection in `MainScene`, transition to game-over state, and deterministic reset logic for replay sessions [5 pts] (blocked by #7) (A)
 - [x] (#10) Implement `src/game/utils/storage.ts` localStorage helpers and integrate high-score persistence (load on boot, update on run end, fault-tolerant fallbacks when storage is unavailable) [5 pts] (blocked by #5) (B)
-- [B] (#11) Implement mobile-friendly touch/swipe controls with threshold/debounce tuning and map them into the same buffered direction-input system used by keyboard controls [5 pts] (blocked by #7)
+- [x] (#11) Implement mobile-friendly touch/swipe controls with threshold/debounce tuning and map them into the same buffered direction-input system used by keyboard controls [5 pts] (blocked by #7) (B)
 - [x] (#12) Implement responsive canvas sizing and resize handling so the arena scales cleanly across viewport/device changes while preserving gameplay grid integrity [5 pts] (blocked by #4) (A)
 
 ## UI & Flow
