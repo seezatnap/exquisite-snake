@@ -12,6 +12,8 @@ const mockLineStyle = vi.fn();
 const mockMoveTo = vi.fn();
 const mockLineTo = vi.fn();
 const mockStrokePath = vi.fn();
+const mockAddGraphics = vi.fn(() => mockGraphics);
+const mockSetBackgroundColor = vi.fn();
 
 const mockGraphics = {
   lineStyle: mockLineStyle,
@@ -38,7 +40,7 @@ vi.mock("phaser", () => {
   class MockScene {
     scene = { start: mockSceneStart };
     add = {
-      graphics: () => mockGraphics,
+      graphics: mockAddGraphics,
       sprite: vi.fn(() => createMockSprite()),
       particles: vi.fn(() => ({
         explode: vi.fn(),
@@ -54,6 +56,7 @@ vi.mock("phaser", () => {
     cameras = {
       main: {
         shake: vi.fn(),
+        setBackgroundColor: mockSetBackgroundColor,
       },
     };
     textures = {
@@ -113,6 +116,18 @@ function resetBridge(): void {
   });
 }
 
+function injectMoltenLavaPool(
+  scene: MainScene,
+  pos: { col: number; row: number },
+): void {
+  const pools = (
+    scene as unknown as {
+      moltenLavaPools: Map<string, { col: number; row: number }>;
+    }
+  ).moltenLavaPools;
+  pools.set(`${pos.col}:${pos.row}`, { ...pos });
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   resetBridge();
@@ -141,6 +156,17 @@ describe("MainScene", () => {
     scene.create();
     expect(mockLineStyle).toHaveBeenCalled();
     expect(mockStrokePath).toHaveBeenCalled();
+  });
+
+  it("create() initializes backdrop, tilemap, and grid theme layers for Neon City", () => {
+    const scene = new MainScene();
+    scene.create();
+
+    expect(mockAddGraphics).toHaveBeenCalledTimes(3);
+    expect(mockSetBackgroundColor).toHaveBeenCalledWith(0x0a0a0a);
+    expect(mockLineStyle).toHaveBeenCalledWith(2, 0x00f0ff, 0.12);
+    expect(mockLineStyle).toHaveBeenCalledWith(1, 0x00d5e2, 0.14);
+    expect(mockLineStyle).toHaveBeenCalledWith(1, 0x00f0ff, 0.08);
   });
 
   it("create() sets phase to 'start' via bridge", () => {
@@ -305,6 +331,34 @@ describe("MainScene", () => {
     });
   });
 
+  it("startRun emits biome reset events once per run start", () => {
+    const scene = new MainScene();
+    scene.create();
+
+    const onBiomeChange = vi.fn();
+    const onBiomeVisitStatsChange = vi.fn();
+    gameBridge.on("biomeChange", onBiomeChange);
+    gameBridge.on("biomeVisitStatsChange", onBiomeVisitStatsChange);
+
+    (
+      scene as unknown as {
+        startRun: () => void;
+      }
+    ).startRun();
+    gameBridge.off("biomeChange", onBiomeChange);
+    gameBridge.off("biomeVisitStatsChange", onBiomeVisitStatsChange);
+
+    expect(onBiomeChange).toHaveBeenCalledTimes(1);
+    expect(onBiomeChange).toHaveBeenCalledWith(Biome.NeonCity);
+    expect(onBiomeVisitStatsChange).toHaveBeenCalledTimes(1);
+    expect(onBiomeVisitStatsChange).toHaveBeenCalledWith({
+      [Biome.NeonCity]: 1,
+      [Biome.IceCavern]: 0,
+      [Biome.MoltenCore]: 0,
+      [Biome.VoidRift]: 0,
+    });
+  });
+
   it("update() advances biome on the 45s cadence and updates visit stats", () => {
     const scene = new MainScene();
     scene.create();
@@ -357,6 +411,40 @@ describe("MainScene", () => {
     ]);
   });
 
+  it("redraws biome background and tilemap palette on transition", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.enterPhase("playing");
+    scene.getSnake()!.getTicker().setInterval(60_000);
+    mockAddGraphics.mockClear();
+    mockLineStyle.mockClear();
+    mockSetBackgroundColor.mockClear();
+
+    scene.update(0, 45_000); // Neon -> Ice
+
+    expect(scene.getCurrentBiome()).toBe(Biome.IceCavern);
+    expect(mockAddGraphics).toHaveBeenCalledTimes(3);
+    expect(mockSetBackgroundColor).toHaveBeenCalledWith(0x081624);
+    expect(mockLineStyle).toHaveBeenCalledWith(2, 0x8fdcff, 0.16);
+    expect(mockLineStyle).toHaveBeenCalledWith(1, 0x8ed5ff, 0.16);
+    expect(mockLineStyle).toHaveBeenCalledWith(1, 0x7dc6ff, 0.1);
+  });
+
+  it("applies distinct background colors across the full biome cycle", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.enterPhase("playing");
+    scene.getSnake()!.getTicker().setInterval(60_000);
+    mockSetBackgroundColor.mockClear();
+
+    scene.update(0, 45_000 * 3); // Neon -> Ice -> Molten -> Void
+
+    expect(scene.getCurrentBiome()).toBe(Biome.VoidRift);
+    expect(mockSetBackgroundColor).toHaveBeenCalledWith(0x081624);
+    expect(mockSetBackgroundColor).toHaveBeenCalledWith(0x1a0d05);
+    expect(mockSetBackgroundColor).toHaveBeenCalledWith(0x060510);
+  });
+
   it("replay resets biome visit stats back to a fresh run", () => {
     const scene = new MainScene();
     scene.create();
@@ -391,6 +479,197 @@ describe("MainScene", () => {
     expect(spyEmitBiomeTransition).not.toHaveBeenCalled();
     expect(spyEmitBiomeExit).not.toHaveBeenCalled();
     expect(spyEmitBiomeEnter).not.toHaveBeenCalled();
+  });
+
+  it("Ice Cavern momentum resolves wall collisions before a delayed turn applies", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.enterPhase("playing");
+
+    const snake = scene.getSnake()!;
+    snake.getTicker().setInterval(60_000); // isolate biome timing from movement
+    scene.update(0, 45_000); // Neon -> Ice
+    expect(scene.getCurrentBiome()).toBe(Biome.IceCavern);
+
+    snake.reset({ col: GRID_COLS - 2, row: 10 }, "right", 1);
+    snake.getTicker().setInterval(100);
+    snake.bufferDirection("up");
+
+    scene.update(0, 100); // slide tile 1
+    expect(scene.getPhase()).toBe("playing");
+    expect(snake.getHeadPosition()).toEqual({ col: GRID_COLS - 1, row: 10 });
+
+    scene.update(0, 100); // slide tile 2 -> out of bounds before turn can apply
+    expect(scene.getPhase()).toBe("gameOver");
+  });
+
+  it("turns are immediate again after leaving Ice Cavern", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.enterPhase("playing");
+
+    const snake = scene.getSnake()!;
+    snake.getTicker().setInterval(60_000); // isolate biome timing from movement
+    scene.update(0, 45_000); // Neon -> Ice
+    scene.update(0, 45_000); // Ice -> Molten
+    expect(scene.getCurrentBiome()).toBe(Biome.MoltenCore);
+
+    snake.reset({ col: 10, row: 10 }, "right", 1);
+    snake.getTicker().setInterval(100);
+    snake.bufferDirection("up");
+
+    scene.update(0, 100);
+    expect(scene.getPhase()).toBe("playing");
+    expect(snake.getDirection()).toBe("up");
+    expect(snake.getHeadPosition()).toEqual({ col: 10, row: 9 });
+  });
+
+  it("Molten Core spawns lava pools on empty cells with configurable cap/frequency", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.enterPhase("playing");
+    scene.setMoltenLavaConfig({
+      spawnIntervalMs: 1,
+      spawnChancePerInterval: 1,
+      maxPools: 3,
+    });
+    scene.setRng(() => 0.2);
+
+    const snake = scene.getSnake()!;
+    snake.getTicker().setInterval(60_000);
+
+    // Neon -> Ice (no molten pools yet)
+    scene.update(0, 45_000);
+    expect(scene.getMoltenLavaPools()).toHaveLength(0);
+
+    // Ice -> Molten (spawns up to cap)
+    scene.update(0, 45_000);
+    const pools = scene.getMoltenLavaPools();
+    const foodPos = scene.getFood()!.getPosition();
+
+    expect(scene.getCurrentBiome()).toBe(Biome.MoltenCore);
+    expect(pools).toHaveLength(3);
+    for (const pool of pools) {
+      expect(snake.isOnSnake(pool)).toBe(false);
+      expect(pool).not.toEqual(foodPos);
+    }
+  });
+
+  it("Molten Core collision burns 3 tail segments when snake is long enough", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.enterPhase("playing");
+    scene.setMoltenLavaConfig({
+      spawnChancePerInterval: 0,
+      burnTailSegments: 3,
+    });
+
+    const snake = scene.getSnake()!;
+    snake.getTicker().setInterval(60_000);
+    scene.update(0, 45_000); // Neon -> Ice
+    scene.update(0, 45_000); // Ice -> Molten
+
+    snake.reset({ col: 5, row: 5 }, "right", 6);
+    snake.getTicker().setInterval(125);
+    const interval = snake.getTicker().interval;
+    injectMoltenLavaPool(scene, { col: 6, row: 5 });
+
+    scene.update(0, interval);
+
+    expect(scene.getPhase()).toBe("playing");
+    expect(snake.isAlive()).toBe(true);
+    expect(snake.getLength()).toBe(3);
+  });
+
+  it("Molten Core collision kills the snake when length is too short", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.enterPhase("playing");
+    scene.setMoltenLavaConfig({
+      spawnChancePerInterval: 0,
+      burnTailSegments: 3,
+    });
+
+    const snake = scene.getSnake()!;
+    snake.getTicker().setInterval(60_000);
+    scene.update(0, 45_000); // Neon -> Ice
+    scene.update(0, 45_000); // Ice -> Molten
+
+    snake.reset({ col: 5, row: 5 }, "right", 3);
+    snake.getTicker().setInterval(125);
+    const interval = snake.getTicker().interval;
+    injectMoltenLavaPool(scene, { col: 6, row: 5 });
+
+    scene.update(0, interval);
+
+    expect(scene.getPhase()).toBe("gameOver");
+    expect(snake.isAlive()).toBe(false);
+  });
+
+  it("cleans up all Molten Core lava pools when biome changes", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.enterPhase("playing");
+    scene.setMoltenLavaConfig({
+      spawnIntervalMs: 1,
+      spawnChancePerInterval: 1,
+      maxPools: 4,
+    });
+    scene.setRng(() => 0.3);
+
+    const snake = scene.getSnake()!;
+    snake.getTicker().setInterval(60_000);
+
+    scene.update(0, 45_000); // Neon -> Ice
+    scene.update(0, 45_000); // Ice -> Molten
+    expect(scene.getMoltenLavaPools().length).toBeGreaterThan(0);
+
+    scene.update(0, 45_000); // Molten -> Void
+
+    expect(scene.getCurrentBiome()).toBe(Biome.VoidRift);
+    expect(scene.getMoltenLavaPools()).toHaveLength(0);
+  });
+
+  it("Void Rift gravity does not apply outside the Void biome", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.enterPhase("playing");
+
+    const snake = scene.getSnake()!;
+    snake.reset({ col: 10, row: 0 }, "right", 1);
+    snake.getTicker().setInterval(100);
+
+    scene.update(0, 100);
+    scene.update(0, 100);
+    scene.update(0, 100);
+
+    expect(scene.getCurrentBiome()).toBe(Biome.NeonCity);
+    expect(snake.getHeadPosition()).toEqual({ col: 13, row: 0 });
+  });
+
+  it("Void Rift gravity nudges the snake toward arena center on cadence steps", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.enterPhase("playing");
+
+    const snake = scene.getSnake()!;
+    snake.getTicker().setInterval(200_000); // isolate biome timing from movement
+    scene.update(0, 45_000); // Neon -> Ice
+    scene.update(0, 45_000); // Ice -> Molten
+    scene.update(0, 45_000); // Molten -> Void
+    expect(scene.getCurrentBiome()).toBe(Biome.VoidRift);
+
+    snake.reset({ col: 10, row: 0 }, "right", 1);
+    snake.getTicker().setInterval(100);
+
+    scene.update(0, 100); // step 1 (no gravity)
+    expect(snake.getHeadPosition()).toEqual({ col: 11, row: 0 });
+
+    scene.update(0, 100); // step 2 (no gravity)
+    expect(snake.getHeadPosition()).toEqual({ col: 12, row: 0 });
+
+    scene.update(0, 100); // step 3 + gravity pull toward center (down)
+    expect(snake.getHeadPosition()).toEqual({ col: 13, row: 1 });
   });
 
   // ── Replay lifecycle ───────────────────────────────────────

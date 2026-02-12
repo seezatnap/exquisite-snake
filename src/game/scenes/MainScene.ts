@@ -9,7 +9,7 @@ import {
 } from "../config";
 import { gameBridge, type GamePhase } from "../bridge";
 import { loadHighScore, saveHighScore } from "../utils/storage";
-import { isInBounds, type GridPos } from "../utils/grid";
+import { isInBounds, type Direction, type GridPos } from "../utils/grid";
 import { Snake } from "../entities/Snake";
 import { Food } from "../entities/Food";
 import { emitFoodParticles, shakeCamera } from "../systems/effects";
@@ -29,11 +29,43 @@ const DEFAULT_HEAD_POS: GridPos = {
 };
 const DEFAULT_DIRECTION = "right" as const;
 const DEFAULT_SNAKE_LENGTH = 3;
+const ICE_CAVERN_TURN_MOMENTUM_TILES = 2;
+const VOID_RIFT_GRAVITY_PULL_CADENCE_STEPS = 3;
+const VOID_RIFT_CENTER: GridPos = {
+  col: Math.floor(GRID_COLS / 2),
+  row: Math.floor(GRID_ROWS / 2),
+};
+
+export interface MoltenLavaConfig {
+  /** Milliseconds between spawn attempts while Molten Core is active. */
+  spawnIntervalMs: number;
+  /** Probability [0,1] that a spawn attempt succeeds. */
+  spawnChancePerInterval: number;
+  /** Hard cap on concurrent lava pools in the arena. */
+  maxPools: number;
+  /** Tail segments removed when the snake touches lava. */
+  burnTailSegments: number;
+}
+
+const DEFAULT_MOLTEN_LAVA_CONFIG: MoltenLavaConfig = {
+  spawnIntervalMs: 1_500,
+  spawnChancePerInterval: 0.35,
+  maxPools: 10,
+  burnTailSegments: 3,
+};
 
 interface BiomeVisualTheme {
   backgroundColor: number;
   gridLineColor: number;
   gridLineAlpha: number;
+  tilemapPrimaryColor: number;
+  tilemapPrimaryAlpha: number;
+  tilemapAccentColor: number;
+  tilemapAccentAlpha: number;
+  backdropPrimaryColor: number;
+  backdropPrimaryAlpha: number;
+  backdropAccentColor: number;
+  backdropAccentAlpha: number;
 }
 
 const BIOME_VISUAL_THEMES: Record<Biome, BiomeVisualTheme> = {
@@ -41,23 +73,61 @@ const BIOME_VISUAL_THEMES: Record<Biome, BiomeVisualTheme> = {
     backgroundColor: COLORS.BACKGROUND,
     gridLineColor: COLORS.GRID_LINE,
     gridLineAlpha: 0.08,
+    tilemapPrimaryColor: 0x00d5e2,
+    tilemapPrimaryAlpha: 0.14,
+    tilemapAccentColor: 0xff4b8f,
+    tilemapAccentAlpha: 0.12,
+    backdropPrimaryColor: 0x00f0ff,
+    backdropPrimaryAlpha: 0.12,
+    backdropAccentColor: 0xff2d78,
+    backdropAccentAlpha: 0.1,
   },
   [Biome.IceCavern]: {
     backgroundColor: 0x081624,
     gridLineColor: 0x7dc6ff,
     gridLineAlpha: 0.1,
+    tilemapPrimaryColor: 0x8ed5ff,
+    tilemapPrimaryAlpha: 0.16,
+    tilemapAccentColor: 0xd3f1ff,
+    tilemapAccentAlpha: 0.12,
+    backdropPrimaryColor: 0x8fdcff,
+    backdropPrimaryAlpha: 0.16,
+    backdropAccentColor: 0xf0fbff,
+    backdropAccentAlpha: 0.12,
   },
   [Biome.MoltenCore]: {
     backgroundColor: 0x1a0d05,
     gridLineColor: 0xff8a3d,
     gridLineAlpha: 0.13,
+    tilemapPrimaryColor: 0xff7a33,
+    tilemapPrimaryAlpha: 0.16,
+    tilemapAccentColor: 0xffcb71,
+    tilemapAccentAlpha: 0.12,
+    backdropPrimaryColor: 0xff6026,
+    backdropPrimaryAlpha: 0.18,
+    backdropAccentColor: 0xffb362,
+    backdropAccentAlpha: 0.14,
   },
   [Biome.VoidRift]: {
     backgroundColor: 0x060510,
     gridLineColor: 0x8a63ff,
     gridLineAlpha: 0.11,
+    tilemapPrimaryColor: 0x7855de,
+    tilemapPrimaryAlpha: 0.14,
+    tilemapAccentColor: 0xba9bff,
+    tilemapAccentAlpha: 0.11,
+    backdropPrimaryColor: 0x7b59ff,
+    backdropPrimaryAlpha: 0.14,
+    backdropAccentColor: 0xdfd2ff,
+    backdropAccentAlpha: 0.1,
   },
 };
+
+const BIOME_LAYER_DEPTH = {
+  BACKDROP: -30,
+  TILEMAP: -20,
+  GRID: -10,
+} as const;
 
 interface BiomeMechanicsState {
   iceMomentumActive: boolean;
@@ -95,8 +165,26 @@ export class MainScene extends Phaser.Scene {
   /** Biome rotation/timing owner for the current run. */
   private readonly biomeManager = new BiomeManager();
 
+  /** Tunable Molten Core lava behavior for spawn cadence/caps/burn amount. */
+  private moltenLavaConfig: MoltenLavaConfig = { ...DEFAULT_MOLTEN_LAVA_CONFIG };
+
+  /** Active lava pools keyed by `col:row`. */
+  private moltenLavaPools = new Map<string, GridPos>();
+
+  /** Spawn timer accumulator used while Molten Core is active. */
+  private moltenLavaSpawnElapsedMs = 0;
+
+  /** Graphics object used to render biome-specific backdrop motifs. */
+  private backdropGraphics: Phaser.GameObjects.Graphics | null = null;
+
+  /** Graphics object used to render biome-specific tilemap motifs. */
+  private tilemapGraphics: Phaser.GameObjects.Graphics | null = null;
+
   /** Graphics object used to render biome-specific arena grid lines. */
   private gridGraphics: Phaser.GameObjects.Graphics | null = null;
+
+  /** Number of snake steps elapsed since entering Void Rift. */
+  private voidGravityStepCounter = 0;
 
   /**
    * Injectable RNG function for deterministic replay sessions.
@@ -137,7 +225,12 @@ export class MainScene extends Phaser.Scene {
       this.onBridgePhaseChange = null;
     }
     this.biomeManager.stopRun();
+    this.resetMoltenCoreState();
     this.destroyEntities();
+    this.backdropGraphics?.destroy?.();
+    this.backdropGraphics = null;
+    this.tilemapGraphics?.destroy?.();
+    this.tilemapGraphics = null;
     this.gridGraphics?.destroy?.();
     this.gridGraphics = null;
   }
@@ -149,24 +242,23 @@ export class MainScene extends Phaser.Scene {
     this.updateBiomeState(delta);
 
     if (!this.snake || !this.food) return;
+    this.updateMoltenCoreMechanics(delta);
 
     const stepped = this.snake.update(delta);
 
     if (stepped) {
-      // Check collisions after the snake moved to its new grid position
       if (this.checkCollisions()) {
         return; // Game over — stop processing this frame
       }
 
-      // Check food consumption — emit particles at the old food position on eat
-      const foodSprite = this.food.getSprite();
-      const fx = foodSprite.x;
-      const fy = foodSprite.y;
-      const eaten = this.food.checkEat(this.snake, (points) =>
-        this.addScore(points),
-      );
-      if (eaten) {
-        emitFoodParticles(this, fx, fy);
+      this.resolveFoodConsumption();
+
+      const gravityApplied = this.applyVoidRiftGravityNudgeIfDue();
+      if (gravityApplied) {
+        if (this.checkCollisions()) {
+          return;
+        }
+        this.resolveFoodConsumption();
       }
     }
   }
@@ -194,7 +286,8 @@ export class MainScene extends Phaser.Scene {
   private startRun(): void {
     gameBridge.resetRun();
     this.biomeManager.startRun();
-    this.syncBiomeRuntimeToBridge();
+    this.resetMoltenCoreState();
+    this.voidGravityStepCounter = 0;
     this.handleBiomeEnter(this.biomeManager.getCurrentBiome());
     this.destroyEntities();
     this.createEntities();
@@ -204,6 +297,7 @@ export class MainScene extends Phaser.Scene {
   endRun(): void {
     shakeCamera(this);
     this.biomeManager.stopRun();
+    this.resetMoltenCoreState();
     if (this.snake?.isAlive()) {
       this.snake.kill();
     }
@@ -225,6 +319,7 @@ export class MainScene extends Phaser.Scene {
       DEFAULT_DIRECTION,
       DEFAULT_SNAKE_LENGTH,
     );
+    this.applyBiomeMovementMechanics(this.biomeManager.getCurrentBiome());
     this.snake.setupInput();
     this.snake.setupTouchInput();
     this.food = new Food(this, this.snake, this.rng);
@@ -265,6 +360,10 @@ export class MainScene extends Phaser.Scene {
       return true;
     }
 
+    if (this.handleMoltenLavaCollision(head)) {
+      return true;
+    }
+
     return false;
   }
 
@@ -298,6 +397,10 @@ export class MainScene extends Phaser.Scene {
     return this.biomeManager.getVisitStats();
   }
 
+  getMoltenLavaPools(): readonly GridPos[] {
+    return Array.from(this.moltenLavaPools.values(), (pool) => ({ ...pool }));
+  }
+
   // ── RNG / Deterministic replay ────────────────────────────────
 
   /** Set the RNG function for deterministic replay. */
@@ -308,6 +411,33 @@ export class MainScene extends Phaser.Scene {
   /** Get the current RNG function. */
   getRng(): () => number {
     return this.rng;
+  }
+
+  /** Override Molten Core spawn/burn knobs (used by balancing and tests). */
+  setMoltenLavaConfig(config: Partial<MoltenLavaConfig>): void {
+    this.moltenLavaConfig = {
+      spawnIntervalMs: Math.max(
+        1,
+        Math.floor(config.spawnIntervalMs ?? this.moltenLavaConfig.spawnIntervalMs),
+      ),
+      spawnChancePerInterval: Math.max(
+        0,
+        Math.min(
+          1,
+          config.spawnChancePerInterval ?? this.moltenLavaConfig.spawnChancePerInterval,
+        ),
+      ),
+      maxPools: Math.max(
+        0,
+        Math.floor(config.maxPools ?? this.moltenLavaConfig.maxPools),
+      ),
+      burnTailSegments: Math.max(
+        1,
+        Math.floor(config.burnTailSegments ?? this.moltenLavaConfig.burnTailSegments),
+      ),
+    };
+
+    this.trimMoltenLavaPoolsToCap();
   }
 
   // ── Entity accessors (for tests and external integration) ────
@@ -341,17 +471,127 @@ export class MainScene extends Phaser.Scene {
   }
 
   private handleBiomeEnter(biome: Biome): void {
+    if (biome === Biome.MoltenCore) {
+      this.moltenLavaSpawnElapsedMs = 0;
+    }
+
+    if (biome === Biome.VoidRift) {
+      this.voidGravityStepCounter = 0;
+    }
+
     const mechanics = createBiomeMechanicsState(biome);
     gameBridge.emitBiomeEnter(biome);
     this.events?.emit?.("biomeEnter", biome);
     this.events?.emit?.("biomeMechanicsChange", mechanics);
+    this.applyBiomeMovementMechanics(biome);
     this.applyBiomeVisualTheme(biome);
     this.events?.emit?.("biomeVisualChange", biome);
   }
 
   private handleBiomeExit(biome: Biome): void {
+    if (biome === Biome.MoltenCore) {
+      this.resetMoltenCoreState();
+    }
+
     gameBridge.emitBiomeExit(biome);
     this.events?.emit?.("biomeExit", biome);
+  }
+
+  private updateMoltenCoreMechanics(delta: number): void {
+    if (!this.snake || !this.food || this.biomeManager.getCurrentBiome() !== Biome.MoltenCore) {
+      this.moltenLavaSpawnElapsedMs = 0;
+      return;
+    }
+
+    this.moltenLavaSpawnElapsedMs += delta;
+
+    while (this.moltenLavaSpawnElapsedMs >= this.moltenLavaConfig.spawnIntervalMs) {
+      this.moltenLavaSpawnElapsedMs -= this.moltenLavaConfig.spawnIntervalMs;
+      this.trySpawnMoltenLavaPool();
+    }
+  }
+
+  private trySpawnMoltenLavaPool(): void {
+    if (this.moltenLavaPools.size >= this.moltenLavaConfig.maxPools) {
+      return;
+    }
+
+    if (this.rng() >= this.moltenLavaConfig.spawnChancePerInterval) {
+      return;
+    }
+
+    const freeCells = this.getMoltenLavaSpawnCandidates();
+    if (freeCells.length === 0) {
+      return;
+    }
+
+    const poolIndex = Math.floor(this.rng() * freeCells.length);
+    const poolPos = freeCells[poolIndex];
+    this.moltenLavaPools.set(this.gridPosKey(poolPos), poolPos);
+  }
+
+  private getMoltenLavaSpawnCandidates(): GridPos[] {
+    if (!this.snake || !this.food) {
+      return [];
+    }
+
+    const foodPos = this.food.getPosition();
+    const candidates: GridPos[] = [];
+
+    for (let col = 0; col < GRID_COLS; col++) {
+      for (let row = 0; row < GRID_ROWS; row++) {
+        const pos: GridPos = { col, row };
+        if (this.snake.isOnSnake(pos)) {
+          continue;
+        }
+        if (foodPos.col === col && foodPos.row === row) {
+          continue;
+        }
+        if (this.moltenLavaPools.has(this.gridPosKey(pos))) {
+          continue;
+        }
+        candidates.push(pos);
+      }
+    }
+
+    return candidates;
+  }
+
+  private handleMoltenLavaCollision(head: GridPos): boolean {
+    if (!this.snake || this.biomeManager.getCurrentBiome() !== Biome.MoltenCore) {
+      return false;
+    }
+
+    if (!this.moltenLavaPools.has(this.gridPosKey(head))) {
+      return false;
+    }
+
+    const survived = this.snake.burnTailSegments(this.moltenLavaConfig.burnTailSegments);
+    if (!survived) {
+      this.endRun();
+      return true;
+    }
+
+    return false;
+  }
+
+  private resetMoltenCoreState(): void {
+    this.moltenLavaPools.clear();
+    this.moltenLavaSpawnElapsedMs = 0;
+  }
+
+  private trimMoltenLavaPoolsToCap(): void {
+    while (this.moltenLavaPools.size > this.moltenLavaConfig.maxPools) {
+      const firstKey = this.moltenLavaPools.keys().next().value;
+      if (firstKey === undefined) {
+        return;
+      }
+      this.moltenLavaPools.delete(firstKey);
+    }
+  }
+
+  private gridPosKey(pos: GridPos): string {
+    return `${pos.col}:${pos.row}`;
   }
 
   private syncBiomeRuntimeToBridge(): void {
@@ -359,16 +599,270 @@ export class MainScene extends Phaser.Scene {
     gameBridge.setBiomeVisitStats(this.biomeManager.getVisitStats());
   }
 
+  private applyBiomeMovementMechanics(biome: Biome): void {
+    if (!this.snake) {
+      return;
+    }
+    const turnMomentumTiles =
+      biome === Biome.IceCavern ? ICE_CAVERN_TURN_MOMENTUM_TILES : 0;
+    this.snake.setTurnMomentumTiles(turnMomentumTiles);
+  }
+
+  private resolveFoodConsumption(): void {
+    if (!this.snake || !this.food) {
+      return;
+    }
+
+    const foodSprite = this.food.getSprite();
+    const fx = foodSprite.x;
+    const fy = foodSprite.y;
+    const eaten = this.food.checkEat(this.snake, (points) =>
+      this.addScore(points),
+    );
+    if (eaten) {
+      emitFoodParticles(this, fx, fy);
+    }
+  }
+
+  private applyVoidRiftGravityNudgeIfDue(): boolean {
+    if (!this.snake || this.biomeManager.getCurrentBiome() !== Biome.VoidRift) {
+      return false;
+    }
+
+    this.voidGravityStepCounter += 1;
+    if (this.voidGravityStepCounter % VOID_RIFT_GRAVITY_PULL_CADENCE_STEPS !== 0) {
+      return false;
+    }
+
+    const pullDirection = this.getVoidRiftPullDirection(this.snake.getHeadPosition());
+    if (!pullDirection) {
+      return false;
+    }
+
+    this.snake.applyExternalNudge(pullDirection);
+    return true;
+  }
+
+  private getVoidRiftPullDirection(head: GridPos): Direction | null {
+    const deltaCol = VOID_RIFT_CENTER.col - head.col;
+    const deltaRow = VOID_RIFT_CENTER.row - head.row;
+
+    if (deltaCol === 0 && deltaRow === 0) {
+      return null;
+    }
+
+    if (Math.abs(deltaCol) > Math.abs(deltaRow)) {
+      return deltaCol > 0 ? "right" : "left";
+    }
+    if (Math.abs(deltaRow) > Math.abs(deltaCol)) {
+      return deltaRow > 0 ? "down" : "up";
+    }
+
+    // Deterministic tie-breaker for diagonal pulls.
+    return deltaCol > 0 ? "right" : "left";
+  }
+
   private applyBiomeVisualTheme(biome: Biome): void {
     const theme = BIOME_VISUAL_THEMES[biome];
     this.cameras.main?.setBackgroundColor?.(theme.backgroundColor);
+    this.drawBackdrop(biome, theme);
+    this.drawTilemap(biome, theme);
     this.drawGrid(theme.gridLineColor, theme.gridLineAlpha);
+  }
+
+  private drawBackdrop(biome: Biome, theme: BiomeVisualTheme): void {
+    this.backdropGraphics?.destroy?.();
+    const gfx = this.add.graphics();
+    this.backdropGraphics = gfx;
+    gfx.setDepth?.(BIOME_LAYER_DEPTH.BACKDROP);
+
+    gfx.lineStyle(2, theme.backdropPrimaryColor, theme.backdropPrimaryAlpha);
+    switch (biome) {
+      case Biome.NeonCity:
+        this.drawNeonBackdrop(gfx);
+        break;
+      case Biome.IceCavern:
+        this.drawIceBackdrop(gfx);
+        break;
+      case Biome.MoltenCore:
+        this.drawMoltenBackdrop(gfx);
+        break;
+      case Biome.VoidRift:
+        this.drawVoidBackdrop(gfx);
+        break;
+    }
+    gfx.strokePath();
+
+    gfx.lineStyle(1, theme.backdropAccentColor, theme.backdropAccentAlpha);
+    this.drawBackdropAccent(biome, gfx);
+    gfx.strokePath();
+  }
+
+  private drawTilemap(biome: Biome, theme: BiomeVisualTheme): void {
+    this.tilemapGraphics?.destroy?.();
+    const gfx = this.add.graphics();
+    this.tilemapGraphics = gfx;
+    gfx.setDepth?.(BIOME_LAYER_DEPTH.TILEMAP);
+
+    gfx.lineStyle(1, theme.tilemapPrimaryColor, theme.tilemapPrimaryAlpha);
+    for (let col = 0; col < GRID_COLS; col++) {
+      for (let row = 0; row < GRID_ROWS; row++) {
+        if (!this.shouldDrawTilePrimary(biome, col, row)) {
+          continue;
+        }
+
+        const x = col * TILE_SIZE;
+        const y = row * TILE_SIZE;
+        gfx.moveTo(x + 2, y + TILE_SIZE / 2);
+        gfx.lineTo(x + TILE_SIZE - 2, y + TILE_SIZE / 2);
+      }
+    }
+    gfx.strokePath();
+
+    gfx.lineStyle(1, theme.tilemapAccentColor, theme.tilemapAccentAlpha);
+    for (let col = 0; col < GRID_COLS; col++) {
+      for (let row = 0; row < GRID_ROWS; row++) {
+        if (!this.shouldDrawTileAccent(biome, col, row)) {
+          continue;
+        }
+
+        const x = col * TILE_SIZE;
+        const y = row * TILE_SIZE;
+        gfx.moveTo(x + TILE_SIZE / 2, y + 2);
+        gfx.lineTo(x + TILE_SIZE / 2, y + TILE_SIZE - 2);
+      }
+    }
+    gfx.strokePath();
+  }
+
+  private shouldDrawTilePrimary(biome: Biome, col: number, row: number): boolean {
+    switch (biome) {
+      case Biome.NeonCity:
+        return (col + row) % 2 === 0;
+      case Biome.IceCavern:
+        return row % 2 === 0;
+      case Biome.MoltenCore:
+        return (col * 3 + row) % 5 < 2;
+      case Biome.VoidRift:
+        return (col + row * 2) % 4 === 0;
+    }
+  }
+
+  private shouldDrawTileAccent(biome: Biome, col: number, row: number): boolean {
+    switch (biome) {
+      case Biome.NeonCity:
+        return col % 3 === 0 && row % 2 === 0;
+      case Biome.IceCavern:
+        return col % 4 === 0 && row % 3 !== 1;
+      case Biome.MoltenCore:
+        return (col + row) % 4 === 1;
+      case Biome.VoidRift:
+        return (col * 2 + row) % 5 === 0;
+    }
+  }
+
+  private drawNeonBackdrop(gfx: Phaser.GameObjects.Graphics): void {
+    for (let col = 0; col <= GRID_COLS; col += 4) {
+      const x = col * TILE_SIZE;
+      gfx.moveTo(x, 0);
+      gfx.lineTo(Math.min(ARENA_WIDTH, x + TILE_SIZE * 2), ARENA_HEIGHT);
+    }
+    for (let row = 3; row <= GRID_ROWS; row += 5) {
+      const y = row * TILE_SIZE;
+      gfx.moveTo(0, y);
+      gfx.lineTo(ARENA_WIDTH, y);
+    }
+  }
+
+  private drawIceBackdrop(gfx: Phaser.GameObjects.Graphics): void {
+    for (let row = 2; row <= GRID_ROWS; row += 4) {
+      const y = row * TILE_SIZE;
+      gfx.moveTo(0, y);
+      gfx.lineTo(ARENA_WIDTH, Math.min(ARENA_HEIGHT, y + TILE_SIZE / 2));
+    }
+    for (let col = 2; col <= GRID_COLS; col += 6) {
+      const x = col * TILE_SIZE;
+      gfx.moveTo(x, 0);
+      gfx.lineTo(Math.max(0, x - TILE_SIZE * 2), ARENA_HEIGHT);
+    }
+  }
+
+  private drawMoltenBackdrop(gfx: Phaser.GameObjects.Graphics): void {
+    for (let col = 1; col <= GRID_COLS; col += 5) {
+      const baseX = col * TILE_SIZE;
+      gfx.moveTo(baseX, 0);
+      for (let row = 1; row <= GRID_ROWS; row += 3) {
+        const y = row * TILE_SIZE;
+        const direction = (col + row) % 2 === 0 ? 1 : -1;
+        gfx.lineTo(baseX + direction * (TILE_SIZE * 0.8), y);
+      }
+    }
+  }
+
+  private drawVoidBackdrop(gfx: Phaser.GameObjects.Graphics): void {
+    const centerX = ARENA_WIDTH / 2;
+    const centerY = ARENA_HEIGHT / 2;
+    const radiusX = ARENA_WIDTH * 0.55;
+    const radiusY = ARENA_HEIGHT * 0.55;
+
+    for (let angle = 0; angle < 360; angle += 30) {
+      const radians = (angle * Math.PI) / 180;
+      gfx.moveTo(centerX, centerY);
+      gfx.lineTo(
+        centerX + Math.cos(radians) * radiusX,
+        centerY + Math.sin(radians) * radiusY,
+      );
+    }
+  }
+
+  private drawBackdropAccent(biome: Biome, gfx: Phaser.GameObjects.Graphics): void {
+    switch (biome) {
+      case Biome.NeonCity: {
+        for (let row = 1; row < GRID_ROWS; row += 6) {
+          const y = row * TILE_SIZE;
+          gfx.moveTo(0, y);
+          gfx.lineTo(ARENA_WIDTH, Math.min(ARENA_HEIGHT, y + TILE_SIZE * 1.5));
+        }
+        break;
+      }
+      case Biome.IceCavern: {
+        for (let col = 1; col < GRID_COLS; col += 5) {
+          const x = col * TILE_SIZE;
+          gfx.moveTo(x, 0);
+          gfx.lineTo(x, ARENA_HEIGHT);
+        }
+        break;
+      }
+      case Biome.MoltenCore: {
+        for (let row = 2; row < GRID_ROWS; row += 4) {
+          const y = row * TILE_SIZE;
+          gfx.moveTo(0, y);
+          gfx.lineTo(ARENA_WIDTH, y - TILE_SIZE / 2);
+        }
+        break;
+      }
+      case Biome.VoidRift: {
+        const centerX = ARENA_WIDTH / 2;
+        const centerY = ARENA_HEIGHT / 2;
+        for (let ring = 1; ring <= 4; ring++) {
+          const halfWidth = ring * TILE_SIZE * 3;
+          const halfHeight = ring * TILE_SIZE * 2;
+          gfx.moveTo(centerX - halfWidth, centerY);
+          gfx.lineTo(centerX, centerY - halfHeight);
+          gfx.lineTo(centerX + halfWidth, centerY);
+          gfx.lineTo(centerX, centerY + halfHeight);
+          gfx.lineTo(centerX - halfWidth, centerY);
+        }
+        break;
+      }
+    }
   }
 
   private drawGrid(lineColor: number, lineAlpha: number): void {
     this.gridGraphics?.destroy?.();
     const gfx = this.add.graphics();
     this.gridGraphics = gfx;
+    gfx.setDepth?.(BIOME_LAYER_DEPTH.GRID);
     gfx.lineStyle(1, lineColor, lineAlpha);
 
     // Vertical lines
