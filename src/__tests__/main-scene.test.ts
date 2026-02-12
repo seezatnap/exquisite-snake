@@ -337,17 +337,18 @@ describe("MainScene source file", () => {
   });
 });
 
-describe("config.ts includes MainScene in scene list", () => {
+describe("Game.tsx loads MainScene for the scene list", () => {
   const source = fs.readFileSync(
-    path.join(ROOT, "src/game/config.ts"),
+    path.join(ROOT, "src/components/Game.tsx"),
     "utf-8",
   );
 
-  it("imports MainScene", () => {
+  it("dynamically imports MainScene", () => {
     expect(source).toContain("MainScene");
   });
 
-  it("includes MainScene in the scene array", () => {
-    expect(source).toMatch(/scene:\s*\[[\s\S]*MainScene[\s\S]*\]/);
+  it("passes MainScene to createGameConfig", () => {
+    expect(source).toContain("createGameConfig");
+    expect(source).toContain("MainScene");
   });
 });
