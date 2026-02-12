@@ -19,6 +19,16 @@ import {
   type BiomeTransition,
   type BiomeVisitStats,
 } from "../systems/BiomeManager";
+import {
+  type BiomeMechanicsConfig,
+  type BiomeMechanicsConfigPatch,
+  type MoltenLavaConfig,
+  DEFAULT_BIOME_MECHANICS_CONFIG,
+  cloneBiomeMechanicsConfig,
+  mergeBiomeMechanicsConfig,
+  normalizeRandomHook,
+  sampleBiomeRandom,
+} from "../systems/biomeMechanics";
 
 // ── Default spawn configuration ─────────────────────────────────
 
@@ -29,29 +39,9 @@ const DEFAULT_HEAD_POS: GridPos = {
 };
 const DEFAULT_DIRECTION = "right" as const;
 const DEFAULT_SNAKE_LENGTH = 3;
-const ICE_CAVERN_TURN_MOMENTUM_TILES = 2;
-const VOID_RIFT_GRAVITY_PULL_CADENCE_STEPS = 3;
 const VOID_RIFT_CENTER: GridPos = {
   col: Math.floor(GRID_COLS / 2),
   row: Math.floor(GRID_ROWS / 2),
-};
-
-export interface MoltenLavaConfig {
-  /** Milliseconds between spawn attempts while Molten Core is active. */
-  spawnIntervalMs: number;
-  /** Probability [0,1] that a spawn attempt succeeds. */
-  spawnChancePerInterval: number;
-  /** Hard cap on concurrent lava pools in the arena. */
-  maxPools: number;
-  /** Tail segments removed when the snake touches lava. */
-  burnTailSegments: number;
-}
-
-const DEFAULT_MOLTEN_LAVA_CONFIG: MoltenLavaConfig = {
-  spawnIntervalMs: 1_500,
-  spawnChancePerInterval: 0.35,
-  maxPools: 10,
-  burnTailSegments: 3,
 };
 
 interface BiomeVisualTheme {
@@ -165,8 +155,10 @@ export class MainScene extends Phaser.Scene {
   /** Biome rotation/timing owner for the current run. */
   private readonly biomeManager = new BiomeManager();
 
-  /** Tunable Molten Core lava behavior for spawn cadence/caps/burn amount. */
-  private moltenLavaConfig: MoltenLavaConfig = { ...DEFAULT_MOLTEN_LAVA_CONFIG };
+  /** Shared balancing knobs for Ice, Molten, and Void biome mechanics. */
+  private biomeMechanicsConfig: BiomeMechanicsConfig = cloneBiomeMechanicsConfig(
+    DEFAULT_BIOME_MECHANICS_CONFIG,
+  );
 
   /** Active lava pools keyed by `col:row`. */
   private moltenLavaPools = new Map<string, GridPos>();
@@ -405,7 +397,7 @@ export class MainScene extends Phaser.Scene {
 
   /** Set the RNG function for deterministic replay. */
   setRng(rng: () => number): void {
-    this.rng = rng;
+    this.rng = normalizeRandomHook(rng, this.rng);
   }
 
   /** Get the current RNG function. */
@@ -413,31 +405,24 @@ export class MainScene extends Phaser.Scene {
     return this.rng;
   }
 
-  /** Override Molten Core spawn/burn knobs (used by balancing and tests). */
-  setMoltenLavaConfig(config: Partial<MoltenLavaConfig>): void {
-    this.moltenLavaConfig = {
-      spawnIntervalMs: Math.max(
-        1,
-        Math.floor(config.spawnIntervalMs ?? this.moltenLavaConfig.spawnIntervalMs),
-      ),
-      spawnChancePerInterval: Math.max(
-        0,
-        Math.min(
-          1,
-          config.spawnChancePerInterval ?? this.moltenLavaConfig.spawnChancePerInterval,
-        ),
-      ),
-      maxPools: Math.max(
-        0,
-        Math.floor(config.maxPools ?? this.moltenLavaConfig.maxPools),
-      ),
-      burnTailSegments: Math.max(
-        1,
-        Math.floor(config.burnTailSegments ?? this.moltenLavaConfig.burnTailSegments),
-      ),
-    };
-
+  /** Override shared biome balancing knobs (Ice, Molten, Void). */
+  setBiomeMechanicsConfig(config: BiomeMechanicsConfigPatch): void {
+    this.biomeMechanicsConfig = mergeBiomeMechanicsConfig(
+      this.biomeMechanicsConfig,
+      config,
+    );
     this.trimMoltenLavaPoolsToCap();
+    this.applyBiomeMovementMechanics(this.biomeManager.getCurrentBiome());
+  }
+
+  /** Snapshot of the currently active biome-mechanics balancing config. */
+  getBiomeMechanicsConfig(): BiomeMechanicsConfig {
+    return cloneBiomeMechanicsConfig(this.biomeMechanicsConfig);
+  }
+
+  /** Backward-compatible Molten Core config override used by existing tests. */
+  setMoltenLavaConfig(config: Partial<MoltenLavaConfig>): void {
+    this.setBiomeMechanicsConfig({ moltenCore: config });
   }
 
   // ── Entity accessors (for tests and external integration) ────
@@ -503,20 +488,22 @@ export class MainScene extends Phaser.Scene {
       return;
     }
 
+    const moltenConfig = this.biomeMechanicsConfig.moltenCore;
     this.moltenLavaSpawnElapsedMs += delta;
 
-    while (this.moltenLavaSpawnElapsedMs >= this.moltenLavaConfig.spawnIntervalMs) {
-      this.moltenLavaSpawnElapsedMs -= this.moltenLavaConfig.spawnIntervalMs;
+    while (this.moltenLavaSpawnElapsedMs >= moltenConfig.spawnIntervalMs) {
+      this.moltenLavaSpawnElapsedMs -= moltenConfig.spawnIntervalMs;
       this.trySpawnMoltenLavaPool();
     }
   }
 
   private trySpawnMoltenLavaPool(): void {
-    if (this.moltenLavaPools.size >= this.moltenLavaConfig.maxPools) {
+    const moltenConfig = this.biomeMechanicsConfig.moltenCore;
+    if (this.moltenLavaPools.size >= moltenConfig.maxPools) {
       return;
     }
 
-    if (this.rng() >= this.moltenLavaConfig.spawnChancePerInterval) {
+    if (sampleBiomeRandom(this.rng) >= moltenConfig.spawnChancePerInterval) {
       return;
     }
 
@@ -525,7 +512,7 @@ export class MainScene extends Phaser.Scene {
       return;
     }
 
-    const poolIndex = Math.floor(this.rng() * freeCells.length);
+    const poolIndex = Math.floor(sampleBiomeRandom(this.rng) * freeCells.length);
     const poolPos = freeCells[poolIndex];
     this.moltenLavaPools.set(this.gridPosKey(poolPos), poolPos);
   }
@@ -566,7 +553,9 @@ export class MainScene extends Phaser.Scene {
       return false;
     }
 
-    const survived = this.snake.burnTailSegments(this.moltenLavaConfig.burnTailSegments);
+    const survived = this.snake.burnTailSegments(
+      this.biomeMechanicsConfig.moltenCore.burnTailSegments,
+    );
     if (!survived) {
       this.endRun();
       return true;
@@ -581,7 +570,7 @@ export class MainScene extends Phaser.Scene {
   }
 
   private trimMoltenLavaPoolsToCap(): void {
-    while (this.moltenLavaPools.size > this.moltenLavaConfig.maxPools) {
+    while (this.moltenLavaPools.size > this.biomeMechanicsConfig.moltenCore.maxPools) {
       const firstKey = this.moltenLavaPools.keys().next().value;
       if (firstKey === undefined) {
         return;
@@ -603,8 +592,9 @@ export class MainScene extends Phaser.Scene {
     if (!this.snake) {
       return;
     }
-    const turnMomentumTiles =
-      biome === Biome.IceCavern ? ICE_CAVERN_TURN_MOMENTUM_TILES : 0;
+    const turnMomentumTiles = biome === Biome.IceCavern
+      ? this.biomeMechanicsConfig.iceCavern.turnMomentumTiles
+      : 0;
     this.snake.setTurnMomentumTiles(turnMomentumTiles);
   }
 
@@ -630,7 +620,8 @@ export class MainScene extends Phaser.Scene {
     }
 
     this.voidGravityStepCounter += 1;
-    if (this.voidGravityStepCounter % VOID_RIFT_GRAVITY_PULL_CADENCE_STEPS !== 0) {
+    const cadenceSteps = this.biomeMechanicsConfig.voidRift.gravityPullCadenceSteps;
+    if (this.voidGravityStepCounter % cadenceSteps !== 0) {
       return false;
     }
 
@@ -658,8 +649,12 @@ export class MainScene extends Phaser.Scene {
       return deltaRow > 0 ? "down" : "up";
     }
 
-    // Deterministic tie-breaker for diagonal pulls.
-    return deltaCol > 0 ? "right" : "left";
+    // Use the injectable RNG so replay sessions get deterministic tie-breaks.
+    const preferHorizontal = sampleBiomeRandom(this.rng) < 0.5;
+    if (preferHorizontal) {
+      return deltaCol > 0 ? "right" : "left";
+    }
+    return deltaRow > 0 ? "down" : "up";
   }
 
   private applyBiomeVisualTheme(biome: Biome): void {
