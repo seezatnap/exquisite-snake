@@ -70,5 +70,14 @@ export class Boot extends Phaser.Scene {
       );
       particleGfx.destroy();
     }
+
+    // ── Lava pool: orange filled circle for Molten Core biome ───
+    if (!this.textures.exists(TEXTURE_KEYS.LAVA_POOL)) {
+      const lavaGfx = this.make.graphics({ x: 0, y: 0 }, false);
+      lavaGfx.fillStyle(COLORS.LAVA_POOL, 0.85);
+      lavaGfx.fillCircle(half, half, half - 1);
+      lavaGfx.generateTexture(TEXTURE_KEYS.LAVA_POOL, size, size);
+      lavaGfx.destroy();
+    }
   }
 }
