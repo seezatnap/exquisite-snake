@@ -10,6 +10,10 @@ function createMockSprite() {
     destroy: mockDestroy,
     setPosition: mockSetPosition,
     setTexture: vi.fn(),
+    setDepth: vi.fn().mockReturnThis(),
+    setAlpha: vi.fn().mockReturnThis(),
+    setScale: vi.fn().mockReturnThis(),
+    setVisible: vi.fn().mockReturnThis(),
     x: 0,
     y: 0,
   };
