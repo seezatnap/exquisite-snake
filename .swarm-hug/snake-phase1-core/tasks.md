@@ -23,7 +23,7 @@
 - [x] (#13) Build `src/components/StartScreen.tsx` with animated snake-logo/title treatment, “Press any key” start prompt, and high-score display sourced from persisted data [5 pts] (blocked by #10) (A)
 - [x] (#14) Build `src/components/HUD.tsx` top bar showing score/high score and reserved placeholder slots for future biome indicator, rewind cooldown, and parasite inventory [5 pts] (blocked by #5) (B)
 - [x] (#15) Build `src/components/GameOver.tsx` overlay with final score, high score, time survived, and a Play Again action wired to scene reset and state re-entry [5 pts] (blocked by #9, #10) (B)
-- [ ] (#16) Integrate start/HUD/game-over overlays into a complete game loop (start -> playing -> game over -> replay), including keyboard-first navigation and consistent focus management between states [5 pts] (blocked by #13, #14, #15)
+- [x] (#16) Integrate start/HUD/game-over overlays into a complete game loop (start -> playing -> game over -> replay), including keyboard-first navigation and consistent focus management between states [5 pts] (blocked by #13, #14, #15) (A)
 
 ## Visual Polish & Performance
 
@@ -53,3 +53,8 @@
 ## Follow-up tasks (from sprint review)
 - [x] (#29) Integrate `Food` into `src/game/scenes/MainScene.ts` so each run spawns food and the update loop processes `food.tryEat(snake)` to drive real score increments and snake growth during gameplay. (A)
 - [x] (#30) Add `MainScene` integration tests that verify eating food updates score, triggers snake growth, and respawns food in a non-occupied cell. (A)
+
+## Follow-up tasks (from sprint review)
+- [ ] (#31) Update `src/components/Game.tsx` to focus the arena only when phase transitions into `"playing"` (track previous phase) instead of on every `"playing"` bridge update, to avoid continuous focus-stealing during gameplay.
+- [ ] (#32) Add a regression test in `tests/game-component.test.mjs` that emits repeated `"playing"` state updates and verifies arena focus is triggered once per transition.
+- [ ] (#33) Replace `tests/hud-component.test.mjs` source-regex assertions with behavioral tests that mount `HUD`, mock the MainScene bridge, and verify start-phase hiding, live score/high-score updates, and unsubscribe cleanup.

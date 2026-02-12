@@ -348,6 +348,9 @@ async function createHarness({ bridgeState = {} } = {}) {
     getText() {
       return getRenderedText(renderer.getTree());
     },
+    getPlayAgainButton() {
+      return findFirstNodeByType(renderer.getTree(), "button");
+    },
     clickPlayAgain() {
       const button = findFirstNodeByType(renderer.getTree(), "button");
 
@@ -404,6 +407,7 @@ test("GameOver Play Again button requests replay through MainScene bridge", asyn
   });
 
   assert.equal(harness.isVisible(), true);
+  assert.equal(harness.getPlayAgainButton()?.props?.autoFocus, true);
   harness.clickPlayAgain();
 
   assert.equal(harness.bridge.replayRequestCount(), 1);

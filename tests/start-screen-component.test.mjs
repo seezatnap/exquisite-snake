@@ -233,6 +233,29 @@ function getRenderedText(tree) {
   return collectText(tree).join(" ").replace(/\s+/g, " ").trim();
 }
 
+function findFirstNodeByType(node, type) {
+  if (!node) {
+    return null;
+  }
+
+  if (Array.isArray(node)) {
+    for (const child of node) {
+      const match = findFirstNodeByType(child, type);
+      if (match) {
+        return match;
+      }
+    }
+
+    return null;
+  }
+
+  if (node.type === type) {
+    return node;
+  }
+
+  return findFirstNodeByType(node.props?.children, type);
+}
+
 function createBridgeMock(initialState) {
   let state = {
     phase: "start",
@@ -241,6 +264,7 @@ function createBridgeMock(initialState) {
     elapsedSurvivalMs: 0,
     ...initialState,
   };
+  let startRequests = 0;
   const listeners = new Set();
 
   return {
@@ -256,6 +280,21 @@ function createBridgeMock(initialState) {
           listeners.delete(listener);
         };
       },
+      requestMainSceneStart() {
+        startRequests += 1;
+        state = {
+          ...state,
+          phase: "playing",
+          score: 0,
+          elapsedSurvivalMs: 0,
+        };
+
+        for (const listener of [...listeners]) {
+          listener(state);
+        }
+
+        return true;
+      },
     },
     emit(nextPatch) {
       state = {
@@ -269,6 +308,9 @@ function createBridgeMock(initialState) {
     },
     listenerCount() {
       return listeners.size;
+    },
+    startRequestCount() {
+      return startRequests;
     },
   };
 }
@@ -333,6 +375,18 @@ async function createHarness({
     getText() {
       return getRenderedText(renderer.getTree());
     },
+    getStartButton() {
+      return findFirstNodeByType(renderer.getTree(), "button");
+    },
+    clickStartAction() {
+      const button = findFirstNodeByType(renderer.getTree(), "button");
+
+      if (!button?.props?.onClick) {
+        throw new Error("Start action button was not rendered");
+      }
+
+      button.props.onClick();
+    },
   };
 }
 
@@ -371,6 +425,7 @@ test("StartScreen visibility follows bridge phase transitions between start and 
 
   assert.equal(harness.isVisible(), true);
   assert.match(harness.getText(), /Press any key/);
+  assert.equal(harness.getStartButton()?.props?.autoFocus, true);
   assert.equal(harness.bridge.listenerCount(), 1);
 
   harness.bridge.emit({ phase: "playing" });
@@ -385,4 +440,22 @@ test("StartScreen visibility follows bridge phase transitions between start and 
 
   harness.unmount();
   assert.equal(harness.bridge.listenerCount(), 0);
+});
+
+test("StartScreen start action requests the MainScene start transition", async () => {
+  const harness = await createHarness({
+    persistedHighScore: 2,
+    bridgeState: {
+      phase: "start",
+      highScore: 2,
+    },
+  });
+
+  assert.equal(harness.isVisible(), true);
+  harness.clickStartAction();
+
+  assert.equal(harness.bridge.startRequestCount(), 1);
+  assert.equal(harness.isVisible(), false);
+
+  harness.unmount();
 });
