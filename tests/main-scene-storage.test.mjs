@@ -29,9 +29,10 @@ function transpile(source, fileName) {
 const toPlain = (value) => JSON.parse(JSON.stringify(value));
 
 async function loadMainSceneModule(storageModule) {
-  const [gridSource, snakeSource, sceneSource] = await Promise.all([
+  const [gridSource, snakeSource, foodSource, sceneSource] = await Promise.all([
     readFile(path.join(projectRoot, "src/game/utils/grid.ts"), "utf8"),
     readFile(path.join(projectRoot, "src/game/entities/Snake.ts"), "utf8"),
+    readFile(path.join(projectRoot, "src/game/entities/Food.ts"), "utf8"),
     readFile(path.join(projectRoot, "src/game/scenes/MainScene.ts"), "utf8"),
   ]);
 
@@ -67,6 +68,27 @@ async function loadMainSceneModule(storageModule) {
 
   vm.runInContext(transpile(snakeSource, "Snake.ts"), snakeContext, {
     filename: "Snake.cjs",
+  });
+
+  const foodModule = { exports: {} };
+  const foodContext = vm.createContext({
+    module: foodModule,
+    exports: foodModule.exports,
+    require(specifier) {
+      if (specifier === "../utils/grid") {
+        return gridModule.exports;
+      }
+
+      if (specifier === "../config") {
+        return MOCK_CONFIG;
+      }
+
+      throw new Error(`Unexpected food module request: ${specifier}`);
+    },
+  });
+
+  vm.runInContext(transpile(foodSource, "Food.ts"), foodContext, {
+    filename: "Food.cjs",
   });
 
   class MockEmitter {
@@ -152,6 +174,10 @@ async function loadMainSceneModule(storageModule) {
         return snakeModule.exports;
       }
 
+      if (specifier === "../entities/Food") {
+        return foodModule.exports;
+      }
+
       if (specifier === "../utils/grid") {
         return gridModule.exports;
       }
@@ -234,6 +260,61 @@ test("MainScene starts a run from pointer input for mobile controls", async () =
   scene.input.emit("pointerdown");
 
   assert.equal(sceneModule.getMainSceneStateSnapshot().phase, "playing");
+});
+
+test("MainScene spawns food when a run starts", async () => {
+  const sceneModule = await loadMainSceneModule({
+    loadHighScore() {
+      return 0;
+    },
+    persistHighScore(score) {
+      return score;
+    },
+  });
+
+  const scene = new sceneModule.MainScene();
+  scene.create();
+  scene.startRun();
+
+  const foodPosition = toPlain(scene.food.currentPosition);
+  assert.ok(foodPosition);
+
+  const occupiedBySnake = toPlain(scene.snake.getSegments()).some(
+    (segment) =>
+      segment.x === foodPosition.x &&
+      segment.y === foodPosition.y,
+  );
+
+  assert.equal(occupiedBySnake, false);
+});
+
+test("MainScene update processes food.tryEat for score and growth", async () => {
+  const sceneModule = await loadMainSceneModule({
+    loadHighScore() {
+      return 0;
+    },
+    persistHighScore(score) {
+      return score;
+    },
+  });
+
+  const scene = new sceneModule.MainScene();
+  scene.create();
+  scene.startRun();
+
+  scene.food.spawnForSnake = () => null;
+  scene.food.position = { x: 9, y: 8 };
+
+  scene.time.now = 120;
+  scene.update(120);
+  assert.equal(sceneModule.getMainSceneStateSnapshot().score, 1);
+  assert.equal(scene.snake.pendingGrowth, 1);
+  assert.equal(scene.snake.length, 3);
+
+  scene.time.now = 240;
+  scene.update(240);
+  assert.equal(scene.snake.length, 4);
+  assert.equal(scene.snake.pendingGrowth, 0);
 });
 
 test("MainScene transitions to game-over when snake hits a wall", async () => {
