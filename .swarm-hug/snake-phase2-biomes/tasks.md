@@ -3,7 +3,7 @@
 ## Core Systems
 
 - [x] (#1) Create `src/game/systems/BiomeManager.ts` with biome enum/config, a 45-second timer, deterministic cycle order (Neon City → Ice Cavern → Molten Core → Void Rift → repeat), and clean start/reset behavior per run [5 pts] (A)
-- [A] (#2) Integrate BiomeManager into the main game loop/state flow so biome enter/exit events trigger mechanics and visual changes, and biome-visit stats are tracked during the run [5 pts] (blocked by #1)
+- [x] (#2) Integrate BiomeManager into the main game loop/state flow so biome enter/exit events trigger mechanics and visual changes, and biome-visit stats are tracked during the run [5 pts] (blocked by #1) (A)
 
 ## Biome Mechanics
 
