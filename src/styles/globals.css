@@ -1,26 +1,105 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --background: #040712;
+  --foreground: #eaf7ff;
+  --surface-0: #0a1120;
+  --surface-1: #101a30;
+  --neon-cyan: #2ef0ff;
+  --neon-pink: #ff4fd8;
+  --neon-cyan-rgb: 46 240 255;
+  --neon-pink-rgb: 255 79 216;
+  --grid-line: rgb(46 240 255 / 0.24);
+  --grid-line-strong: rgb(255 79 216 / 0.2);
+  --scanline: rgb(255 255 255 / 0.05);
+  --frame-shadow:
+    0 0 0 1px rgb(var(--neon-cyan-rgb) / 0.28),
+    0 0 28px rgb(var(--neon-cyan-rgb) / 0.2),
+    0 0 54px rgb(var(--neon-pink-rgb) / 0.12);
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
+  --color-surface-0: var(--surface-0);
+  --color-surface-1: var(--surface-1);
+  --color-neon-cyan: var(--neon-cyan);
+  --color-neon-pink: var(--neon-pink);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  min-height: 100%;
 }
 
 body {
-  background: var(--background);
+  background-color: var(--background);
+  background-image:
+    radial-gradient(
+      circle at 15% 15%,
+      rgb(var(--neon-pink-rgb) / 0.2),
+      transparent 42%
+    ),
+    radial-gradient(
+      circle at 85% 0%,
+      rgb(var(--neon-cyan-rgb) / 0.22),
+      transparent 35%
+    ),
+    linear-gradient(180deg, #050915 0%, #03060f 50%, #02040b 100%);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-geist-sans), "Segoe UI", sans-serif;
+  text-rendering: optimizeLegibility;
+}
+
+.arena-floor {
+  background-color: var(--surface-0);
+  border: 1px solid rgb(var(--neon-cyan-rgb) / 0.4);
+  border-radius: clamp(1rem, 2.8vw, 2rem);
+  box-shadow: var(--frame-shadow);
+  overflow: hidden;
+}
+
+.arena-floor::before,
+.arena-floor::after {
+  content: "";
+  inset: 0;
+  pointer-events: none;
+  position: absolute;
+}
+
+.arena-floor::before {
+  background-image:
+    linear-gradient(to bottom, transparent, rgb(var(--neon-pink-rgb) / 0.09)),
+    repeating-linear-gradient(
+      0deg,
+      transparent 0 30px,
+      var(--grid-line) 30px 31px
+    ),
+    repeating-linear-gradient(
+      90deg,
+      transparent 0 30px,
+      var(--grid-line-strong) 30px 31px
+    );
+}
+
+.arena-floor::after {
+  background-image:
+    radial-gradient(
+      ellipse at top,
+      rgb(var(--neon-cyan-rgb) / 0.12),
+      transparent 60%
+    ),
+    repeating-linear-gradient(
+      180deg,
+      transparent 0 4px,
+      var(--scanline) 4px 5px
+    );
+  mix-blend-mode: screen;
+  opacity: 0.35;
 }
