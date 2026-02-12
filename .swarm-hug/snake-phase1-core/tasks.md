@@ -38,3 +38,6 @@
 ## Follow-up tasks (from sprint review)
 - [x] (#22) Call `snake.setupTouchInput()` in `MainScene.createEntities()` alongside `setupInput()` so touch/swipe controls are actually active during gameplay (blocked by #11) (B)
 - [x] (#23) Remove the keyboard `keydown` listener in `Snake.destroy()` to prevent duplicate handlers accumulating across replays — each `startRun` calls `setupInput()` on a new Snake, but the old listener on `scene.input.keyboard` is never cleaned up (blocked by #7) (B)
+
+## Follow-up tasks (from sprint review)
+- [ ] (#24) Strengthen "score increments when snake eats food" test in `gameplay-qa.test.ts` — the double-conditional (`if headCol >= 0` + `if gridEquals(...)`) can silently skip the assertion, making the test pass vacuously without verifying food-eating increments the score; refactor to deterministically place the snake adjacent to food and assert unconditionally (blocked by #19)
