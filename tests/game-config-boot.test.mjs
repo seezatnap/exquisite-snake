@@ -48,6 +48,7 @@ test("game config wires Phaser scale defaults and registers the MainScene class"
   );
   assert.match(source, /mode:\s*Phaser\.Scale\.FIT/);
   assert.match(source, /autoCenter:\s*Phaser\.Scale\.CENTER_BOTH/);
+  assert.match(source, /autoRound:\s*true/);
   assert.match(source, /import \{ MainScene \} from "\.\/scenes\/MainScene";/);
   assert.match(source, /scene:\s*\[BootScene,\s*MainScene\]/);
   assert.doesNotMatch(
