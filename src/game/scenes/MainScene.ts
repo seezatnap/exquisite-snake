@@ -13,6 +13,7 @@ import { loadHighScore, saveHighScore } from "../utils/storage";
 import {
   isInBounds,
   gridToPixel,
+  stepInDirection,
   type Direction,
   type GridPos,
 } from "../utils/grid";
@@ -665,8 +666,15 @@ export class MainScene extends Phaser.Scene {
       return false;
     }
 
-    const pullDirection = this.getVoidRiftPullDirection(this.snake.getHeadPosition());
+    const head = this.snake.getHeadPosition();
+    const pullDirection = this.getVoidRiftPullDirection(head);
     if (!pullDirection) {
+      return false;
+    }
+
+    // Skip the nudge if it would push the head onto the snake's own body.
+    const nudgeDest = stepInDirection(head, pullDirection);
+    if (this.snake.isOnBody(nudgeDest)) {
       return false;
     }
 
