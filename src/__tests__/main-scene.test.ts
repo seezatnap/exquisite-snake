@@ -305,6 +305,34 @@ describe("MainScene", () => {
     });
   });
 
+  it("startRun emits biome reset events once per run start", () => {
+    const scene = new MainScene();
+    scene.create();
+
+    const onBiomeChange = vi.fn();
+    const onBiomeVisitStatsChange = vi.fn();
+    gameBridge.on("biomeChange", onBiomeChange);
+    gameBridge.on("biomeVisitStatsChange", onBiomeVisitStatsChange);
+
+    (
+      scene as unknown as {
+        startRun: () => void;
+      }
+    ).startRun();
+    gameBridge.off("biomeChange", onBiomeChange);
+    gameBridge.off("biomeVisitStatsChange", onBiomeVisitStatsChange);
+
+    expect(onBiomeChange).toHaveBeenCalledTimes(1);
+    expect(onBiomeChange).toHaveBeenCalledWith(Biome.NeonCity);
+    expect(onBiomeVisitStatsChange).toHaveBeenCalledTimes(1);
+    expect(onBiomeVisitStatsChange).toHaveBeenCalledWith({
+      [Biome.NeonCity]: 1,
+      [Biome.IceCavern]: 0,
+      [Biome.MoltenCore]: 0,
+      [Biome.VoidRift]: 0,
+    });
+  });
+
   it("update() advances biome on the 45s cadence and updates visit stats", () => {
     const scene = new MainScene();
     scene.create();
