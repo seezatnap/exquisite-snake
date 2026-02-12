@@ -87,7 +87,7 @@ describe("Boot scene", () => {
     expect(typeof boot.create).toBe("function");
   });
 
-  it("create() generates all four texture keys", () => {
+  it("create() generates all five texture keys", () => {
     const boot = new Boot();
     boot.create();
 
@@ -101,14 +101,17 @@ describe("Boot scene", () => {
     expect(mockGenerateTexture).toHaveBeenCalledWith(
       TEXTURE_KEYS.PARTICLE
     );
+    expect(mockGenerateTexture).toHaveBeenCalledWith(
+      TEXTURE_KEYS.LAVA_POOL
+    );
   });
 
   it("create() destroys all graphics objects after texture generation", () => {
     const boot = new Boot();
     boot.create();
 
-    // 4 textures = 4 graphics objects destroyed
-    expect(mockDestroyGraphics).toHaveBeenCalledTimes(4);
+    // 5 textures = 5 graphics objects destroyed
+    expect(mockDestroyGraphics).toHaveBeenCalledTimes(5);
   });
 
   it("create() transitions to MainScene", () => {
@@ -125,13 +128,16 @@ describe("Boot scene", () => {
     const boot = new Boot();
     boot.create();
 
-    // Only SNAKE_BODY and PARTICLE should be generated
-    expect(mockGenerateTexture).toHaveBeenCalledTimes(2);
+    // Only SNAKE_BODY, PARTICLE, and LAVA_POOL should be generated
+    expect(mockGenerateTexture).toHaveBeenCalledTimes(3);
     expect(mockGenerateTexture).toHaveBeenCalledWith(
       TEXTURE_KEYS.SNAKE_BODY
     );
     expect(mockGenerateTexture).toHaveBeenCalledWith(
       TEXTURE_KEYS.PARTICLE
+    );
+    expect(mockGenerateTexture).toHaveBeenCalledWith(
+      TEXTURE_KEYS.LAVA_POOL
     );
   });
 });

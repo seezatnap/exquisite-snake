@@ -244,6 +244,29 @@ export class Snake {
     this.pendingGrowth += amount;
   }
 
+  /**
+   * Remove segments from the tail end of the snake.
+   *
+   * Used by the Molten Core lava-pool mechanic to burn off tail segments.
+   * The head segment (index 0) is never removed by this method.
+   *
+   * @param count - Number of tail segments to remove.
+   * @returns The number of segments actually removed (may be less than
+   *          `count` if the snake isn't long enough).
+   */
+  burnTail(count: number): number {
+    const removable = Math.min(count, this.segments.length - 1); // keep head
+    for (let i = 0; i < removable; i++) {
+      this.segments.pop();
+      this.prevSegments.pop();
+      const sprite = this.sprites.pop();
+      sprite?.destroy();
+    }
+    // Cancel any pending growth that would extend past the burn
+    this.pendingGrowth = Math.max(0, this.pendingGrowth - count);
+    return removable;
+  }
+
   // ── State queries ──────────────────────────────────────────────
 
   /** Get the head grid position. */

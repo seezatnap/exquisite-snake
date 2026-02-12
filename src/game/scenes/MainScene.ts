@@ -15,9 +15,14 @@ import { Food } from "../entities/Food";
 import { emitFoodParticles, shakeCamera } from "../systems/effects";
 import {
   BiomeManager,
-  type Biome,
+  Biome,
   type BiomeChangeListener,
 } from "../systems/BiomeManager";
+import {
+  LavaPoolManager,
+  LAVA_BURN_SEGMENTS,
+  LAVA_SURVIVAL_THRESHOLD,
+} from "../entities/LavaPool";
 
 // ── Default spawn configuration ─────────────────────────────────
 
@@ -51,6 +56,9 @@ export class MainScene extends Phaser.Scene {
   /** Biome rotation manager — persists across runs (reset between runs). */
   private biomeManager = new BiomeManager();
 
+  /** Lava pool manager for the Molten Core biome (null when not playing). */
+  private lavaPoolManager: LavaPoolManager | null = null;
+
   /** Bound listener for biome change events (stored for cleanup). */
   private onBiomeChange: BiomeChangeListener | null = null;
 
@@ -83,7 +91,11 @@ export class MainScene extends Phaser.Scene {
     gameBridge.on("phaseChange", this.onBridgePhaseChange);
 
     // Subscribe to biome transitions and sync to bridge
-    this.onBiomeChange = (newBiome: Biome) => {
+    this.onBiomeChange = (newBiome: Biome, previousBiome: Biome | null) => {
+      // Clean up lava pools when leaving Molten Core
+      if (previousBiome === Biome.MoltenCore) {
+        this.lavaPoolManager?.clearAll();
+      }
       gameBridge.setBiome(newBiome);
       gameBridge.setBiomeVisitStats(this.biomeManager.getVisitStats());
     };
@@ -117,12 +129,25 @@ export class MainScene extends Phaser.Scene {
 
     if (!this.snake || !this.food) return;
 
+    // Update lava pool spawning during Molten Core biome
+    if (
+      this.biomeManager.getCurrentBiome() === Biome.MoltenCore &&
+      this.lavaPoolManager
+    ) {
+      this.lavaPoolManager.update(delta, this.snake, this.food.getPosition());
+    }
+
     const stepped = this.snake.update(delta);
 
     if (stepped) {
       // Check collisions after the snake moved to its new grid position
       if (this.checkCollisions()) {
         return; // Game over — stop processing this frame
+      }
+
+      // Check lava pool collision (Molten Core biome)
+      if (this.checkLavaCollision()) {
+        return; // Game over from lava — stop processing this frame
       }
 
       // Check food consumption — emit particles at the old food position on eat
@@ -199,6 +224,7 @@ export class MainScene extends Phaser.Scene {
     this.snake.setupInput();
     this.snake.setupTouchInput();
     this.food = new Food(this, this.snake, this.rng);
+    this.lavaPoolManager = new LavaPoolManager(this, this.rng);
   }
 
   /** Destroy existing snake and food entities. */
@@ -210,6 +236,10 @@ export class MainScene extends Phaser.Scene {
     if (this.food) {
       this.food.destroy();
       this.food = null;
+    }
+    if (this.lavaPoolManager) {
+      this.lavaPoolManager.destroy();
+      this.lavaPoolManager = null;
     }
   }
 
@@ -236,6 +266,35 @@ export class MainScene extends Phaser.Scene {
       return true;
     }
 
+    return false;
+  }
+
+  /**
+   * Check lava pool collision. If the snake head is on a lava pool:
+   * - Burns 3 tail segments if the snake is long enough to survive.
+   * - Kills the snake (ends run) if it's too short.
+   *
+   * The consumed pool is removed after the collision.
+   *
+   * @returns `true` if the run ended (snake killed by lava).
+   */
+  private checkLavaCollision(): boolean {
+    if (!this.snake || !this.lavaPoolManager) return false;
+
+    const hitPos = this.lavaPoolManager.checkCollision(this.snake);
+    if (!hitPos) return false;
+
+    // Remove the pool that was hit
+    this.lavaPoolManager.removeAt(hitPos);
+
+    // Kill if snake is too short to survive the burn
+    if (this.snake.getLength() < LAVA_SURVIVAL_THRESHOLD) {
+      this.endRun();
+      return true;
+    }
+
+    // Burn tail segments
+    this.snake.burnTail(LAVA_BURN_SEGMENTS);
     return false;
   }
 
@@ -285,6 +344,10 @@ export class MainScene extends Phaser.Scene {
 
   getBiomeManager(): BiomeManager {
     return this.biomeManager;
+  }
+
+  getLavaPoolManager(): LavaPoolManager | null {
+    return this.lavaPoolManager;
   }
 
   // ── Arena grid ──────────────────────────────────────────────
