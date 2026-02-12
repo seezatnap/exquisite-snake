@@ -37,3 +37,7 @@
 
 ## Follow-up tasks (from sprint review)
 - [x] (#22) Fix global style precedence in `src/styles/globals.css` by removing/reworking the hard-coded `body` `font-family`/`background`/`color` rule so `src/app/layout.tsx` Tailwind classes (`font-sans`, `bg-black`, `text-white`) actually apply. (B)
+
+## Follow-up tasks (from sprint review)
+- [ ] (#23) Replace source-text regex checks in `tests/game-component.test.mjs` with behavioral tests that mount `<Game />`, mock Phaser, and verify single-instance creation plus `destroy(true)` and DOM cleanup on unmount.
+- [ ] (#24) Add a regression test that ensures `src/styles/globals.css` does not set `body` `background`, `color`, or `font-family`, so layout utility classes keep precedence after the global-style fix.
