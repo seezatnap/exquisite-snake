@@ -1,9 +1,8 @@
 import type { Direction } from "../utils/grid";
+import { ICE_SLIDE_TILES } from "./BiomeMechanics";
 
-// ── Constants ────────────────────────────────────────────────────
-
-/** Number of extra tiles the snake slides in the old direction before turning. */
-export const ICE_SLIDE_TILES = 2;
+// Re-export the shared constant so existing consumers don't break.
+export { ICE_SLIDE_TILES } from "./BiomeMechanics";
 
 // ── IceMomentum ─────────────────────────────────────────────────
 

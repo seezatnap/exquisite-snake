@@ -1,20 +1,12 @@
-import { GRID_COLS, GRID_ROWS } from "../config";
 import type { GridPos } from "../utils/grid";
 import type { Snake } from "./Snake";
+import {
+  GRAVITY_PULL_CADENCE,
+  GRAVITY_CENTER,
+} from "../systems/BiomeMechanics";
 
-// ── Tunable constants ───────────────────────────────────────────
-
-/**
- * Default cadence: apply one gravity nudge every N snake steps.
- * A higher value means weaker pull; a lower value means stronger pull.
- */
-export const GRAVITY_PULL_CADENCE = 4;
-
-/** The center of the arena in grid coordinates (gravity target). */
-export const GRAVITY_CENTER: Readonly<GridPos> = {
-  col: Math.floor(GRID_COLS / 2),
-  row: Math.floor(GRID_ROWS / 2),
-};
+// Re-export shared constants so existing consumers don't break.
+export { GRAVITY_PULL_CADENCE, GRAVITY_CENTER } from "../systems/BiomeMechanics";
 
 // ── GravityWellManager ──────────────────────────────────────────
 
