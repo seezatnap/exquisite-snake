@@ -24,6 +24,10 @@ vi.mock("phaser", () => {
   };
 });
 
+// Mock scene modules to prevent them from importing real Phaser internals
+vi.mock("@/game/scenes/Boot", () => ({ Boot: class {} }));
+vi.mock("@/game/scenes/MainScene", () => ({ MainScene: class {} }));
+
 import Game from "@/components/Game";
 import HUD from "@/components/HUD";
 import StartScreen from "@/components/StartScreen";
