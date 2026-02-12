@@ -1,4 +1,4 @@
-import Phaser from "phaser";
+import * as Phaser from "phaser";
 
 export const MAIN_SCENE_KEY = "MainScene" as const;
 
