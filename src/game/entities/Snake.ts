@@ -1,5 +1,5 @@
 import Phaser from "phaser";
-import { TEXTURE_KEYS } from "../config";
+import { TEXTURE_KEYS, RENDER_DEPTH } from "../config";
 import {
   type GridPos,
   type Direction,
@@ -117,6 +117,7 @@ export class Snake {
         i === 0 ? TEXTURE_KEYS.SNAKE_HEAD : TEXTURE_KEYS.SNAKE_BODY;
       const pos = gridToPixel(this.segments[i]);
       const sprite = this.scene.add.sprite(pos.x, pos.y, textureKey);
+      sprite.setDepth?.(RENDER_DEPTH.SNAKE);
       this.sprites.push(sprite);
     }
   }
@@ -129,6 +130,7 @@ export class Snake {
       pos.y,
       TEXTURE_KEYS.SNAKE_BODY,
     );
+    sprite.setDepth?.(RENDER_DEPTH.SNAKE);
     this.sprites.push(sprite);
   }
 

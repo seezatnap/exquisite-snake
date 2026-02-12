@@ -6,10 +6,16 @@ import {
   GRID_COLS,
   GRID_ROWS,
   COLORS,
+  RENDER_DEPTH,
 } from "../config";
 import { gameBridge, type GamePhase } from "../bridge";
 import { loadHighScore, saveHighScore } from "../utils/storage";
-import { isInBounds, type Direction, type GridPos } from "../utils/grid";
+import {
+  isInBounds,
+  gridToPixel,
+  type Direction,
+  type GridPos,
+} from "../utils/grid";
 import { Snake } from "../entities/Snake";
 import { Food } from "../entities/Food";
 import { emitFoodParticles, shakeCamera } from "../systems/effects";
@@ -43,6 +49,7 @@ const VOID_RIFT_CENTER: GridPos = {
   col: Math.floor(GRID_COLS / 2),
   row: Math.floor(GRID_ROWS / 2),
 };
+const VOID_RIFT_VORTEX_SPIN_RADIANS_PER_SEC = Math.PI * 0.75;
 
 interface BiomeVisualTheme {
   backgroundColor: number;
@@ -114,9 +121,6 @@ const BIOME_VISUAL_THEMES: Record<Biome, BiomeVisualTheme> = {
 };
 
 const BIOME_LAYER_DEPTH = {
-  BACKDROP: -30,
-  TILEMAP: -20,
-  GRID: -10,
   TRANSITION_OVERLAY: 40,
 } as const;
 
@@ -129,7 +133,6 @@ interface BiomeTransitionEffectState {
   from: Biome;
   elapsedMs: number;
 }
-
 interface BiomeMechanicsState {
   iceMomentumActive: boolean;
   moltenLavaActive: boolean;
@@ -193,8 +196,14 @@ export class MainScene extends Phaser.Scene {
   /** Active biome transition wipe metadata (null when no transition is animating). */
   private biomeTransitionEffect: BiomeTransitionEffectState | null = null;
 
+  /** Graphics object used for mechanic-linked overlays (lava pools / void vortex). */
+  private biomeMechanicGraphics: Phaser.GameObjects.Graphics | null = null;
+
   /** Number of snake steps elapsed since entering Void Rift. */
   private voidGravityStepCounter = 0;
+
+  /** Current animated spin offset for the Void Rift center vortex. */
+  private voidVortexSpinRadians = 0;
 
   /**
    * Injectable RNG function for deterministic replay sessions.
@@ -244,6 +253,8 @@ export class MainScene extends Phaser.Scene {
     this.tilemapGraphics = null;
     this.gridGraphics?.destroy?.();
     this.gridGraphics = null;
+    this.biomeMechanicGraphics?.destroy?.();
+    this.biomeMechanicGraphics = null;
   }
 
   update(_time: number, delta: number): void {
@@ -254,6 +265,7 @@ export class MainScene extends Phaser.Scene {
 
     if (!this.snake || !this.food) return;
     this.updateMoltenCoreMechanics(delta);
+    this.updateBiomeMechanicVisuals(delta);
 
     const stepped = this.snake.update(delta);
 
@@ -300,6 +312,8 @@ export class MainScene extends Phaser.Scene {
     this.resetMoltenCoreState();
     this.clearBiomeTransitionEffect();
     this.voidGravityStepCounter = 0;
+    this.voidVortexSpinRadians = 0;
+    this.destroyBiomeMechanicGraphics();
     this.handleBiomeEnter(this.biomeManager.getCurrentBiome());
     this.destroyEntities();
     this.createEntities();
@@ -311,6 +325,7 @@ export class MainScene extends Phaser.Scene {
     this.biomeManager.stopRun();
     this.resetMoltenCoreState();
     this.clearBiomeTransitionEffect();
+    this.destroyBiomeMechanicGraphics();
     if (this.snake?.isAlive()) {
       this.snake.kill();
     }
@@ -485,6 +500,7 @@ export class MainScene extends Phaser.Scene {
 
     if (biome === Biome.VoidRift) {
       this.voidGravityStepCounter = 0;
+      this.voidVortexSpinRadians = 0;
     }
 
     const mechanics = createBiomeMechanicsState(biome);
@@ -493,6 +509,7 @@ export class MainScene extends Phaser.Scene {
     this.events?.emit?.("biomeMechanicsChange", mechanics);
     this.applyBiomeMovementMechanics(biome);
     this.applyBiomeVisualTheme(biome);
+    this.updateBiomeMechanicVisuals(0);
     this.events?.emit?.("biomeVisualChange", biome);
   }
 
@@ -680,6 +697,100 @@ export class MainScene extends Phaser.Scene {
     return deltaRow > 0 ? "down" : "up";
   }
 
+  private updateBiomeMechanicVisuals(delta: number): void {
+    const biome = this.biomeManager.getCurrentBiome();
+
+    if (biome !== Biome.MoltenCore && biome !== Biome.VoidRift) {
+      this.destroyBiomeMechanicGraphics();
+      return;
+    }
+
+    if (!this.biomeMechanicGraphics) {
+      this.biomeMechanicGraphics = this.add.graphics();
+      this.biomeMechanicGraphics.setDepth?.(RENDER_DEPTH.BIOME_MECHANIC);
+    }
+
+    const gfx = this.biomeMechanicGraphics;
+    gfx.clear?.();
+
+    if (biome === Biome.MoltenCore) {
+      this.drawMoltenLavaPoolVisuals(gfx);
+      return;
+    }
+
+    this.voidVortexSpinRadians =
+      (this.voidVortexSpinRadians +
+        (delta / 1_000) * VOID_RIFT_VORTEX_SPIN_RADIANS_PER_SEC) %
+      (Math.PI * 2);
+    this.drawVoidCenterVortex(gfx, this.voidVortexSpinRadians);
+  }
+
+  private destroyBiomeMechanicGraphics(): void {
+    this.biomeMechanicGraphics?.destroy?.();
+    this.biomeMechanicGraphics = null;
+  }
+
+  private drawMoltenLavaPoolVisuals(gfx: Phaser.GameObjects.Graphics): void {
+    for (const pool of this.moltenLavaPools.values()) {
+      const center = gridToPixel(pool);
+      const outerRadius = TILE_SIZE * 0.42;
+
+      gfx.fillStyle?.(0xff5b1f, 0.8);
+      gfx.fillCircle?.(center.x, center.y, outerRadius);
+      gfx.fillStyle?.(0xffc56f, 0.6);
+      gfx.fillCircle?.(center.x, center.y, outerRadius * 0.58);
+      gfx.lineStyle(1, 0x5c1500, 0.7);
+
+      const crackRadius = outerRadius * 0.9;
+      gfx.moveTo(center.x - crackRadius, center.y);
+      gfx.lineTo(center.x + crackRadius, center.y);
+      gfx.moveTo(center.x, center.y - crackRadius);
+      gfx.lineTo(center.x, center.y + crackRadius);
+      gfx.strokePath();
+    }
+  }
+
+  private drawVoidCenterVortex(
+    gfx: Phaser.GameObjects.Graphics,
+    spinRadians: number,
+  ): void {
+    const center = gridToPixel(VOID_RIFT_CENTER);
+    const ringCount = 4;
+    const ringSegments = 20;
+    const maxRadius = TILE_SIZE * 6;
+
+    for (let ring = 0; ring < ringCount; ring++) {
+      const ringT = ring / ringCount;
+      const radius = maxRadius - ring * TILE_SIZE * 1.2;
+      const alpha = 0.26 - ringT * 0.05;
+      gfx.lineStyle(2 - ringT, 0x8d68ff, alpha);
+
+      for (let segment = 0; segment <= ringSegments; segment++) {
+        const segmentT = segment / ringSegments;
+        const angle =
+          spinRadians * (1 + ringT * 0.7) +
+          segmentT * Math.PI * 2 +
+          ring * 0.45;
+        const spiralPull = 1 - segmentT * 0.28;
+        const x = center.x + Math.cos(angle) * radius * spiralPull;
+        const y = center.y + Math.sin(angle) * radius * spiralPull * 0.8;
+
+        if (segment === 0) {
+          gfx.moveTo(x, y);
+        } else {
+          gfx.lineTo(x, y);
+        }
+      }
+
+      gfx.strokePath();
+    }
+
+    gfx.fillStyle?.(0x5a2cd8, 0.48);
+    gfx.fillCircle?.(center.x, center.y, TILE_SIZE * 1.45);
+    gfx.fillStyle?.(0xd6c8ff, 0.58);
+    gfx.fillCircle?.(center.x, center.y, TILE_SIZE * 0.62);
+  }
+
   private applyBiomeVisualTheme(biome: Biome): void {
     const theme = BIOME_VISUAL_THEMES[biome];
     this.cameras.main?.setBackgroundColor?.(theme.backgroundColor);
@@ -817,7 +928,7 @@ export class MainScene extends Phaser.Scene {
     this.backdropGraphics?.destroy?.();
     const gfx = this.add.graphics();
     this.backdropGraphics = gfx;
-    gfx.setDepth?.(BIOME_LAYER_DEPTH.BACKDROP);
+    gfx.setDepth?.(RENDER_DEPTH.BIOME_BACKDROP);
 
     gfx.lineStyle(2, theme.backdropPrimaryColor, theme.backdropPrimaryAlpha);
     switch (biome) {
@@ -845,7 +956,7 @@ export class MainScene extends Phaser.Scene {
     this.tilemapGraphics?.destroy?.();
     const gfx = this.add.graphics();
     this.tilemapGraphics = gfx;
-    gfx.setDepth?.(BIOME_LAYER_DEPTH.TILEMAP);
+    gfx.setDepth?.(RENDER_DEPTH.BIOME_TILEMAP);
 
     gfx.lineStyle(1, theme.tilemapPrimaryColor, theme.tilemapPrimaryAlpha);
     for (let col = 0; col < GRID_COLS; col++) {
@@ -1005,7 +1116,7 @@ export class MainScene extends Phaser.Scene {
     this.gridGraphics?.destroy?.();
     const gfx = this.add.graphics();
     this.gridGraphics = gfx;
-    gfx.setDepth?.(BIOME_LAYER_DEPTH.GRID);
+    gfx.setDepth?.(RENDER_DEPTH.BIOME_GRID);
     gfx.lineStyle(1, lineColor, lineAlpha);
 
     // Vertical lines

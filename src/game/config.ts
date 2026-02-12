@@ -28,6 +28,16 @@ export const TEXTURE_KEYS = {
   PARTICLE: "particle",
 } as const;
 
+// ── Render Depths (higher values are drawn on top) ──────────────
+export const RENDER_DEPTH = {
+  BIOME_BACKDROP: -30,
+  BIOME_TILEMAP: -20,
+  BIOME_GRID: -10,
+  BIOME_MECHANIC: 5,
+  FOOD: 20,
+  SNAKE: 30,
+} as const;
+
 // ── Scene class type ─────────────────────────────────────────────
 type SceneClass = new (...args: unknown[]) => unknown;
 
