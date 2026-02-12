@@ -39,12 +39,27 @@ vi.mock("phaser", () => {
     add = {
       graphics: () => mockGraphics,
       sprite: vi.fn(() => createMockSprite()),
+      particles: vi.fn(() => ({
+        explode: vi.fn(),
+        destroy: vi.fn(),
+      })),
     };
     input = {
       keyboard: {
         on: mockKeyboardOn,
         off: vi.fn(),
       },
+    };
+    cameras = {
+      main: {
+        shake: vi.fn(),
+      },
+    };
+    textures = {
+      exists: vi.fn().mockReturnValue(true),
+    };
+    time = {
+      delayedCall: vi.fn(),
     };
     constructor(public config?: { key: string }) {}
   }
