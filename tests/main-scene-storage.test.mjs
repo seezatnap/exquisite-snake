@@ -288,7 +288,7 @@ test("MainScene spawns food when a run starts", async () => {
   assert.equal(occupiedBySnake, false);
 });
 
-test("MainScene update processes food.tryEat for score and growth", async () => {
+test("MainScene update processes food.tryEat for score, growth, and safe respawn", async () => {
   const sceneModule = await loadMainSceneModule({
     loadHighScore() {
       return 0;
@@ -302,7 +302,6 @@ test("MainScene update processes food.tryEat for score and growth", async () => 
   scene.create();
   scene.startRun();
 
-  scene.food.spawnForSnake = () => null;
   scene.food.position = { x: 9, y: 8 };
 
   scene.time.now = 120;
@@ -310,6 +309,15 @@ test("MainScene update processes food.tryEat for score and growth", async () => 
   assert.equal(sceneModule.getMainSceneStateSnapshot().score, 1);
   assert.equal(scene.snake.pendingGrowth, 1);
   assert.equal(scene.snake.length, 3);
+  const respawnedFoodPosition = toPlain(scene.food.currentPosition);
+  assert.ok(respawnedFoodPosition);
+
+  const respawnOverlapsSnake = toPlain(scene.snake.getSegments()).some(
+    (segment) =>
+      segment.x === respawnedFoodPosition.x &&
+      segment.y === respawnedFoodPosition.y,
+  );
+  assert.equal(respawnOverlapsSnake, false);
 
   scene.time.now = 240;
   scene.update(240);
