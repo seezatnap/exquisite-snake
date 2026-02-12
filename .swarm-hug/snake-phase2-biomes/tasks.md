@@ -36,4 +36,4 @@
 - [x] (#16) Execute a manual visual QA pass in a real browser/GPU environment across multiple 45-second biome cycles to validate transition FX polish (wipe/shake), render layering, and HUD biome indicator behavior, then document any defects. (A)
 
 ## Follow-up tasks (from sprint review)
-- [ ] (#17) Fix Void Rift gravity nudge self-collision bug: add a guard in `applyVoidRiftGravityNudgeIfDue()` to skip the nudge when it would push the snake head onto its own body, and add a regression test (QA-DEFECT-01). (C)
+- [A] (#17) Fix Void Rift gravity nudge self-collision bug: add a guard in `applyVoidRiftGravityNudgeIfDue()` to skip the nudge when it would push the snake head onto its own body, and add a regression test (QA-DEFECT-01). (C)
