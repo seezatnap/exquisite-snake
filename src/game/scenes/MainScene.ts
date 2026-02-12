@@ -225,7 +225,6 @@ export class MainScene extends Phaser.Scene {
     gameBridge.resetRun();
     this.biomeManager.startRun();
     this.resetMoltenCoreState();
-    this.syncBiomeRuntimeToBridge();
     this.handleBiomeEnter(this.biomeManager.getCurrentBiome());
     this.destroyEntities();
     this.createEntities();
