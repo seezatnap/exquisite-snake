@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import fs from "fs";
 import path from "path";
 import { gameBridge } from "@/game/bridge";
+import { GRID_COLS, GRID_ROWS } from "@/game/config";
 
 const ROOT = path.resolve(__dirname, "../..");
 
@@ -19,12 +20,30 @@ const mockGraphics = {
 };
 
 const mockSceneStart = vi.fn();
+const mockDestroy = vi.fn();
+const mockSetPosition = vi.fn();
+const mockKeyboardOn = vi.fn();
+
+function createMockSprite() {
+  return {
+    destroy: mockDestroy,
+    setPosition: mockSetPosition,
+    x: 0,
+    y: 0,
+  };
+}
 
 vi.mock("phaser", () => {
   class MockScene {
     scene = { start: mockSceneStart };
     add = {
       graphics: () => mockGraphics,
+      sprite: vi.fn(() => createMockSprite()),
+    };
+    input = {
+      keyboard: {
+        on: mockKeyboardOn,
+      },
     };
     constructor(public config?: { key: string }) {}
   }
@@ -403,6 +422,15 @@ describe("MainScene source file", () => {
   it("uses scene key 'MainScene'", () => {
     expect(source).toContain('"MainScene"');
   });
+
+  it("imports isInBounds from grid utils", () => {
+    expect(source).toContain("isInBounds");
+  });
+
+  it("imports Snake and Food entities", () => {
+    expect(source).toContain("Snake");
+    expect(source).toContain("Food");
+  });
 });
 
 describe("Game.tsx loads MainScene for the scene list", () => {
@@ -418,5 +446,354 @@ describe("Game.tsx loads MainScene for the scene list", () => {
   it("passes MainScene to createGameConfig", () => {
     expect(source).toContain("createGameConfig");
     expect(source).toContain("MainScene");
+  });
+});
+
+// ── Entity management ────────────────────────────────────────────
+
+describe("MainScene – entity management", () => {
+  it("creates snake and food when entering 'playing'", () => {
+    const scene = new MainScene();
+    scene.create();
+
+    expect(scene.getSnake()).toBeNull();
+    expect(scene.getFood()).toBeNull();
+
+    scene.enterPhase("playing");
+
+    expect(scene.getSnake()).not.toBeNull();
+    expect(scene.getFood()).not.toBeNull();
+  });
+
+  it("snake starts alive when entering 'playing'", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.enterPhase("playing");
+
+    expect(scene.getSnake()!.isAlive()).toBe(true);
+  });
+
+  it("snake starts at center of grid", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.enterPhase("playing");
+
+    const head = scene.getSnake()!.getHeadPosition();
+    expect(head.col).toBe(Math.floor(GRID_COLS / 2));
+    expect(head.row).toBe(Math.floor(GRID_ROWS / 2));
+  });
+
+  it("destroys old entities on replay (entering 'playing' again)", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.enterPhase("playing");
+
+    const firstSnake = scene.getSnake();
+    const firstFood = scene.getFood();
+
+    scene.endRun();
+    scene.enterPhase("playing");
+
+    // New entities should be created (different instances)
+    expect(scene.getSnake()).not.toBe(firstSnake);
+    expect(scene.getFood()).not.toBe(firstFood);
+    expect(scene.getSnake()).not.toBeNull();
+    expect(scene.getFood()).not.toBeNull();
+  });
+});
+
+// ── Wall collision ─────────────────────────────────────────────
+
+describe("MainScene – wall collision", () => {
+  it("ends the run when snake hits the right wall", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.enterPhase("playing");
+
+    const snake = scene.getSnake()!;
+    // Move the snake to the right edge by resetting to last column
+    snake.reset({ col: GRID_COLS - 1, row: 15 }, "right", 1);
+
+    // Advance a full tick — snake steps to col = GRID_COLS (out of bounds)
+    const interval = snake.getTicker().interval;
+    scene.update(0, interval);
+
+    expect(scene.getPhase()).toBe("gameOver");
+    expect(snake.isAlive()).toBe(false);
+  });
+
+  it("ends the run when snake hits the left wall", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.enterPhase("playing");
+
+    const snake = scene.getSnake()!;
+    snake.reset({ col: 0, row: 15 }, "left", 1);
+
+    const interval = snake.getTicker().interval;
+    scene.update(0, interval);
+
+    expect(scene.getPhase()).toBe("gameOver");
+  });
+
+  it("ends the run when snake hits the top wall", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.enterPhase("playing");
+
+    const snake = scene.getSnake()!;
+    snake.reset({ col: 15, row: 0 }, "up", 1);
+
+    const interval = snake.getTicker().interval;
+    scene.update(0, interval);
+
+    expect(scene.getPhase()).toBe("gameOver");
+  });
+
+  it("ends the run when snake hits the bottom wall", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.enterPhase("playing");
+
+    const snake = scene.getSnake()!;
+    snake.reset({ col: 15, row: GRID_ROWS - 1 }, "down", 1);
+
+    const interval = snake.getTicker().interval;
+    scene.update(0, interval);
+
+    expect(scene.getPhase()).toBe("gameOver");
+  });
+
+  it("does not end the run when snake stays in bounds", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.enterPhase("playing");
+
+    const snake = scene.getSnake()!;
+    // Reset to center with length 1 to avoid any self-collision issues
+    snake.reset({ col: 10, row: 10 }, "right", 1);
+
+    const interval = snake.getTicker().interval;
+    scene.update(0, interval);
+
+    expect(scene.getPhase()).toBe("playing");
+    expect(snake.isAlive()).toBe(true);
+  });
+});
+
+// ── Self-collision ────────────────────────────────────────────
+
+describe("MainScene – self collision", () => {
+  it("ends the run when snake collides with itself", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.enterPhase("playing");
+
+    const snake = scene.getSnake()!;
+    // Create a snake long enough to collide with itself:
+    // A snake at (5,5) going right, length 5, segments at:
+    // (5,5) (4,5) (3,5) (2,5) (1,5)
+    // If we buffer: down, left, up — the head will move into the body
+    snake.reset({ col: 5, row: 5 }, "right", 5);
+
+    const interval = snake.getTicker().interval;
+
+    // Step 1: buffer "down", snake head moves to (5,6)? No, it should step right first
+    // Actually, we need to move right first, then buffer turns to create self-collision
+    // Move right: head at (6,5)
+    scene.update(0, interval);
+    expect(scene.getPhase()).toBe("playing");
+
+    // Buffer down, step: head at (6,6)
+    snake.bufferDirection("down");
+    scene.update(0, interval);
+    expect(scene.getPhase()).toBe("playing");
+
+    // Buffer left, step: head at (5,6)
+    snake.bufferDirection("left");
+    scene.update(0, interval);
+    expect(scene.getPhase()).toBe("playing");
+
+    // Buffer up, step: head at (5,5) — this is now a body segment!
+    snake.bufferDirection("up");
+    scene.update(0, interval);
+    expect(scene.getPhase()).toBe("gameOver");
+    expect(snake.isAlive()).toBe(false);
+  });
+});
+
+// ── endRun kills the snake ──────────────────────────────────────
+
+describe("MainScene – endRun kills snake", () => {
+  it("kills the snake when endRun is called", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.enterPhase("playing");
+
+    const snake = scene.getSnake()!;
+    expect(snake.isAlive()).toBe(true);
+
+    scene.endRun();
+    expect(snake.isAlive()).toBe(false);
+  });
+
+  it("endRun is idempotent when snake is already dead", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.enterPhase("playing");
+
+    const snake = scene.getSnake()!;
+    snake.kill();
+
+    expect(() => scene.endRun()).not.toThrow();
+    expect(scene.getPhase()).toBe("gameOver");
+  });
+});
+
+// ── Deterministic reset / replay ────────────────────────────────
+
+describe("MainScene – deterministic reset / replay", () => {
+  it("uses injected RNG for food placement", () => {
+    const scene = new MainScene();
+    scene.create();
+
+    // Set a deterministic RNG
+    let callCount = 0;
+    const deterministicRng = () => {
+      callCount++;
+      return 0.5;
+    };
+    scene.setRng(deterministicRng);
+
+    scene.enterPhase("playing");
+
+    // The RNG should have been called at least once (for initial food placement)
+    expect(callCount).toBeGreaterThan(0);
+  });
+
+  it("same RNG produces same food position across replays", () => {
+    const scene = new MainScene();
+    scene.create();
+
+    const makeRng = () => {
+      let i = 0;
+      return () => {
+        i++;
+        return (i * 0.37) % 1; // deterministic sequence
+      };
+    };
+
+    // First run
+    scene.setRng(makeRng());
+    scene.enterPhase("playing");
+    const firstFoodPos = scene.getFood()!.getPosition();
+    scene.endRun();
+
+    // Second run with same RNG sequence
+    scene.setRng(makeRng());
+    scene.enterPhase("playing");
+    const secondFoodPos = scene.getFood()!.getPosition();
+
+    expect(firstFoodPos).toEqual(secondFoodPos);
+  });
+
+  it("snake starts at same position on each replay", () => {
+    const scene = new MainScene();
+    scene.create();
+
+    scene.enterPhase("playing");
+    const firstHead = scene.getSnake()!.getHeadPosition();
+    scene.endRun();
+
+    scene.enterPhase("playing");
+    const secondHead = scene.getSnake()!.getHeadPosition();
+
+    expect(firstHead).toEqual(secondHead);
+  });
+
+  it("score and time are reset on replay", () => {
+    const scene = new MainScene();
+    scene.create();
+
+    scene.enterPhase("playing");
+    scene.addScore(42);
+    scene.update(0, 5000);
+    scene.endRun();
+
+    scene.enterPhase("playing");
+    expect(scene.getScore()).toBe(0);
+    expect(scene.getElapsedTime()).toBe(0);
+  });
+
+  it("setRng / getRng roundtrip", () => {
+    const scene = new MainScene();
+    const rng = () => 0.42;
+    scene.setRng(rng);
+    expect(scene.getRng()).toBe(rng);
+  });
+
+  it("snake is freshly alive on replay after game over", () => {
+    const scene = new MainScene();
+    scene.create();
+
+    scene.enterPhase("playing");
+    scene.endRun();
+
+    scene.enterPhase("playing");
+    expect(scene.getSnake()!.isAlive()).toBe(true);
+  });
+
+  it("food position is within bounds on replay", () => {
+    const scene = new MainScene();
+    scene.create();
+
+    scene.enterPhase("playing");
+    scene.endRun();
+
+    scene.enterPhase("playing");
+    const pos = scene.getFood()!.getPosition();
+    expect(pos.col).toBeGreaterThanOrEqual(0);
+    expect(pos.col).toBeLessThan(GRID_COLS);
+    expect(pos.row).toBeGreaterThanOrEqual(0);
+    expect(pos.row).toBeLessThan(GRID_ROWS);
+  });
+});
+
+// ── update() integration ────────────────────────────────────────
+
+describe("MainScene – update integration", () => {
+  it("update does not crash when phase is start (no entities)", () => {
+    const scene = new MainScene();
+    scene.create();
+    // Phase is "start", no snake or food
+    expect(() => scene.update(0, 16)).not.toThrow();
+  });
+
+  it("update does not crash after endRun (phase is gameOver)", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.enterPhase("playing");
+    scene.endRun();
+    expect(() => scene.update(0, 16)).not.toThrow();
+  });
+
+  it("update advances snake and checks food when playing", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.setRng(() => 0.5);
+    scene.enterPhase("playing");
+
+    const snake = scene.getSnake()!;
+    const initialHead = snake.getHeadPosition();
+
+    // Advance past a full tick
+    const interval = snake.getTicker().interval;
+    scene.update(0, interval);
+
+    // Snake should have moved (unless wall collision happened)
+    if (scene.getPhase() === "playing") {
+      const newHead = snake.getHeadPosition();
+      expect(newHead.col).not.toBe(initialHead.col);
+    }
   });
 });
