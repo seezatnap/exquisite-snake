@@ -2,7 +2,7 @@
 
 ## Foundation & Architecture
 
-- [ ] (#1) Initialize a Next.js 14+ App Router project in TypeScript strict mode with Tailwind CSS and npm, configure static export (`next build && next export`) for client-only deployment, and scaffold the Phase 1 directory/file structure under `src/` (including empty `game/systems/` for future phases) [5 pts]
+- [x] (#1) Initialize a Next.js 14+ App Router project in TypeScript strict mode with Tailwind CSS and npm, configure static export (`next build && next export`) for client-only deployment, and scaffold the Phase 1 directory/file structure under `src/` (including empty `game/systems/` for future phases) [5 pts] (A)
 - [ ] (#2) Implement `src/app/layout.tsx` and `src/app/page.tsx` to provide global Tailwind/font setup and mount a client-side `<Game />` entry point with proper overlay layering for menus/HUD [5 pts] (blocked by #1)
 - [ ] (#3) Build `src/components/Game.tsx` as a Phaser wrapper using `dynamic(..., { ssr: false })`, with safe game instance mount/unmount and cleanup to avoid duplicate canvas instances on rerender/navigation [5 pts] (blocked by #2)
 - [ ] (#4) Create `src/game/config.ts` and `src/game/scenes/Boot.ts` with Phaser scale/config defaults, arena dimensions, and preload setup for assets/visual primitives needed by gameplay and neon UI polish [5 pts] (blocked by #3)
