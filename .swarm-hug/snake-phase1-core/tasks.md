@@ -12,10 +12,10 @@
 
 - [x] (#6) Implement `src/game/utils/grid.ts` and movement timing primitives for grid-based logic with smooth interpolation between tiles (no jerky tile-snapping) [5 pts] (blocked by #4) (A)
 - [x] (#7) Implement `src/game/entities/Snake.ts` with arrow-key/WASD movement, buffered input queueing, anti-180-degree turn rules, and segment growth support [5 pts] (blocked by #6) (A)
-- [ ] (#8) Implement `src/game/entities/Food.ts` spawn/eat behavior with safe spawn positions (not inside snake), score increment hooks, and snake growth trigger integration [5 pts] (blocked by #7)
-- [ ] (#9) Implement wall-collision and self-collision detection in `MainScene`, transition to game-over state, and deterministic reset logic for replay sessions [5 pts] (blocked by #7)
+- [x] (#8) Implement `src/game/entities/Food.ts` spawn/eat behavior with safe spawn positions (not inside snake), score increment hooks, and snake growth trigger integration [5 pts] (blocked by #7) (A)
+- [x] (#9) Implement wall-collision and self-collision detection in `MainScene`, transition to game-over state, and deterministic reset logic for replay sessions [5 pts] (blocked by #7) (A)
 - [x] (#10) Implement `src/game/utils/storage.ts` localStorage helpers and integrate high-score persistence (load on boot, update on run end, fault-tolerant fallbacks when storage is unavailable) [5 pts] (blocked by #5) (B)
-- [ ] (#11) Implement mobile-friendly touch/swipe controls with threshold/debounce tuning and map them into the same buffered direction-input system used by keyboard controls [5 pts] (blocked by #7)
+- [x] (#11) Implement mobile-friendly touch/swipe controls with threshold/debounce tuning and map them into the same buffered direction-input system used by keyboard controls [5 pts] (blocked by #7) (B)
 - [x] (#12) Implement responsive canvas sizing and resize handling so the arena scales cleanly across viewport/device changes while preserving gameplay grid integrity [5 pts] (blocked by #4) (A)
 
 ## UI & Flow
@@ -34,3 +34,7 @@
 ## Follow-up tasks (from sprint review)
 - [x] (#20) Restore SSR-safe Phaser loading in `src/components/Game.tsx` — sprint 4 replaced the `dynamic(..., { ssr: false })` wrapper and async `import("phaser")` from task #3 with a direct top-level `import Phaser from "phaser"`, which will crash during Next.js server-side rendering since Phaser requires browser globals (`window`, `document`) (blocked by #4) (C)
 - [x] (#21) Eliminate dual source of truth in `MainScene` by removing local `phase`/`score`/`highScore`/`elapsedTime` fields and reading from `gameBridge.getState()` instead, so external bridge consumers and the scene cannot drift out of sync (blocked by #5) (C)
+
+## Follow-up tasks (from sprint review)
+- [ ] (#22) Call `snake.setupTouchInput()` in `MainScene.createEntities()` alongside `setupInput()` so touch/swipe controls are actually active during gameplay (blocked by #11)
+- [ ] (#23) Remove the keyboard `keydown` listener in `Snake.destroy()` to prevent duplicate handlers accumulating across replays — each `startRun` calls `setupInput()` on a new Snake, but the old listener on `scene.input.keyboard` is never cleaned up (blocked by #7)
