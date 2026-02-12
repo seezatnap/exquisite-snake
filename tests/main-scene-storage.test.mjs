@@ -13,6 +13,9 @@ const MOCK_CONFIG = Object.freeze({
   GRID_COLS: 40,
   GRID_ROWS: 30,
   TILE_SIZE: 24,
+  TEXTURE_KEYS: {
+    PARTICLE: "particle-spark",
+  },
 });
 
 function transpile(source, fileName) {
@@ -141,13 +144,63 @@ async function loadMainSceneModule(storageModule) {
 
   class MockScene {
     constructor() {
-      this.time = { now: 0 };
+      this.__particleCalls = [];
+      this.__shakeCalls = [];
+      this.__delayedCalls = [];
+      this.time = {
+        now: 0,
+        delayedCall: (delayMs, callback) => {
+          this.__delayedCalls.push(delayMs);
+          callback?.();
+        },
+      };
       this.events = new MockEvents();
       this.input = new MockInput();
+      this.add = {
+        particles: (x, y, texture, config) => {
+          const emitter = {
+            explodeCalls: [],
+            stopCalls: 0,
+            destroyCalls: 0,
+            explode: (count, burstX, burstY) => {
+              emitter.explodeCalls.push({ count, x: burstX, y: burstY });
+            },
+            stop: () => {
+              emitter.stopCalls += 1;
+            },
+            destroy: () => {
+              emitter.destroyCalls += 1;
+            },
+          };
+
+          this.__particleCalls.push({
+            x,
+            y,
+            texture,
+            config,
+            emitter,
+          });
+
+          return emitter;
+        },
+      };
+      this.cameras = {
+        main: {
+          shakeEffect: {
+            isRunning: false,
+          },
+          shake: (duration, intensity, force) => {
+            this.__shakeCalls.push({ duration, intensity, force });
+          },
+        },
+      };
     }
   }
 
   const phaserModule = {
+    BlendModes: {
+      ADD: "ADD",
+    },
     Scene: MockScene,
     Scenes: {
       Events: {
@@ -317,6 +370,42 @@ test("MainScene update processes food.tryEat for score and growth", async () => 
   assert.equal(scene.snake.pendingGrowth, 0);
 });
 
+test("MainScene emits a particle burst at the eaten food tile", async () => {
+  const sceneModule = await loadMainSceneModule({
+    loadHighScore() {
+      return 0;
+    },
+    persistHighScore(score) {
+      return score;
+    },
+  });
+
+  const scene = new sceneModule.MainScene();
+  scene.create();
+  scene.startRun();
+
+  scene.food.spawnForSnake = () => null;
+  scene.food.position = { x: 9, y: 8 };
+
+  scene.time.now = 120;
+  scene.update(120);
+
+  assert.equal(scene.__particleCalls.length, 1);
+  const burstCall = scene.__particleCalls[0];
+  assert.equal(burstCall.x, 228);
+  assert.equal(burstCall.y, 204);
+  assert.equal(burstCall.texture, MOCK_CONFIG.TEXTURE_KEYS.PARTICLE);
+  assert.equal(burstCall.emitter.explodeCalls.length, 1);
+  assert.deepEqual(toPlain(burstCall.emitter.explodeCalls[0]), {
+    count: 10,
+    x: 228,
+    y: 204,
+  });
+  assert.deepEqual(toPlain(scene.__delayedCalls), [260]);
+  assert.equal(burstCall.emitter.stopCalls, 1);
+  assert.equal(burstCall.emitter.destroyCalls, 1);
+});
+
 test("MainScene transitions to game-over when snake hits a wall", async () => {
   const persistedScores = [];
   const sceneModule = await loadMainSceneModule({
@@ -379,6 +468,49 @@ test("MainScene transitions to game-over when snake collides with itself", async
   assert.equal(sceneModule.getMainSceneStateSnapshot().phase, "game-over");
   assert.equal(sceneModule.getMainSceneStateSnapshot().elapsedSurvivalMs, 240);
   assert.deepEqual(persistedScores, [0]);
+});
+
+test("MainScene applies a subtle one-shot camera shake when collision ends a run", async () => {
+  const sceneModule = await loadMainSceneModule({
+    loadHighScore() {
+      return 0;
+    },
+    persistHighScore(score) {
+      return score;
+    },
+  });
+
+  const scene = new sceneModule.MainScene();
+  scene.create();
+  scene.startRun();
+  scene.time.now = 4000;
+  scene.update(4000);
+
+  assert.equal(sceneModule.getMainSceneStateSnapshot().phase, "game-over");
+  assert.deepEqual(toPlain(scene.__shakeCalls), [
+    { duration: 120, intensity: 0.0025, force: true },
+  ]);
+});
+
+test("MainScene skips camera shake if a shake effect is already running", async () => {
+  const sceneModule = await loadMainSceneModule({
+    loadHighScore() {
+      return 0;
+    },
+    persistHighScore(score) {
+      return score;
+    },
+  });
+
+  const scene = new sceneModule.MainScene();
+  scene.create();
+  scene.startRun();
+  scene.cameras.main.shakeEffect.isRunning = true;
+  scene.time.now = 4000;
+  scene.update(4000);
+
+  assert.equal(sceneModule.getMainSceneStateSnapshot().phase, "game-over");
+  assert.deepEqual(toPlain(scene.__shakeCalls), []);
 });
 
 test("MainScene resetForReplay restores deterministic snake and overlay state", async () => {
