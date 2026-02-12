@@ -3,6 +3,7 @@ import fs from "fs";
 import path from "path";
 import { gameBridge } from "@/game/bridge";
 import { GRID_COLS, GRID_ROWS } from "@/game/config";
+import { Biome } from "@/game/systems/BiomeManager";
 
 const ROOT = path.resolve(__dirname, "../..");
 
@@ -91,6 +92,11 @@ const spySetScore = vi.spyOn(gameBridge, "setScore");
 const spySetHighScore = vi.spyOn(gameBridge, "setHighScore");
 const spySetElapsedTime = vi.spyOn(gameBridge, "setElapsedTime");
 const spyResetRun = vi.spyOn(gameBridge, "resetRun");
+const spySetCurrentBiome = vi.spyOn(gameBridge, "setCurrentBiome");
+const spySetBiomeVisitStats = vi.spyOn(gameBridge, "setBiomeVisitStats");
+const spyEmitBiomeTransition = vi.spyOn(gameBridge, "emitBiomeTransition");
+const spyEmitBiomeEnter = vi.spyOn(gameBridge, "emitBiomeEnter");
+const spyEmitBiomeExit = vi.spyOn(gameBridge, "emitBiomeExit");
 
 /** Reset the singleton bridge to its initial state between tests. */
 function resetBridge(): void {
@@ -98,6 +104,13 @@ function resetBridge(): void {
   gameBridge.setScore(0);
   gameBridge.setHighScore(0);
   gameBridge.setElapsedTime(0);
+  gameBridge.setCurrentBiome(Biome.NeonCity);
+  gameBridge.setBiomeVisitStats({
+    [Biome.NeonCity]: 1,
+    [Biome.IceCavern]: 0,
+    [Biome.MoltenCore]: 0,
+    [Biome.VoidRift]: 0,
+  });
 }
 
 beforeEach(() => {
@@ -268,6 +281,118 @@ describe("MainScene", () => {
     expect(spySetElapsedTime).not.toHaveBeenCalled();
   });
 
+  // ── Biome integration ──────────────────────────────────────
+
+  it("enterPhase('playing') initializes biome state and visit stats for the run", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.enterPhase("playing");
+
+    expect(scene.getCurrentBiome()).toBe(Biome.NeonCity);
+    expect(gameBridge.getState().currentBiome).toBe(Biome.NeonCity);
+    expect(scene.getBiomeVisitStats()).toEqual({
+      [Biome.NeonCity]: 1,
+      [Biome.IceCavern]: 0,
+      [Biome.MoltenCore]: 0,
+      [Biome.VoidRift]: 0,
+    });
+    expect(spySetCurrentBiome).toHaveBeenCalledWith(Biome.NeonCity);
+    expect(spySetBiomeVisitStats).toHaveBeenCalledWith({
+      [Biome.NeonCity]: 1,
+      [Biome.IceCavern]: 0,
+      [Biome.MoltenCore]: 0,
+      [Biome.VoidRift]: 0,
+    });
+  });
+
+  it("update() advances biome on the 45s cadence and updates visit stats", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.enterPhase("playing");
+
+    // Keep snake stationary for this test so biome timing is isolated.
+    scene.getSnake()!.getTicker().setInterval(60_000);
+    spyEmitBiomeTransition.mockClear();
+
+    scene.update(0, 45_000);
+
+    expect(scene.getCurrentBiome()).toBe(Biome.IceCavern);
+    expect(gameBridge.getState().currentBiome).toBe(Biome.IceCavern);
+    expect(scene.getBiomeVisitStats()).toEqual({
+      [Biome.NeonCity]: 1,
+      [Biome.IceCavern]: 1,
+      [Biome.MoltenCore]: 0,
+      [Biome.VoidRift]: 0,
+    });
+    expect(spyEmitBiomeTransition).toHaveBeenCalledWith({
+      from: Biome.NeonCity,
+      to: Biome.IceCavern,
+    });
+  });
+
+  it("emits biome exit → transition → enter events per rotation", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.enterPhase("playing");
+    scene.getSnake()!.getTicker().setInterval(60_000);
+
+    const events: string[] = [];
+    const onExit = (biome: Biome) => events.push(`exit:${biome}`);
+    const onTransition = ({ from, to }: { from: Biome; to: Biome }) =>
+      events.push(`transition:${from}->${to}`);
+    const onEnter = (biome: Biome) => events.push(`enter:${biome}`);
+    gameBridge.on("biomeExit", onExit);
+    gameBridge.on("biomeTransition", onTransition);
+    gameBridge.on("biomeEnter", onEnter);
+
+    scene.update(0, 45_000);
+    gameBridge.off("biomeExit", onExit);
+    gameBridge.off("biomeTransition", onTransition);
+    gameBridge.off("biomeEnter", onEnter);
+
+    expect(events).toEqual([
+      `exit:${Biome.NeonCity}`,
+      `transition:${Biome.NeonCity}->${Biome.IceCavern}`,
+      `enter:${Biome.IceCavern}`,
+    ]);
+  });
+
+  it("replay resets biome visit stats back to a fresh run", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.enterPhase("playing");
+    scene.getSnake()!.getTicker().setInterval(60_000);
+    scene.update(0, 45_000);
+    scene.endRun();
+
+    scene.enterPhase("playing");
+    expect(scene.getCurrentBiome()).toBe(Biome.NeonCity);
+    expect(scene.getBiomeVisitStats()).toEqual({
+      [Biome.NeonCity]: 1,
+      [Biome.IceCavern]: 0,
+      [Biome.MoltenCore]: 0,
+      [Biome.VoidRift]: 0,
+    });
+  });
+
+  it("endRun stops biome progression", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.enterPhase("playing");
+    scene.getSnake()!.getTicker().setInterval(60_000);
+    scene.endRun();
+
+    spyEmitBiomeTransition.mockClear();
+    spyEmitBiomeExit.mockClear();
+    spyEmitBiomeEnter.mockClear();
+    scene.update(0, 180_000);
+
+    expect(scene.getCurrentBiome()).toBe(Biome.NeonCity);
+    expect(spyEmitBiomeTransition).not.toHaveBeenCalled();
+    expect(spyEmitBiomeExit).not.toHaveBeenCalled();
+    expect(spyEmitBiomeEnter).not.toHaveBeenCalled();
+  });
+
   // ── Replay lifecycle ───────────────────────────────────────
 
   it("entering 'playing' after gameOver resets score and time", () => {
@@ -300,6 +425,8 @@ describe("MainScene", () => {
     expect(scene.getScore()).toBe(state.score);
     expect(scene.getHighScore()).toBe(state.highScore);
     expect(scene.getElapsedTime()).toBe(state.elapsedTime);
+    expect(scene.getCurrentBiome()).toBe(state.currentBiome);
+    expect(scene.getBiomeVisitStats()).toEqual(state.biomeVisitStats);
   });
 
   it("external bridge mutations are visible through scene getters", () => {
