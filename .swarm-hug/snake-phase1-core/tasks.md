@@ -45,3 +45,7 @@
 ## Follow-up tasks (from sprint review)
 - [x] (#25) Wire the real `MainScene` class into `src/game/config.ts` (`scene: [BootScene, MainScene]`) and remove the `MAIN_SCENE_PLACEHOLDER` so `BootScene` starts the implemented scene logic. (C)
 - [x] (#26) Update `tests/game-config-boot.test.mjs` to assert `GAME_CONFIG` registers the `MainScene` class (not a key-only placeholder) to prevent this wiring regression. (C)
+
+## Follow-up tasks (from sprint review)
+- [ ] (#27) Replace `tests/start-screen-component.test.mjs` source-regex assertions with behavioral tests that render `StartScreen`, mock the `MainScene` bridge, and verify high-score rendering plus visibility changes between `start` and non-`start` phases.
+- [ ] (#28) Update `src/game/entities/Snake.ts` keyboard handling to call `preventDefault()` for any mapped direction key (including rejected opposite/duplicate/full-buffer inputs), and add regression coverage for rejected-key events.
