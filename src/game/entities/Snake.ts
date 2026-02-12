@@ -10,6 +10,7 @@ import {
   gridEquals,
   MoveTicker,
 } from "../utils/grid";
+import { TouchInput } from "../utils/touchInput";
 
 // ── Constants ────────────────────────────────────────────────────
 
@@ -60,6 +61,9 @@ export class Snake {
 
   /** Whether the snake is alive and should process movement. */
   private alive = true;
+
+  /** Touch/swipe input controller (created lazily via setupTouchInput). */
+  private touchInput: TouchInput | null = null;
 
   constructor(
     scene: Phaser.Scene,
@@ -130,6 +134,21 @@ export class Snake {
         }
       },
     );
+  }
+
+  /**
+   * Register touch/swipe input on the Phaser canvas element.
+   * Swipe gestures are converted to the same buffered direction system
+   * used by keyboard controls. Call this once after construction.
+   */
+  setupTouchInput(): void {
+    const canvas = this.scene.game?.canvas;
+    if (!canvas) return;
+
+    this.touchInput = new TouchInput();
+    this.touchInput.attach(canvas, (dir: Direction) => {
+      this.bufferDirection(dir);
+    });
   }
 
   /**
@@ -284,9 +303,11 @@ export class Snake {
 
   // ── Cleanup ────────────────────────────────────────────────────
 
-  /** Destroy all sprites and reset state. */
+  /** Destroy all sprites, detach touch input, and reset state. */
   destroy(): void {
     this.alive = false;
+    this.touchInput?.detach();
+    this.touchInput = null;
     for (const sprite of this.sprites) {
       sprite.destroy();
     }
