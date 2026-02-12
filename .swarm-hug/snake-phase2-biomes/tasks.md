@@ -36,4 +36,4 @@
 - [x] (#16) Mark task #14 as complete — GameOver biome-visited rendering tests are fully implemented in sprint 3 (9+ test cases covering count display, ratio, visited/unvisited styling, reactivity, and reset behavior) (A)
 
 ## Follow-up tasks (from sprint review)
-- [A] (#17) Mark task #16 as complete — task #14 (GameOver biome-visited rendering tests) was fully delivered in sprint 4
+- [x] (#17) Mark task #16 as complete — task #14 (GameOver biome-visited rendering tests) was fully delivered in sprint 4 (A)
