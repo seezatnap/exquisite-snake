@@ -26,8 +26,11 @@
 ## Testing & QA
 
 - [x] (#12) Add automated tests for biome cycle timing/order, Ice momentum rules, Molten burn/despawn behavior, Void pull cadence, and biome-visit stat tracking [5 pts] (blocked by #3, #4, #5, #11) (A)
-- [ ] (#13) Execute end-to-end QA across multiple 45-second biome cycles to validate transitions, mechanics, HUD updates, and performance; capture and triage release-blocking defects [5 pts] (blocked by #8, #9, #10, #12)
+- [x] (#13) Execute end-to-end QA across multiple 45-second biome cycles to validate transitions, mechanics, HUD updates, and performance; capture and triage release-blocking defects [5 pts] (blocked by #8, #9, #10, #12) (A)
 
 ## Follow-up tasks (from sprint review)
 - [x] (#14) Remove duplicate biome reset emissions on new run start so `biomeChange` and `biomeVisitStatsChange` fire only once, and add a regression test for single-fire behavior. (C)
 - [x] (#15) Preserve arena grid layering across biome transitions by keeping redrawn grid graphics behind snake/food sprites, with a regression test for draw order. (C)
+
+## Follow-up tasks (from sprint review)
+- [ ] (#16) Execute a manual visual QA pass in a real browser/GPU environment across multiple 45-second biome cycles to validate transition FX polish (wipe/shake), render layering, and HUD biome indicator behavior, then document any defects.
