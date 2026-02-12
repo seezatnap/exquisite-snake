@@ -166,6 +166,7 @@ export class MainScene extends Phaser.Scene {
     mainSceneStateBridge.resetForNextRun();
     mainSceneStateBridge.setPhase("playing");
     this.snake.bindKeyboardControls(this.input.keyboard ?? null);
+    this.snake.bindTouchControls(this.input);
   }
 
   addScore(points = 1): void {
@@ -200,6 +201,7 @@ export class MainScene extends Phaser.Scene {
     this.runStartMs = null;
     this.lastUpdateMs = null;
     this.snake.unbindKeyboardControls();
+    this.snake.unbindTouchControls();
     mainSceneStateBridge.setPhase("game-over");
   }
 
@@ -211,13 +213,8 @@ export class MainScene extends Phaser.Scene {
   }
 
   private bindStartInput(): void {
-    const keyboard = this.input.keyboard;
-
-    if (!keyboard) {
-      return;
-    }
-
-    keyboard.on("keydown", this.handleAnyKeyToStart, this);
+    this.input.keyboard?.on("keydown", this.handleAnyInputToStart, this);
+    this.input.on("pointerdown", this.handleAnyInputToStart, this);
   }
 
   private bindSceneLifecycleEvents(): void {
@@ -225,7 +222,7 @@ export class MainScene extends Phaser.Scene {
     this.events.once(Phaser.Scenes.Events.DESTROY, this.handleShutdown, this);
   }
 
-  private handleAnyKeyToStart(): void {
+  private handleAnyInputToStart(): void {
     if (mainSceneStateBridge.getSnapshot().phase !== "start") {
       return;
     }
@@ -237,11 +234,14 @@ export class MainScene extends Phaser.Scene {
     this.runStartMs = null;
     this.lastUpdateMs = null;
     this.snake.unbindKeyboardControls();
-    this.input.keyboard?.off("keydown", this.handleAnyKeyToStart, this);
+    this.snake.unbindTouchControls();
+    this.input.keyboard?.off("keydown", this.handleAnyInputToStart, this);
+    this.input.off("pointerdown", this.handleAnyInputToStart, this);
   }
 
   private rebuildSnakeForNextRun(): void {
     this.snake.unbindKeyboardControls();
+    this.snake.unbindTouchControls();
     this.snake = new Snake(DEFAULT_SNAKE_OPTIONS);
   }
 
