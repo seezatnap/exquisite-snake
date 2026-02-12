@@ -12,6 +12,7 @@ import { loadHighScore, saveHighScore } from "../utils/storage";
 import { isInBounds, type GridPos } from "../utils/grid";
 import { Snake } from "../entities/Snake";
 import { Food } from "../entities/Food";
+import { emitFoodParticles, shakeCamera } from "../systems/effects";
 
 // ── Default spawn configuration ─────────────────────────────────
 
@@ -75,8 +76,16 @@ export class MainScene extends Phaser.Scene {
         return; // Game over — stop processing this frame
       }
 
-      // Check food consumption
-      this.food.checkEat(this.snake, (points) => this.addScore(points));
+      // Check food consumption — emit particles at the old food position on eat
+      const foodSprite = this.food.getSprite();
+      const fx = foodSprite.x;
+      const fy = foodSprite.y;
+      const eaten = this.food.checkEat(this.snake, (points) =>
+        this.addScore(points),
+      );
+      if (eaten) {
+        emitFoodParticles(this, fx, fy);
+      }
     }
   }
 
@@ -106,6 +115,7 @@ export class MainScene extends Phaser.Scene {
 
   /** End the current run: kill snake, persist high-score, transition to gameOver. */
   endRun(): void {
+    shakeCamera(this);
     if (this.snake?.isAlive()) {
       this.snake.kill();
     }
