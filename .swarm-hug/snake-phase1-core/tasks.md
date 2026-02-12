@@ -22,13 +22,13 @@
 
 - [x] (#13) Build `src/components/StartScreen.tsx` with animated snake-logo/title treatment, “Press any key” start prompt, and high-score display sourced from persisted data [5 pts] (blocked by #10) (A)
 - [x] (#14) Build `src/components/HUD.tsx` top bar showing score/high score and reserved placeholder slots for future biome indicator, rewind cooldown, and parasite inventory [5 pts] (blocked by #5) (B)
-- [B] (#15) Build `src/components/GameOver.tsx` overlay with final score, high score, time survived, and a Play Again action wired to scene reset and state re-entry [5 pts] (blocked by #9, #10)
+- [x] (#15) Build `src/components/GameOver.tsx` overlay with final score, high score, time survived, and a Play Again action wired to scene reset and state re-entry [5 pts] (blocked by #9, #10) (B)
 - [ ] (#16) Integrate start/HUD/game-over overlays into a complete game loop (start -> playing -> game over -> replay), including keyboard-first navigation and consistent focus management between states [5 pts] (blocked by #13, #14, #15)
 
 ## Visual Polish & Performance
 
 - [x] (#17) Implement `src/styles/globals.css` neon theme tokens and Tailwind-driven dark-cyberpunk styling (pink/cyan on dark), including visible arena grid lines and responsive layout polish for surrounding UI [5 pts] (blocked by #2) (B)
-- [B] (#18) Add gameplay effects: particle burst on food pickup and subtle screen-shake on collision/death, tuned to remain readable and non-disorienting [5 pts] (blocked by #8, #9, #17)
+- [x] (#18) Add gameplay effects: particle burst on food pickup and subtle screen-shake on collision/death, tuned to remain readable and non-disorienting [5 pts] (blocked by #8, #9, #17) (B)
 - [ ] (#19) Execute performance and quality hardening for Phase 1: validate 60 FPS target under normal play, add focused tests for grid/input/storage logic, run end-to-end gameplay QA, and confirm static export output is production-ready [5 pts] (blocked by #12, #16, #18)
 
 ## Follow-up tasks (from sprint review)
@@ -51,5 +51,5 @@
 - [x] (#28) Update `src/game/entities/Snake.ts` keyboard handling to call `preventDefault()` for any mapped direction key (including rejected opposite/duplicate/full-buffer inputs), and add regression coverage for rejected-key events. (A)
 
 ## Follow-up tasks (from sprint review)
-- [A] (#29) Integrate `Food` into `src/game/scenes/MainScene.ts` so each run spawns food and the update loop processes `food.tryEat(snake)` to drive real score increments and snake growth during gameplay.
-- [A] (#30) Add `MainScene` integration tests that verify eating food updates score, triggers snake growth, and respawns food in a non-occupied cell.
+- [x] (#29) Integrate `Food` into `src/game/scenes/MainScene.ts` so each run spawns food and the update loop processes `food.tryEat(snake)` to drive real score increments and snake growth during gameplay. (A)
+- [x] (#30) Add `MainScene` integration tests that verify eating food updates score, triggers snake growth, and respawns food in a non-occupied cell. (A)
