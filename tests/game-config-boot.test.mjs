@@ -36,8 +36,11 @@ test("game config defines arena dimensions and derived grid values", async () =>
   assert.match(source, /export const GRID_ROWS = ARENA_HEIGHT \/ TILE_SIZE;/);
 });
 
-test("game config wires Phaser scale defaults and Boot/Main scene startup", async () => {
-  const source = await readSource("src/game/config.ts");
+test("game config wires Phaser scale defaults and registers the MainScene class", async () => {
+  const [source, mainSceneSource] = await Promise.all([
+    readSource("src/game/config.ts"),
+    readSource("src/game/scenes/MainScene.ts"),
+  ]);
 
   assert.match(
     source,
@@ -47,7 +50,12 @@ test("game config wires Phaser scale defaults and Boot/Main scene startup", asyn
   assert.match(source, /autoCenter:\s*Phaser\.Scale\.CENTER_BOTH/);
   assert.match(source, /import \{ MainScene \} from "\.\/scenes\/MainScene";/);
   assert.match(source, /scene:\s*\[BootScene,\s*MainScene\]/);
+  assert.doesNotMatch(
+    source,
+    /scene:\s*\[[^\]]*\{\s*key:\s*SCENE_KEYS\.MAIN\s*\}[^\]]*\]/s,
+  );
   assert.doesNotMatch(source, /MAIN_SCENE_PLACEHOLDER/);
+  assert.match(mainSceneSource, /export class MainScene extends Phaser\.Scene/);
   assert.match(
     source,
     /export const SCENE_KEYS = \{\s*BOOT:\s*"Boot",\s*MAIN:\s*"MainScene",/s,
