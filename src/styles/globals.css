@@ -1,5 +1,6 @@
 @import "tailwindcss";
 
+/* ── Neon Theme Tokens ──────────────────────────────────────────── */
 :root {
   --background: #0a0a0a;
   --foreground: #ededed;
@@ -8,8 +9,13 @@
   --neon-purple: #b026ff;
   --surface: #111118;
   --surface-bright: #1a1a24;
+  --grid-line: rgba(0, 240, 255, 0.08);
+  --grid-line-accent: rgba(255, 45, 120, 0.06);
+  --neon-glow-pink: 0 0 8px rgba(255, 45, 120, 0.6), 0 0 20px rgba(255, 45, 120, 0.3);
+  --neon-glow-cyan: 0 0 8px rgba(0, 240, 255, 0.6), 0 0 20px rgba(0, 240, 255, 0.3);
 }
 
+/* ── Tailwind v4 @theme — exposes CSS vars as Tailwind utilities ── */
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
@@ -18,12 +24,112 @@
   --color-neon-purple: var(--neon-purple);
   --color-surface: var(--surface);
   --color-surface-bright: var(--surface-bright);
+  --color-grid-line: var(--grid-line);
+  --color-grid-line-accent: var(--grid-line-accent);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
 }
 
+/* ── Base Body ──────────────────────────────────────────────────── */
 body {
   background: var(--background);
   color: var(--foreground);
   font-family: var(--font-sans, Arial, Helvetica, sans-serif);
+}
+
+/* ── Neon Glow Utilities ────────────────────────────────────────── */
+.neon-glow-pink {
+  text-shadow: var(--neon-glow-pink);
+}
+
+.neon-glow-cyan {
+  text-shadow: var(--neon-glow-cyan);
+}
+
+.neon-border-pink {
+  border-color: var(--neon-pink);
+  box-shadow: inset 0 0 6px rgba(255, 45, 120, 0.25), 0 0 8px rgba(255, 45, 120, 0.3);
+}
+
+.neon-border-cyan {
+  border-color: var(--neon-cyan);
+  box-shadow: inset 0 0 6px rgba(0, 240, 255, 0.25), 0 0 8px rgba(0, 240, 255, 0.3);
+}
+
+/* ── Arena Grid Lines ───────────────────────────────────────────── */
+.arena-grid {
+  position: relative;
+}
+
+.arena-grid::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background-image:
+    linear-gradient(to right, var(--grid-line) 1px, transparent 1px),
+    linear-gradient(to bottom, var(--grid-line) 1px, transparent 1px);
+  background-size: 20px 20px;
+  z-index: 1;
+}
+
+/* ── Responsive Game Wrapper ────────────────────────────────────── */
+.game-wrapper {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  max-width: 100vw;
+  max-height: 100dvh;
+  padding: 0.5rem;
+}
+
+@media (min-width: 640px) {
+  .game-wrapper {
+    padding: 1rem;
+  }
+}
+
+@media (min-width: 1024px) {
+  .game-wrapper {
+    padding: 1.5rem;
+  }
+}
+
+/* ── Surface Panel ──────────────────────────────────────────────── */
+.surface-panel {
+  background: var(--surface);
+  border: 1px solid var(--surface-bright);
+  border-radius: 0.5rem;
+}
+
+/* ── Focus Accessibility ────────────────────────────────────────── */
+:focus-visible {
+  outline: 2px solid var(--neon-cyan);
+  outline-offset: 2px;
+}
+
+/* ── Selection ──────────────────────────────────────────────────── */
+::selection {
+  background: rgba(0, 240, 255, 0.3);
+  color: var(--foreground);
+}
+
+/* ── Scrollbar (minimal, dark) ──────────────────────────────────── */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--background);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--surface-bright);
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--neon-cyan);
 }

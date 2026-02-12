@@ -9,9 +9,11 @@ const Game = dynamic(() => import("@/components/Game"), { ssr: false });
 
 export default function Home() {
   return (
-    <main className="relative flex min-h-screen items-center justify-center">
-      {/* Layer 0: Phaser canvas */}
-      <Game />
+    <main className="game-wrapper relative min-h-screen">
+      {/* Layer 0: Phaser canvas with arena grid overlay */}
+      <div className="arena-grid">
+        <Game />
+      </div>
 
       {/* Layer 1: HUD overlay (always rendered, toggled by game state) */}
       <div className="pointer-events-none absolute inset-0 z-10">
