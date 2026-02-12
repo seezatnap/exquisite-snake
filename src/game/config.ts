@@ -1,7 +1,3 @@
-import Phaser from "phaser";
-import { Boot } from "./scenes/Boot";
-import { MainScene } from "./scenes/MainScene";
-
 // ── Arena Dimensions ─────────────────────────────────────────────
 export const ARENA_WIDTH = 800;
 export const ARENA_HEIGHT = 600;
@@ -32,10 +28,24 @@ export const TEXTURE_KEYS = {
   PARTICLE: "particle",
 } as const;
 
+// ── Scene class type ─────────────────────────────────────────────
+type SceneClass = new (...args: unknown[]) => unknown;
+
+// ── Phaser namespace shape ──────────────────────────────────────
+// Declares only the subset of the Phaser namespace used here so
+// config.ts never needs a top-level `import Phaser` (which would
+// crash during Next.js SSR because Phaser requires browser globals).
+interface PhaserLike {
+  AUTO: number;
+  Scale: { FIT: number; CENTER_BOTH: number };
+}
+
 // ── Game Configuration Factory ───────────────────────────────────
 export function createGameConfig(
-  parent: HTMLElement
-): Phaser.Types.Core.GameConfig {
+  parent: HTMLElement,
+  Phaser: PhaserLike,
+  scenes: SceneClass[],
+): Record<string, unknown> {
   return {
     type: Phaser.AUTO,
     width: ARENA_WIDTH,
@@ -53,6 +63,6 @@ export function createGameConfig(
         debug: false,
       },
     },
-    scene: [Boot, MainScene],
+    scene: scenes,
   };
 }

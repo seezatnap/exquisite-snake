@@ -8,23 +8,17 @@ import {
   COLORS,
 } from "../config";
 import { gameBridge, type GamePhase } from "../bridge";
+import { loadHighScore, saveHighScore } from "../utils/storage";
 
 /**
  * Primary gameplay scene.
  *
  * Manages the game loop phases (start → playing → gameOver), draws the
- * arena grid, tracks score / high-score / elapsed survival time, and
- * pushes every state change through the Phaser↔React bridge so overlay
- * components can react.
+ * arena grid, and delegates all score / high-score / elapsed survival
+ * time state to the Phaser↔React bridge (single source of truth) so
+ * overlay components and external consumers stay in sync.
  */
 export class MainScene extends Phaser.Scene {
-  // ── State ───────────────────────────────────────────────────
-  private phase: GamePhase = "start";
-  private score = 0;
-  private highScore = 0;
-  /** Accumulated play-time in ms for the current run. */
-  private elapsedTime = 0;
-
   constructor() {
     super({ key: "MainScene" });
   }
@@ -33,13 +27,13 @@ export class MainScene extends Phaser.Scene {
 
   create(): void {
     this.drawGrid();
+    gameBridge.setHighScore(loadHighScore());
     this.enterPhase("start");
   }
 
   update(_time: number, delta: number): void {
-    if (this.phase === "playing") {
-      this.elapsedTime += delta;
-      gameBridge.setElapsedTime(this.elapsedTime);
+    if (gameBridge.getState().phase === "playing") {
+      gameBridge.setElapsedTime(gameBridge.getState().elapsedTime + delta);
     }
   }
 
@@ -47,7 +41,6 @@ export class MainScene extends Phaser.Scene {
 
   /** Transition to a new game phase and notify the bridge. */
   enterPhase(next: GamePhase): void {
-    this.phase = next;
     gameBridge.setPhase(next);
 
     if (next === "playing") {
@@ -56,23 +49,22 @@ export class MainScene extends Phaser.Scene {
   }
 
   getPhase(): GamePhase {
-    return this.phase;
+    return gameBridge.getState().phase;
   }
 
   // ── Run lifecycle ───────────────────────────────────────────
 
   /** Reset per-run state and begin a new game. */
   private startRun(): void {
-    this.score = 0;
-    this.elapsedTime = 0;
     gameBridge.resetRun();
   }
 
   /** End the current run: persist high-score and transition to gameOver. */
   endRun(): void {
-    if (this.score > this.highScore) {
-      this.highScore = this.score;
-      gameBridge.setHighScore(this.highScore);
+    const { score, highScore } = gameBridge.getState();
+    if (score > highScore) {
+      gameBridge.setHighScore(score);
+      saveHighScore(score);
     }
     this.enterPhase("gameOver");
   }
@@ -80,25 +72,23 @@ export class MainScene extends Phaser.Scene {
   // ── Score helpers ───────────────────────────────────────────
 
   addScore(points: number): void {
-    this.score += points;
-    gameBridge.setScore(this.score);
+    gameBridge.setScore(gameBridge.getState().score + points);
   }
 
   getScore(): number {
-    return this.score;
+    return gameBridge.getState().score;
   }
 
   getHighScore(): number {
-    return this.highScore;
+    return gameBridge.getState().highScore;
   }
 
   setHighScore(value: number): void {
-    this.highScore = value;
     gameBridge.setHighScore(value);
   }
 
   getElapsedTime(): number {
-    return this.elapsedTime;
+    return gameBridge.getState().elapsedTime;
   }
 
   // ── Arena grid ──────────────────────────────────────────────
