@@ -1,4 +1,11 @@
+"use client";
+
+import { useEffect, useState } from "react";
+
+type GamePhase = "start" | "playing" | "game-over";
+
 type HUDProps = Readonly<{
+  phase?: GamePhase;
   score?: number;
   highScore?: number;
   biomeLabel?: string;
@@ -11,12 +18,32 @@ type StatusSlotProps = Readonly<{
   value: string;
 }>;
 
+type HUDBridgeState = Readonly<{
+  phase: GamePhase;
+  score: number;
+  highScore: number;
+}>;
+
+const INITIAL_HUD_BRIDGE_STATE: HUDBridgeState = Object.freeze({
+  phase: "start",
+  score: 0,
+  highScore: 0,
+});
+
+function clampNonNegativeInteger(value: number): number {
+  if (!Number.isFinite(value)) {
+    return 0;
+  }
+
+  return Math.max(0, Math.floor(value));
+}
+
 function formatCounter(value: number | undefined): string {
   if (typeof value !== "number" || !Number.isFinite(value)) {
     return "0";
   }
 
-  return Math.max(0, Math.floor(value)).toString();
+  return clampNonNegativeInteger(value).toString();
 }
 
 function StatusSlot({ label, value }: StatusSlotProps) {
@@ -29,14 +56,53 @@ function StatusSlot({ label, value }: StatusSlotProps) {
 }
 
 export default function HUD({
-  score = 0,
-  highScore = 0,
+  phase,
+  score,
+  highScore,
   biomeLabel = "pending",
   rewindStatus = "pending",
   parasiteStatus = "empty",
 }: HUDProps) {
-  const displayScore = formatCounter(score);
-  const displayHighScore = formatCounter(highScore);
+  const [bridgeState, setBridgeState] = useState(INITIAL_HUD_BRIDGE_STATE);
+
+  useEffect(() => {
+    let cancelled = false;
+    let unsubscribe: (() => void) | undefined;
+
+    void import("@/game/scenes/MainScene")
+      .then(({ getMainSceneStateSnapshot, subscribeToMainSceneState }) => {
+        if (cancelled) {
+          return;
+        }
+
+        const applyBridgeState = (nextState: HUDBridgeState) => {
+          setBridgeState({
+            phase: nextState.phase,
+            score: clampNonNegativeInteger(nextState.score),
+            highScore: clampNonNegativeInteger(nextState.highScore),
+          });
+        };
+
+        applyBridgeState(getMainSceneStateSnapshot());
+        unsubscribe = subscribeToMainSceneState(applyBridgeState);
+      })
+      .catch(() => {
+        // Keep HUD rendering resilient if scene bridge loading is delayed.
+      });
+
+    return () => {
+      cancelled = true;
+      unsubscribe?.();
+    };
+  }, []);
+
+  const resolvedPhase = phase ?? bridgeState.phase;
+  const displayScore = formatCounter(score ?? bridgeState.score);
+  const displayHighScore = formatCounter(highScore ?? bridgeState.highScore);
+
+  if (resolvedPhase === "start") {
+    return null;
+  }
 
   return (
     <aside
