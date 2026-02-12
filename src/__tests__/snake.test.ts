@@ -278,6 +278,67 @@ describe("Snake input buffering", () => {
   });
 });
 
+// ── Ice Cavern turn momentum ─────────────────────────────────────
+
+describe("Snake turn momentum", () => {
+  it("applies a buffered turn only after 2 extra tiles when momentum is enabled", () => {
+    const ticker = new MoveTicker(100);
+    const snake = createSnake({ col: 10, row: 10 }, "right", 3, ticker);
+    snake.setTurnMomentumTiles(2);
+
+    snake.bufferDirection("up");
+
+    snake.update(100); // extra slide tile 1
+    expect(snake.getDirection()).toBe("right");
+    expect(snake.getHeadPosition()).toEqual({ col: 11, row: 10 });
+
+    snake.update(100); // extra slide tile 2
+    expect(snake.getDirection()).toBe("right");
+    expect(snake.getHeadPosition()).toEqual({ col: 12, row: 10 });
+
+    snake.update(100); // delayed turn applies now
+    expect(snake.getDirection()).toBe("up");
+    expect(snake.getHeadPosition()).toEqual({ col: 12, row: 9 });
+  });
+
+  it("buffers follow-up input against the pending delayed turn direction", () => {
+    const ticker = new MoveTicker(100);
+    const snake = createSnake({ col: 10, row: 10 }, "right", 3, ticker);
+    snake.setTurnMomentumTiles(2);
+
+    snake.bufferDirection("up");
+    snake.update(100); // pending turn is "up"; still sliding right
+
+    // Must be accepted as a follow-up to "up" (valid), not rejected as opposite of current "right".
+    snake.bufferDirection("left");
+
+    snake.update(100); // second slide tile before turning up
+    snake.update(100); // turn to up
+    snake.update(100); // slide up 1 before turning left
+    snake.update(100); // slide up 2 before turning left
+    snake.update(100); // turn to left
+
+    expect(snake.getDirection()).toBe("left");
+    expect(snake.getHeadPosition()).toEqual({ col: 11, row: 7 });
+  });
+
+  it("applies pending delayed turns immediately after momentum is disabled", () => {
+    const ticker = new MoveTicker(100);
+    const snake = createSnake({ col: 10, row: 10 }, "right", 3, ticker);
+    snake.setTurnMomentumTiles(2);
+
+    snake.bufferDirection("up");
+    snake.update(100); // still sliding right
+    expect(snake.getHeadPosition()).toEqual({ col: 11, row: 10 });
+
+    snake.setTurnMomentumTiles(0);
+    snake.update(100); // pending turn applies without extra slide
+
+    expect(snake.getDirection()).toBe("up");
+    expect(snake.getHeadPosition()).toEqual({ col: 11, row: 9 });
+  });
+});
+
 // ── Anti-180-degree turn rules ───────────────────────────────────
 
 describe("Snake anti-180-degree turn", () => {

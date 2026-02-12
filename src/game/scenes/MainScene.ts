@@ -29,6 +29,7 @@ const DEFAULT_HEAD_POS: GridPos = {
 };
 const DEFAULT_DIRECTION = "right" as const;
 const DEFAULT_SNAKE_LENGTH = 3;
+const ICE_CAVERN_TURN_MOMENTUM_TILES = 2;
 
 interface BiomeVisualTheme {
   backgroundColor: number;
@@ -225,6 +226,7 @@ export class MainScene extends Phaser.Scene {
       DEFAULT_DIRECTION,
       DEFAULT_SNAKE_LENGTH,
     );
+    this.applyBiomeMovementMechanics(this.biomeManager.getCurrentBiome());
     this.snake.setupInput();
     this.snake.setupTouchInput();
     this.food = new Food(this, this.snake, this.rng);
@@ -345,6 +347,7 @@ export class MainScene extends Phaser.Scene {
     gameBridge.emitBiomeEnter(biome);
     this.events?.emit?.("biomeEnter", biome);
     this.events?.emit?.("biomeMechanicsChange", mechanics);
+    this.applyBiomeMovementMechanics(biome);
     this.applyBiomeVisualTheme(biome);
     this.events?.emit?.("biomeVisualChange", biome);
   }
@@ -357,6 +360,15 @@ export class MainScene extends Phaser.Scene {
   private syncBiomeRuntimeToBridge(): void {
     gameBridge.setCurrentBiome(this.biomeManager.getCurrentBiome());
     gameBridge.setBiomeVisitStats(this.biomeManager.getVisitStats());
+  }
+
+  private applyBiomeMovementMechanics(biome: Biome): void {
+    if (!this.snake) {
+      return;
+    }
+    const turnMomentumTiles =
+      biome === Biome.IceCavern ? ICE_CAVERN_TURN_MOMENTUM_TILES : 0;
+    this.snake.setTurnMomentumTiles(turnMomentumTiles);
   }
 
   private applyBiomeVisualTheme(biome: Biome): void {

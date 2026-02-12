@@ -393,6 +393,49 @@ describe("MainScene", () => {
     expect(spyEmitBiomeEnter).not.toHaveBeenCalled();
   });
 
+  it("Ice Cavern momentum resolves wall collisions before a delayed turn applies", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.enterPhase("playing");
+
+    const snake = scene.getSnake()!;
+    snake.getTicker().setInterval(60_000); // isolate biome timing from movement
+    scene.update(0, 45_000); // Neon -> Ice
+    expect(scene.getCurrentBiome()).toBe(Biome.IceCavern);
+
+    snake.reset({ col: GRID_COLS - 2, row: 10 }, "right", 1);
+    snake.getTicker().setInterval(100);
+    snake.bufferDirection("up");
+
+    scene.update(0, 100); // slide tile 1
+    expect(scene.getPhase()).toBe("playing");
+    expect(snake.getHeadPosition()).toEqual({ col: GRID_COLS - 1, row: 10 });
+
+    scene.update(0, 100); // slide tile 2 -> out of bounds before turn can apply
+    expect(scene.getPhase()).toBe("gameOver");
+  });
+
+  it("turns are immediate again after leaving Ice Cavern", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.enterPhase("playing");
+
+    const snake = scene.getSnake()!;
+    snake.getTicker().setInterval(60_000); // isolate biome timing from movement
+    scene.update(0, 45_000); // Neon -> Ice
+    scene.update(0, 45_000); // Ice -> Molten
+    expect(scene.getCurrentBiome()).toBe(Biome.MoltenCore);
+
+    snake.reset({ col: 10, row: 10 }, "right", 1);
+    snake.getTicker().setInterval(100);
+    snake.bufferDirection("up");
+
+    scene.update(0, 100);
+    expect(scene.getPhase()).toBe("playing");
+    expect(snake.getDirection()).toBe("up");
+    expect(snake.getHeadPosition()).toEqual({ col: 10, row: 9 });
+  });
+
   // ── Replay lifecycle ───────────────────────────────────────
 
   it("entering 'playing' after gameOver resets score and time", () => {
