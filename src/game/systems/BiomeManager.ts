@@ -23,24 +23,29 @@ export const BIOME_DURATION_MS = 45_000;
 
 export interface BiomeConfig {
   readonly name: string;
+  readonly icon: string;
   readonly description: string;
 }
 
 export const BIOME_CONFIGS: Readonly<Record<Biome, BiomeConfig>> = {
   [Biome.NeonCity]: {
     name: "Neon City",
+    icon: "🏙️",
     description: "Default — no modifier",
   },
   [Biome.IceCavern]: {
     name: "Ice Cavern",
+    icon: "❄️",
     description: "Snake slides 2 extra tiles before stopping when turning",
   },
   [Biome.MoltenCore]: {
     name: "Molten Core",
+    icon: "🌋",
     description: "Random lava pools spawn; touching one burns off 3 tail segments",
   },
   [Biome.VoidRift]: {
     name: "Void Rift",
+    icon: "🌀",
     description: "Gravity wells pull the snake toward the center of the arena",
   },
 } as const;

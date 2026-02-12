@@ -2,7 +2,15 @@
 
 import { useEffect, useState } from "react";
 import { gameBridge, type GamePhase } from "@/game/bridge";
-import { type Biome, BIOME_CONFIGS } from "@/game/systems/BiomeManager";
+import { Biome, BIOME_CONFIGS } from "@/game/systems/BiomeManager";
+
+/** Per-biome accent colors for the HUD indicator. */
+const BIOME_HUD_COLORS: Record<Biome, { text: string; border: string }> = {
+  [Biome.NeonCity]: { text: "text-neon-cyan", border: "border-neon-cyan/50" },
+  [Biome.IceCavern]: { text: "text-[#81d4fa]", border: "border-[#81d4fa]/50" },
+  [Biome.MoltenCore]: { text: "text-[#ff9800]", border: "border-[#ff9800]/50" },
+  [Biome.VoidRift]: { text: "text-neon-purple", border: "border-neon-purple/50" },
+};
 
 /**
  * HUD top bar overlay.
@@ -47,7 +55,8 @@ export default function HUD() {
 
   if (phase !== "playing") return <div id="hud" />;
 
-  const biomeName = BIOME_CONFIGS[currentBiome].name;
+  const biomeConfig = BIOME_CONFIGS[currentBiome];
+  const biomeColors = BIOME_HUD_COLORS[currentBiome];
 
   return (
     <div
@@ -70,11 +79,14 @@ export default function HUD() {
       <div className="flex items-center gap-3">
         {/* Biome indicator */}
         <div
-          className="rounded border border-neon-purple/50 px-2 py-0.5 text-xs text-neon-purple"
+          className={`flex items-center gap-1.5 rounded border px-2 py-0.5 text-xs ${biomeColors.border} ${biomeColors.text}`}
           data-slot="biome"
           data-testid="hud-biome"
+          data-biome={currentBiome}
+          aria-label={`Current biome: ${biomeConfig.name}`}
         >
-          {biomeName}
+          <span data-testid="hud-biome-icon" aria-hidden="true">{biomeConfig.icon}</span>
+          <span data-testid="hud-biome-name">{biomeConfig.name}</span>
         </div>
         {/* Rewind cooldown — Phase 2+ */}
         <div

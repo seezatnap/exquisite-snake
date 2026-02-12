@@ -440,6 +440,129 @@ describe("GameOver component", () => {
     expect(getByTestId("biomes-visited").textContent).toContain("0 / 4");
   });
 
+  // ── Biomes-visited count from bridge state (#14) ────────
+
+  it("displays 1 / 4 when exactly one biome visited", () => {
+    bridge.setBiomeVisitStats({
+      visits: { NeonCity: 1, IceCavern: 0, MoltenCore: 0, VoidRift: 0 },
+      uniqueCount: 1,
+    });
+    bridge.setPhase("gameOver");
+    const { getByTestId } = render(<GameOver />);
+    expect(getByTestId("biomes-visited").textContent).toContain("1 / 4");
+  });
+
+  it("displays 4 / 4 when all biomes visited", () => {
+    bridge.setBiomeVisitStats({
+      visits: { NeonCity: 1, IceCavern: 1, MoltenCore: 1, VoidRift: 1 },
+      uniqueCount: 4,
+    });
+    bridge.setPhase("gameOver");
+    const { getByTestId } = render(<GameOver />);
+    expect(getByTestId("biomes-visited").textContent).toContain("4 / 4");
+  });
+
+  it("counts unique biomes, not total visits (multiple visits to same biome)", () => {
+    bridge.setBiomeVisitStats({
+      visits: { NeonCity: 5, IceCavern: 3, MoltenCore: 0, VoidRift: 0 },
+      uniqueCount: 2,
+    });
+    bridge.setPhase("gameOver");
+    const { getByTestId } = render(<GameOver />);
+    // Should show 2 / 4, not 8 or 5
+    expect(getByTestId("biomes-visited").textContent).toContain("2 / 4");
+    // NeonCity and IceCavern visited → highlighted
+    expect(getByTestId("biome-NeonCity").className).toContain("text-neon-cyan");
+    expect(getByTestId("biome-IceCavern").className).toContain("text-neon-cyan");
+    // MoltenCore and VoidRift unvisited → dimmed
+    expect(getByTestId("biome-MoltenCore").className).toContain("line-through");
+    expect(getByTestId("biome-VoidRift").className).toContain("line-through");
+  });
+
+  it("correctly reflects only VoidRift visited from bridge state", () => {
+    bridge.setBiomeVisitStats({
+      visits: { NeonCity: 0, IceCavern: 0, MoltenCore: 0, VoidRift: 2 },
+      uniqueCount: 1,
+    });
+    bridge.setPhase("gameOver");
+    const { getByTestId } = render(<GameOver />);
+    expect(getByTestId("biomes-visited").textContent).toContain("1 / 4");
+    expect(getByTestId("biome-VoidRift").className).toContain("text-neon-cyan");
+    expect(getByTestId("biome-VoidRift").className).not.toContain("line-through");
+    expect(getByTestId("biome-NeonCity").className).toContain("line-through");
+    expect(getByTestId("biome-IceCavern").className).toContain("line-through");
+    expect(getByTestId("biome-MoltenCore").className).toContain("line-through");
+  });
+
+  it("renders biomes-visited count from initial bridge state on mount", () => {
+    // Set stats before rendering (simulates Phaser setting stats before gameOver)
+    bridge.setBiomeVisitStats({
+      visits: { NeonCity: 2, IceCavern: 1, MoltenCore: 1, VoidRift: 0 },
+      uniqueCount: 3,
+    });
+    bridge.setPhase("gameOver");
+    const { getByTestId } = render(<GameOver />);
+    // Component should read initial state from getState(), not wait for events
+    expect(getByTestId("biomes-visited").textContent).toContain("3 / 4");
+  });
+
+  it("updates biomes-visited count when bridge emits new stats mid-display", () => {
+    bridge.setBiomeVisitStats({
+      visits: { NeonCity: 1, IceCavern: 0, MoltenCore: 0, VoidRift: 0 },
+      uniqueCount: 1,
+    });
+    bridge.setPhase("gameOver");
+    const { getByTestId } = render(<GameOver />);
+    expect(getByTestId("biomes-visited").textContent).toContain("1 / 4");
+
+    // Simulate a late stats update (e.g., delayed sync from BiomeManager)
+    act(() => {
+      bridge.setBiomeVisitStats({
+        visits: { NeonCity: 1, IceCavern: 1, MoltenCore: 1, VoidRift: 0 },
+        uniqueCount: 3,
+      });
+    });
+
+    expect(getByTestId("biomes-visited").textContent).toContain("3 / 4");
+    expect(getByTestId("biome-IceCavern").className).toContain("text-neon-cyan");
+    expect(getByTestId("biome-MoltenCore").className).toContain("text-neon-cyan");
+    expect(getByTestId("biome-VoidRift").className).toContain("line-through");
+  });
+
+  it("shows correct biome-visited count across consecutive game overs", () => {
+    // First game: visited 2 biomes
+    bridge.setBiomeVisitStats({
+      visits: { NeonCity: 1, IceCavern: 1, MoltenCore: 0, VoidRift: 0 },
+      uniqueCount: 2,
+    });
+    bridge.setPhase("gameOver");
+    const { getByTestId, container } = render(<GameOver />);
+    expect(getByTestId("biomes-visited").textContent).toContain("2 / 4");
+
+    // Player restarts
+    act(() => {
+      bridge.resetRun();
+      bridge.setPhase("playing");
+    });
+    expect(container.querySelector("#game-over")!.textContent).toBe("");
+
+    // Second game: visited all 4 biomes
+    act(() => {
+      bridge.setBiomeVisitStats({
+        visits: { NeonCity: 2, IceCavern: 1, MoltenCore: 1, VoidRift: 1 },
+        uniqueCount: 4,
+      });
+      bridge.setPhase("gameOver");
+    });
+    expect(getByTestId("biomes-visited").textContent).toContain("4 / 4");
+
+    // All biomes should be highlighted
+    expect(getByTestId("biome-NeonCity").className).toContain("text-neon-cyan");
+    expect(getByTestId("biome-IceCavern").className).toContain("text-neon-cyan");
+    expect(getByTestId("biome-MoltenCore").className).toContain("text-neon-cyan");
+    expect(getByTestId("biome-VoidRift").className).toContain("text-neon-cyan");
+  });
+
   // ── Cleanup ───────────────────────────────────────────────
 
   it("unsubscribes from bridge on unmount", () => {

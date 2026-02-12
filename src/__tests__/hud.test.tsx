@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, act, cleanup } from "@testing-library/react";
 import type { GameBridge } from "@/game/bridge";
+import type { Biome } from "@/game/systems/BiomeManager";
 
 // vi.hoisted runs before the mock factory, so bridge is available.
 const { bridge } = vi.hoisted(() => {
@@ -81,6 +82,7 @@ describe("HUD component", () => {
     bridge.setPhase("start");
     bridge.setScore(0);
     bridge.setHighScore(0);
+    bridge.setBiome("NeonCity" as Biome);
   });
 
   // ── Visibility ────────────────────────────────────────────
@@ -212,6 +214,117 @@ describe("HUD component", () => {
     expect(
       container.querySelector('[aria-label="Game HUD"]'),
     ).toBeTruthy();
+  });
+
+  // ── Biome indicator ──────────────────────────────────────
+
+  it("displays the default biome name (Neon City) on initial render", () => {
+    bridge.setPhase("playing");
+    const { getByTestId } = render(<HUD />);
+    expect(getByTestId("hud-biome-name").textContent).toBe("Neon City");
+  });
+
+  it("displays a biome icon alongside the name", () => {
+    bridge.setPhase("playing");
+    const { getByTestId } = render(<HUD />);
+    const icon = getByTestId("hud-biome-icon");
+    expect(icon).toBeTruthy();
+    expect(icon.textContent).toBe("🏙️");
+  });
+
+  it("biome icon is aria-hidden", () => {
+    bridge.setPhase("playing");
+    const { getByTestId } = render(<HUD />);
+    expect(getByTestId("hud-biome-icon").getAttribute("aria-hidden")).toBe("true");
+  });
+
+  it("biome indicator has accessible aria-label with biome name", () => {
+    bridge.setPhase("playing");
+    const { getByTestId } = render(<HUD />);
+    expect(getByTestId("hud-biome").getAttribute("aria-label")).toBe("Current biome: Neon City");
+  });
+
+  it("updates biome name when bridge emits biomeChange to IceCavern", () => {
+    bridge.setPhase("playing");
+    const { getByTestId } = render(<HUD />);
+
+    act(() => bridge.setBiome("IceCavern" as Biome));
+    expect(getByTestId("hud-biome-name").textContent).toBe("Ice Cavern");
+    expect(getByTestId("hud-biome-icon").textContent).toBe("❄️");
+  });
+
+  it("updates biome name when bridge emits biomeChange to MoltenCore", () => {
+    bridge.setPhase("playing");
+    const { getByTestId } = render(<HUD />);
+
+    act(() => bridge.setBiome("MoltenCore" as Biome));
+    expect(getByTestId("hud-biome-name").textContent).toBe("Molten Core");
+    expect(getByTestId("hud-biome-icon").textContent).toBe("🌋");
+  });
+
+  it("updates biome name when bridge emits biomeChange to VoidRift", () => {
+    bridge.setPhase("playing");
+    const { getByTestId } = render(<HUD />);
+
+    act(() => bridge.setBiome("VoidRift" as Biome));
+    expect(getByTestId("hud-biome-name").textContent).toBe("Void Rift");
+    expect(getByTestId("hud-biome-icon").textContent).toBe("🌀");
+  });
+
+  it("updates data-biome attribute on each biome transition", () => {
+    bridge.setPhase("playing");
+    const { getByTestId } = render(<HUD />);
+
+    expect(getByTestId("hud-biome").getAttribute("data-biome")).toBe("NeonCity");
+
+    act(() => bridge.setBiome("IceCavern" as Biome));
+    expect(getByTestId("hud-biome").getAttribute("data-biome")).toBe("IceCavern");
+
+    act(() => bridge.setBiome("MoltenCore" as Biome));
+    expect(getByTestId("hud-biome").getAttribute("data-biome")).toBe("MoltenCore");
+
+    act(() => bridge.setBiome("VoidRift" as Biome));
+    expect(getByTestId("hud-biome").getAttribute("data-biome")).toBe("VoidRift");
+  });
+
+  it("updates aria-label on biome transition", () => {
+    bridge.setPhase("playing");
+    const { getByTestId } = render(<HUD />);
+
+    act(() => bridge.setBiome("MoltenCore" as Biome));
+    expect(getByTestId("hud-biome").getAttribute("aria-label")).toBe("Current biome: Molten Core");
+  });
+
+  it("cycles through all four biomes in sequence", () => {
+    bridge.setPhase("playing");
+    const { getByTestId } = render(<HUD />);
+
+    const expectedCycle: { biome: Biome; name: string; icon: string }[] = [
+      { biome: "NeonCity" as Biome, name: "Neon City", icon: "🏙️" },
+      { biome: "IceCavern" as Biome, name: "Ice Cavern", icon: "❄️" },
+      { biome: "MoltenCore" as Biome, name: "Molten Core", icon: "🌋" },
+      { biome: "VoidRift" as Biome, name: "Void Rift", icon: "🌀" },
+    ];
+
+    for (const { biome, name, icon } of expectedCycle) {
+      act(() => bridge.setBiome(biome));
+      expect(getByTestId("hud-biome-name").textContent).toBe(name);
+      expect(getByTestId("hud-biome-icon").textContent).toBe(icon);
+      expect(getByTestId("hud-biome").getAttribute("data-biome")).toBe(biome);
+    }
+  });
+
+  it("wraps back to NeonCity after cycling through all biomes", () => {
+    bridge.setPhase("playing");
+    const { getByTestId } = render(<HUD />);
+
+    act(() => bridge.setBiome("IceCavern" as Biome));
+    act(() => bridge.setBiome("MoltenCore" as Biome));
+    act(() => bridge.setBiome("VoidRift" as Biome));
+    act(() => bridge.setBiome("NeonCity" as Biome));
+
+    expect(getByTestId("hud-biome-name").textContent).toBe("Neon City");
+    expect(getByTestId("hud-biome-icon").textContent).toBe("🏙️");
   });
 
   // ── Cleanup ───────────────────────────────────────────────

@@ -398,6 +398,16 @@ export class Snake {
     }
   }
 
+  /**
+   * Set depth (z-order) on all snake sprites.
+   * Head gets `headDepth`, body segments get `bodyDepth`.
+   */
+  setDepthLayers(headDepth: number, bodyDepth: number): void {
+    for (let i = 0; i < this.sprites.length; i++) {
+      this.sprites[i].setDepth(i === 0 ? headDepth : bodyDepth);
+    }
+  }
+
   // ── Cleanup ────────────────────────────────────────────────────
 
   /** Destroy all sprites, detach input listeners, and reset state. */

@@ -28,6 +28,23 @@ export const TEXTURE_KEYS = {
   FOOD: "food",
   PARTICLE: "particle",
   LAVA_POOL: "lava-pool",
+  VOID_VORTEX: "void-vortex",
+} as const;
+
+// ── Render Depth Layers ─────────────────────────────────────────
+// Defines z-ordering for all game objects. Higher values render on top.
+export const DEPTH = {
+  GRID: -1,
+  /** Mechanic-linked visuals: lava pools, vortex ring */
+  MECHANIC_VISUALS: 1,
+  /** Food renders above mechanic visuals */
+  FOOD: 5,
+  /** Snake body segments */
+  SNAKE_BODY: 10,
+  /** Snake head renders above body */
+  SNAKE_HEAD: 15,
+  /** Biome transition overlay — topmost */
+  TRANSITION_OVERLAY: 1000,
 } as const;
 
 /**
