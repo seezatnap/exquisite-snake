@@ -34,3 +34,6 @@
 ## Follow-up tasks (from sprint review)
 - [x] (#20) Fix static-export npm scripts in `package.json` by replacing the broken `start` command (`next start` with `output: "export"`) with a static preview command that serves `out/`. (B)
 - [x] (#21) Update `README.md` to document the actual static-export workflow and local preview steps (build/export output in `out/` and how to run it). (B)
+
+## Follow-up tasks (from sprint review)
+- [ ] (#22) Fix global style precedence in `src/styles/globals.css` by removing/reworking the hard-coded `body` `font-family`/`background`/`color` rule so `src/app/layout.tsx` Tailwind classes (`font-sans`, `bg-black`, `text-white`) actually apply.
