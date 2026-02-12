@@ -33,4 +33,4 @@
 - [x] (#15) Preserve arena grid layering across biome transitions by keeping redrawn grid graphics behind snake/food sprites, with a regression test for draw order. (C)
 
 ## Follow-up tasks (from sprint review)
-- [A] (#16) Execute a manual visual QA pass in a real browser/GPU environment across multiple 45-second biome cycles to validate transition FX polish (wipe/shake), render layering, and HUD biome indicator behavior, then document any defects.
+- [x] (#16) Execute a manual visual QA pass in a real browser/GPU environment across multiple 45-second biome cycles to validate transition FX polish (wipe/shake), render layering, and HUD biome indicator behavior, then document any defects. (A)
