@@ -53,3 +53,8 @@
 ## Follow-up tasks (from sprint review)
 - [x] (#29) Integrate `Food` into `src/game/scenes/MainScene.ts` so each run spawns food and the update loop processes `food.tryEat(snake)` to drive real score increments and snake growth during gameplay. (A)
 - [x] (#30) Add `MainScene` integration tests that verify eating food updates score, triggers snake growth, and respawns food in a non-occupied cell. (A)
+
+## Follow-up tasks (from sprint review)
+- [ ] (#31) Update `src/components/Game.tsx` to focus the arena only when phase transitions into `"playing"` (track previous phase) instead of on every `"playing"` bridge update, to avoid continuous focus-stealing during gameplay.
+- [ ] (#32) Add a regression test in `tests/game-component.test.mjs` that emits repeated `"playing"` state updates and verifies arena focus is triggered once per transition.
+- [ ] (#33) Replace `tests/hud-component.test.mjs` source-regex assertions with behavioral tests that mount `HUD`, mock the MainScene bridge, and verify start-phase hiding, live score/high-score updates, and unsubscribe cleanup.
