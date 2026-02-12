@@ -932,6 +932,41 @@ describe("MainScene", () => {
     });
   });
 
+  it("QA-DEFECT-01: Void Rift gravity nudge skips when it would cause self-collision", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.setBiomeMechanicsConfig({
+      voidRift: { gravityPullCadenceSteps: 1 },
+    });
+    scene.enterPhase("playing");
+
+    const snake = scene.getSnake()!;
+    snake.getTicker().setInterval(200_000); // isolate biome timing from movement
+    scene.update(0, 45_000); // Neon -> Ice
+    scene.update(0, 45_000); // Ice -> Molten
+    scene.update(0, 45_000); // Molten -> Void
+    expect(scene.getCurrentBiome()).toBe(Biome.VoidRift);
+
+    // Reproduce QA-DEFECT-01 scenario:
+    // Snake heading right, body trailing left, positioned right of center.
+    // Center is at col 20. Head at col 21 → gravity pulls LEFT toward col 20
+    // Body at col 20 means the nudge destination would be a body segment.
+    snake.reset({ col: 21, row: 15 }, "right", 3);
+    // Segments: head(21,15), body(20,15), body(19,15)
+    snake.getTicker().setInterval(100);
+
+    // Step: head moves to (22,15), gravity fires (cadence=1).
+    // Pull direction: center col=20, head col=22 → pull LEFT to (21,15).
+    // (21,15) is the previous head position, now first body segment.
+    // Without the fix this would cause self-collision → game over.
+    scene.update(0, 100);
+
+    expect(scene.getPhase()).toBe("playing");
+    expect(snake.isAlive()).toBe(true);
+    // Nudge was skipped, so head stays at (22,15)
+    expect(snake.getHeadPosition()).toEqual({ col: 22, row: 15 });
+  });
+
   it("Void Rift renders an animated center vortex visual", () => {
     const scene = new MainScene();
     scene.create();
