@@ -69,9 +69,48 @@ async function loadMainSceneModule(storageModule) {
     filename: "Snake.cjs",
   });
 
-  class MockKeyboard {
-    on() {}
-    off() {}
+  class MockEmitter {
+    constructor() {
+      this.listeners = new Map();
+    }
+
+    on(eventName, listener, context) {
+      const listeners = this.listeners.get(eventName) ?? [];
+      listeners.push({ listener, context });
+      this.listeners.set(eventName, listeners);
+    }
+
+    off(eventName, listener, context) {
+      const listeners = this.listeners.get(eventName);
+      if (!listeners) {
+        return;
+      }
+
+      this.listeners.set(
+        eventName,
+        listeners.filter(
+          (candidate) =>
+            candidate.listener !== listener || candidate.context !== context,
+        ),
+      );
+    }
+
+    emit(eventName, ...args) {
+      const listeners = this.listeners.get(eventName) ?? [];
+
+      for (const { listener, context } of listeners) {
+        listener.call(context, ...args);
+      }
+    }
+  }
+
+  class MockKeyboard extends MockEmitter {}
+
+  class MockInput extends MockEmitter {
+    constructor() {
+      super();
+      this.keyboard = new MockKeyboard();
+    }
   }
 
   class MockEvents {
@@ -82,9 +121,7 @@ async function loadMainSceneModule(storageModule) {
     constructor() {
       this.time = { now: 0 };
       this.events = new MockEvents();
-      this.input = {
-        keyboard: new MockKeyboard(),
-      };
+      this.input = new MockInput();
     }
   }
 
@@ -179,6 +216,26 @@ test("MainScene persists high score when a run ends", async () => {
   assert.equal(sceneModule.getMainSceneStateSnapshot().highScore, 9);
 });
 
+test("MainScene starts a run from pointer input for mobile controls", async () => {
+  const sceneModule = await loadMainSceneModule({
+    loadHighScore() {
+      return 0;
+    },
+    persistHighScore(score) {
+      return score;
+    },
+  });
+
+  const scene = new sceneModule.MainScene();
+  scene.create();
+
+  assert.equal(sceneModule.getMainSceneStateSnapshot().phase, "start");
+  scene.time.now = 32;
+  scene.input.emit("pointerdown");
+
+  assert.equal(sceneModule.getMainSceneStateSnapshot().phase, "playing");
+});
+
 test("MainScene transitions to game-over when snake hits a wall", async () => {
   const persistedScores = [];
   const sceneModule = await loadMainSceneModule({
@@ -232,6 +289,8 @@ test("MainScene transitions to game-over when snake collides with itself", async
     },
     bindKeyboardControls() {},
     unbindKeyboardControls() {},
+    bindTouchControls() {},
+    unbindTouchControls() {},
   };
   scene.time.now = 240;
   scene.update(240);
