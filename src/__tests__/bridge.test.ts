@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { GameBridge, type GamePhase } from "@/game/bridge";
+import { Biome } from "@/game/systems/BiomeManager";
 
 describe("GameBridge", () => {
   let bridge: GameBridge;
@@ -24,6 +25,19 @@ describe("GameBridge", () => {
 
   it("starts with elapsedTime 0", () => {
     expect(bridge.getState().elapsedTime).toBe(0);
+  });
+
+  it("starts in Neon City biome", () => {
+    expect(bridge.getState().currentBiome).toBe(Biome.NeonCity);
+  });
+
+  it("starts with visit stats counting Neon City once", () => {
+    expect(bridge.getState().biomeVisitStats).toEqual({
+      [Biome.NeonCity]: 1,
+      [Biome.IceCavern]: 0,
+      [Biome.MoltenCore]: 0,
+      [Biome.VoidRift]: 0,
+    });
   });
 
   // ── setPhase ───────────────────────────────────────────────
@@ -82,30 +96,123 @@ describe("GameBridge", () => {
     expect(listener).toHaveBeenCalledWith(1234);
   });
 
+  // ── biome runtime state ────────────────────────────────────
+
+  it("setCurrentBiome updates state.currentBiome", () => {
+    bridge.setCurrentBiome(Biome.IceCavern);
+    expect(bridge.getState().currentBiome).toBe(Biome.IceCavern);
+  });
+
+  it("setCurrentBiome emits biomeChange", () => {
+    const listener = vi.fn();
+    bridge.on("biomeChange", listener);
+    bridge.setCurrentBiome(Biome.MoltenCore);
+    expect(listener).toHaveBeenCalledWith(Biome.MoltenCore);
+  });
+
+  it("setBiomeVisitStats stores a copied stats object", () => {
+    const stats = {
+      [Biome.NeonCity]: 1,
+      [Biome.IceCavern]: 2,
+      [Biome.MoltenCore]: 3,
+      [Biome.VoidRift]: 4,
+    };
+    bridge.setBiomeVisitStats(stats);
+    expect(bridge.getState().biomeVisitStats).toEqual(stats);
+    expect(bridge.getState().biomeVisitStats).not.toBe(stats);
+  });
+
+  it("setBiomeVisitStats emits biomeVisitStatsChange", () => {
+    const listener = vi.fn();
+    bridge.on("biomeVisitStatsChange", listener);
+    const stats = {
+      [Biome.NeonCity]: 1,
+      [Biome.IceCavern]: 0,
+      [Biome.MoltenCore]: 1,
+      [Biome.VoidRift]: 0,
+    };
+    bridge.setBiomeVisitStats(stats);
+    expect(listener).toHaveBeenCalledWith(stats);
+  });
+
+  it("emits biome transition lifecycle events", () => {
+    const transition = { from: Biome.NeonCity, to: Biome.IceCavern };
+    const onExit = vi.fn();
+    const onTransition = vi.fn();
+    const onEnter = vi.fn();
+
+    bridge.on("biomeExit", onExit);
+    bridge.on("biomeTransition", onTransition);
+    bridge.on("biomeEnter", onEnter);
+
+    bridge.emitBiomeExit(transition.from);
+    bridge.emitBiomeTransition(transition);
+    bridge.emitBiomeEnter(transition.to);
+
+    expect(onExit).toHaveBeenCalledWith(Biome.NeonCity);
+    expect(onTransition).toHaveBeenCalledWith(transition);
+    expect(onEnter).toHaveBeenCalledWith(Biome.IceCavern);
+  });
+
   // ── resetRun ───────────────────────────────────────────────
 
-  it("resetRun zeroes score and elapsedTime", () => {
+  it("resetRun zeroes score/elapsedTime and resets biome run state", () => {
     bridge.setScore(50);
     bridge.setElapsedTime(9999);
+    bridge.setCurrentBiome(Biome.VoidRift);
+    bridge.setBiomeVisitStats({
+      [Biome.NeonCity]: 1,
+      [Biome.IceCavern]: 1,
+      [Biome.MoltenCore]: 1,
+      [Biome.VoidRift]: 1,
+    });
+
     bridge.resetRun();
     expect(bridge.getState().score).toBe(0);
     expect(bridge.getState().elapsedTime).toBe(0);
+    expect(bridge.getState().currentBiome).toBe(Biome.NeonCity);
+    expect(bridge.getState().biomeVisitStats).toEqual({
+      [Biome.NeonCity]: 1,
+      [Biome.IceCavern]: 0,
+      [Biome.MoltenCore]: 0,
+      [Biome.VoidRift]: 0,
+    });
   });
 
-  it("resetRun emits scoreChange and elapsedTimeChange with 0", () => {
+  it("resetRun emits score/time plus biome reset events", () => {
     const scoreCb = vi.fn();
     const timeCb = vi.fn();
+    const biomeCb = vi.fn();
+    const biomeStatsCb = vi.fn();
     bridge.on("scoreChange", scoreCb);
     bridge.on("elapsedTimeChange", timeCb);
+    bridge.on("biomeChange", biomeCb);
+    bridge.on("biomeVisitStatsChange", biomeStatsCb);
     bridge.setScore(50);
     bridge.setElapsedTime(9999);
+    bridge.setCurrentBiome(Biome.VoidRift);
+    bridge.setBiomeVisitStats({
+      [Biome.NeonCity]: 1,
+      [Biome.IceCavern]: 2,
+      [Biome.MoltenCore]: 3,
+      [Biome.VoidRift]: 4,
+    });
 
     scoreCb.mockClear();
     timeCb.mockClear();
+    biomeCb.mockClear();
+    biomeStatsCb.mockClear();
 
     bridge.resetRun();
     expect(scoreCb).toHaveBeenCalledWith(0);
     expect(timeCb).toHaveBeenCalledWith(0);
+    expect(biomeCb).toHaveBeenCalledWith(Biome.NeonCity);
+    expect(biomeStatsCb).toHaveBeenCalledWith({
+      [Biome.NeonCity]: 1,
+      [Biome.IceCavern]: 0,
+      [Biome.MoltenCore]: 0,
+      [Biome.VoidRift]: 0,
+    });
   });
 
   it("resetRun does not affect highScore", () => {
