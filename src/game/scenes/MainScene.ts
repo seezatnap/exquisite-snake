@@ -28,6 +28,11 @@ import {
 import { IceMomentum } from "../systems/IceMomentum";
 import { GravityWellManager } from "../entities/GravityWell";
 import { getBiomeTheme } from "../systems/BiomeTheme";
+import {
+  type BiomeMechanicConfigs,
+  type BiomeRng,
+  getDefaultBiomeMechanicConfigs,
+} from "../systems/BiomeMechanics";
 
 // ── Default spawn configuration ─────────────────────────────────
 
@@ -83,7 +88,11 @@ export class MainScene extends Phaser.Scene {
    * Injectable RNG function for deterministic replay sessions.
    * Returns a value in [0, 1). Defaults to Math.random.
    */
-  private rng: () => number = Math.random;
+  private rng: BiomeRng = Math.random;
+
+  /** Shared biome-mechanic balancing configuration. */
+  private mechanicConfigs: BiomeMechanicConfigs =
+    getDefaultBiomeMechanicConfigs();
 
   constructor() {
     super({ key: "MainScene" });
@@ -256,6 +265,7 @@ export class MainScene extends Phaser.Scene {
 
   /** Create snake and food entities for a new run. */
   private createEntities(): void {
+    const cfg = this.mechanicConfigs;
     this.snake = new Snake(
       this,
       DEFAULT_HEAD_POS,
@@ -266,8 +276,16 @@ export class MainScene extends Phaser.Scene {
     this.snake.setupInput();
     this.snake.setupTouchInput();
     this.food = new Food(this, this.snake, this.rng);
-    this.lavaPoolManager = new LavaPoolManager(this, this.rng);
-    this.gravityWellManager = new GravityWellManager();
+    this.lavaPoolManager = new LavaPoolManager(
+      this,
+      this.rng,
+      cfg.lava.maxPools,
+      cfg.lava.spawnIntervalMs,
+    );
+    this.gravityWellManager = new GravityWellManager(
+      cfg.gravity.pullCadence,
+      cfg.gravity.center,
+    );
   }
 
   /** Destroy existing snake and food entities. */
@@ -370,13 +388,25 @@ export class MainScene extends Phaser.Scene {
   // ── RNG / Deterministic replay ────────────────────────────────
 
   /** Set the RNG function for deterministic replay. */
-  setRng(rng: () => number): void {
+  setRng(rng: BiomeRng): void {
     this.rng = rng;
   }
 
   /** Get the current RNG function. */
-  getRng(): () => number {
+  getRng(): BiomeRng {
     return this.rng;
+  }
+
+  // ── Shared biome-mechanic config ──────────────────────────────
+
+  /** Get the current biome-mechanic configuration. */
+  getMechanicConfigs(): BiomeMechanicConfigs {
+    return this.mechanicConfigs;
+  }
+
+  /** Override the biome-mechanic configuration (takes effect on next run). */
+  setMechanicConfigs(configs: BiomeMechanicConfigs): void {
+    this.mechanicConfigs = configs;
   }
 
   // ── Entity accessors (for tests and external integration) ────

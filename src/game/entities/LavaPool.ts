@@ -1,21 +1,22 @@
 import Phaser from "phaser";
-import { GRID_COLS, GRID_ROWS, TEXTURE_KEYS } from "../config";
+import { TEXTURE_KEYS } from "../config";
 import { type GridPos, gridToPixel, gridEquals } from "../utils/grid";
 import type { Snake } from "./Snake";
+import {
+  LAVA_MAX_POOLS,
+  LAVA_SPAWN_INTERVAL_MS,
+  type BiomeRng,
+  collectFreeCells,
+  pickRandomCell,
+} from "../systems/BiomeMechanics";
 
-// ── Tunable constants ───────────────────────────────────────────
-
-/** Number of tail segments burned when the snake touches a lava pool. */
-export const LAVA_BURN_SEGMENTS = 3;
-
-/** Minimum snake length to survive a lava burn (head + this many body segments). */
-export const LAVA_SURVIVAL_THRESHOLD = LAVA_BURN_SEGMENTS + 1;
-
-/** Maximum number of lava pools that can exist simultaneously. */
-export const LAVA_MAX_POOLS = 8;
-
-/** Time between lava pool spawns in ms. */
-export const LAVA_SPAWN_INTERVAL_MS = 3_000;
+// Re-export shared constants so existing consumers don't break.
+export {
+  LAVA_BURN_SEGMENTS,
+  LAVA_SURVIVAL_THRESHOLD,
+  LAVA_MAX_POOLS,
+  LAVA_SPAWN_INTERVAL_MS,
+} from "../systems/BiomeMechanics";
 
 // ── Single pool representation ──────────────────────────────────
 
@@ -39,13 +40,13 @@ export class LavaPoolManager {
   private pools: Pool[] = [];
   private spawnTimer = 0;
   private scene: Phaser.Scene;
-  private rng: () => number;
+  private rng: BiomeRng;
   private maxPools: number;
   private spawnInterval: number;
 
   constructor(
     scene: Phaser.Scene,
-    rng?: () => number,
+    rng?: BiomeRng,
     maxPools: number = LAVA_MAX_POOLS,
     spawnInterval: number = LAVA_SPAWN_INTERVAL_MS,
   ) {
@@ -79,33 +80,21 @@ export class LavaPoolManager {
   /**
    * Spawn a single lava pool on a random empty cell.
    * A cell is "empty" if it's not occupied by the snake, food, or another pool.
+   *
+   * Uses the shared `collectFreeCells` and `pickRandomCell` utilities from
+   * BiomeMechanics for deterministic, testable placement.
    */
   private spawnPool(snake: Snake, foodPos: GridPos): void {
-    const freeCells: GridPos[] = [];
+    const freeCells = collectFreeCells([
+      (p) => snake.isOnSnake(p),
+      (p) => gridEquals(p, foodPos),
+      (p) => this.isLavaAt(p),
+    ]);
 
-    for (let col = 0; col < GRID_COLS; col++) {
-      for (let row = 0; row < GRID_ROWS; row++) {
-        const pos: GridPos = { col, row };
+    const cell = pickRandomCell(freeCells, this.rng);
+    if (!cell) return; // Grid full — skip
 
-        // Skip snake cells
-        if (snake.isOnSnake(pos)) continue;
-
-        // Skip food cell
-        if (gridEquals(pos, foodPos)) continue;
-
-        // Skip existing pool cells
-        if (this.isLavaAt(pos)) continue;
-
-        freeCells.push(pos);
-      }
-    }
-
-    if (freeCells.length === 0) return; // Grid full — skip
-
-    const index = Math.floor(this.rng() * freeCells.length);
-    const cell = freeCells[index];
     const px = gridToPixel(cell);
-
     const sprite = this.scene.add.sprite(px.x, px.y, TEXTURE_KEYS.LAVA_POOL);
 
     this.pools.push({ pos: cell, sprite });
