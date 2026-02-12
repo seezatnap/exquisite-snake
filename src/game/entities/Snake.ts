@@ -11,6 +11,7 @@ import {
   MoveTicker,
 } from "../utils/grid";
 import { TouchInput } from "../utils/touchInput";
+import type { IceMomentum } from "../systems/IceMomentum";
 
 // ── Constants ────────────────────────────────────────────────────
 
@@ -67,6 +68,9 @@ export class Snake {
 
   /** Stored keyboard handler reference for cleanup in destroy(). */
   private keydownHandler: ((event: { code: string }) => void) | null = null;
+
+  /** Optional Ice Cavern momentum handler (set by MainScene on biome changes). */
+  private iceMomentum: IceMomentum | null = null;
 
   constructor(
     scene: Phaser.Scene,
@@ -196,17 +200,42 @@ export class Snake {
   /**
    * Move the snake one grid step forward.
    * Consumes the next buffered direction if available.
+   *
+   * When Ice Cavern momentum is active and the player requests a turn,
+   * the snake slides `ICE_SLIDE_TILES` extra steps in the old direction
+   * before the turn is applied.
    */
   private step(): void {
-    // Consume next buffered direction
-    if (this.inputBuffer.length > 0) {
-      this.direction = this.inputBuffer.shift()!;
+    const ice = this.iceMomentum;
+    let deferredDirection: Direction | null = null;
+
+    if (ice && ice.isSliding()) {
+      // Mid-slide: advance the slide counter. If it completes, defer the
+      // direction change to AFTER this step's movement so the snake still
+      // moves in the old direction for this tile.
+      const resolved = ice.advanceSlide();
+      if (resolved !== null) {
+        deferredDirection = resolved;
+      }
+      // During a slide, do NOT consume from the input buffer (the turn is
+      // already captured by ice momentum).
+    } else if (this.inputBuffer.length > 0) {
+      const nextDir = this.inputBuffer.shift()!;
+
+      if (ice && ice.isEnabled()) {
+        // Ice Cavern: capture the turn and begin sliding in the old direction
+        ice.beginSlide(nextDir);
+        // direction stays the same for this step (slide in old direction)
+      } else {
+        // Normal: apply the direction change immediately
+        this.direction = nextDir;
+      }
     }
 
     // Save previous positions for interpolation
     this.prevSegments = this.segments.map((s) => ({ ...s }));
 
-    // Compute new head position
+    // Compute new head position (uses current direction, before deferred change)
     const newHead = stepInDirection(this.segments[0], this.direction);
 
     // Shift segments: add new head, optionally keep or remove tail
@@ -220,6 +249,11 @@ export class Snake {
       this.prevSegments.unshift({ ...this.prevSegments[0] });
     } else {
       this.segments.pop();
+    }
+
+    // Apply deferred direction change after movement (ice slide completion)
+    if (deferredDirection !== null) {
+      this.direction = deferredDirection;
     }
   }
 
@@ -242,6 +276,48 @@ export class Snake {
   /** Queue a number of growth segments. */
   grow(amount: number = 1): void {
     this.pendingGrowth += amount;
+  }
+
+  /**
+   * Remove segments from the tail end of the snake.
+   *
+   * Used by the Molten Core lava-pool mechanic to burn off tail segments.
+   * The head segment (index 0) is never removed by this method.
+   *
+   * @param count - Number of tail segments to remove.
+   * @returns The number of segments actually removed (may be less than
+   *          `count` if the snake isn't long enough).
+   */
+  burnTail(count: number): number {
+    const removable = Math.min(count, this.segments.length - 1); // keep head
+    for (let i = 0; i < removable; i++) {
+      this.segments.pop();
+      this.prevSegments.pop();
+      const sprite = this.sprites.pop();
+      sprite?.destroy();
+    }
+    // Cancel any pending growth that would extend past the burn
+    this.pendingGrowth = Math.max(0, this.pendingGrowth - count);
+    return removable;
+  }
+
+  // ── Position nudge (Void Rift gravity well) ─────────────────────
+
+  /**
+   * Shift the head position by a delta vector.
+   *
+   * Used by the Void Rift gravity well to pull the snake toward the
+   * arena center. The nudge is applied after normal movement so the
+   * player can anticipate it (deterministic cadence).
+   *
+   * Only the head segment is moved; the body will follow naturally on
+   * subsequent steps.
+   */
+  applyPositionNudge(delta: GridPos): void {
+    this.segments[0] = {
+      col: this.segments[0].col + delta.col,
+      row: this.segments[0].row + delta.row,
+    };
   }
 
   // ── State queries ──────────────────────────────────────────────
@@ -300,6 +376,26 @@ export class Snake {
   /** Get the movement ticker (for external progress queries). */
   getTicker(): MoveTicker {
     return this.ticker;
+  }
+
+  /** Set the Ice Cavern momentum handler. Pass null to remove. */
+  setIceMomentum(momentum: IceMomentum | null): void {
+    this.iceMomentum = momentum;
+  }
+
+  /** Get the current Ice Cavern momentum handler. */
+  getIceMomentum(): IceMomentum | null {
+    return this.iceMomentum;
+  }
+
+  /**
+   * Swap all sprite textures to new keys (used for biome theme changes).
+   * Index 0 gets `headKey`, all others get `bodyKey`.
+   */
+  retextureSprites(headKey: string, bodyKey: string): void {
+    for (let i = 0; i < this.sprites.length; i++) {
+      this.sprites[i].setTexture(i === 0 ? headKey : bodyKey);
+    }
   }
 
   // ── Cleanup ────────────────────────────────────────────────────

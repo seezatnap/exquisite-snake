@@ -6,6 +6,8 @@ import {
   GRID_COLS,
   GRID_ROWS,
   COLORS,
+  TEXTURE_KEYS,
+  biomeTextureKey,
 } from "../config";
 import { gameBridge, type GamePhase } from "../bridge";
 import { loadHighScore, saveHighScore } from "../utils/storage";
@@ -15,9 +17,17 @@ import { Food } from "../entities/Food";
 import { emitFoodParticles, shakeCamera } from "../systems/effects";
 import {
   BiomeManager,
-  type Biome,
+  Biome,
   type BiomeChangeListener,
 } from "../systems/BiomeManager";
+import {
+  LavaPoolManager,
+  LAVA_BURN_SEGMENTS,
+  LAVA_SURVIVAL_THRESHOLD,
+} from "../entities/LavaPool";
+import { IceMomentum } from "../systems/IceMomentum";
+import { GravityWellManager } from "../entities/GravityWell";
+import { getBiomeTheme } from "../systems/BiomeTheme";
 
 // ── Default spawn configuration ─────────────────────────────────
 
@@ -51,8 +61,23 @@ export class MainScene extends Phaser.Scene {
   /** Biome rotation manager — persists across runs (reset between runs). */
   private biomeManager = new BiomeManager();
 
+  /** Lava pool manager for the Molten Core biome (null when not playing). */
+  private lavaPoolManager: LavaPoolManager | null = null;
+
+  /** Ice Cavern momentum handler — persists across runs (reset between runs). */
+  private iceMomentum = new IceMomentum();
+
+  /** Gravity well manager for the Void Rift biome (null when not playing). */
+  private gravityWellManager: GravityWellManager | null = null;
+
   /** Bound listener for biome change events (stored for cleanup). */
   private onBiomeChange: BiomeChangeListener | null = null;
+
+  /** The grid-line Graphics object (redrawn on biome theme changes). */
+  private gridGfx: Phaser.GameObjects.Graphics | null = null;
+
+  /** Currently applied biome (for theme tracking). */
+  private currentThemeBiome: Biome = Biome.NeonCity;
 
   /**
    * Injectable RNG function for deterministic replay sessions.
@@ -83,9 +108,21 @@ export class MainScene extends Phaser.Scene {
     gameBridge.on("phaseChange", this.onBridgePhaseChange);
 
     // Subscribe to biome transitions and sync to bridge
-    this.onBiomeChange = (newBiome: Biome) => {
+    this.onBiomeChange = (newBiome: Biome, previousBiome: Biome | null) => {
+      // Clean up lava pools when leaving Molten Core
+      if (previousBiome === Biome.MoltenCore) {
+        this.lavaPoolManager?.clearAll();
+      }
+      // Reset gravity well counter when leaving Void Rift
+      if (previousBiome === Biome.VoidRift) {
+        this.gravityWellManager?.reset();
+      }
       gameBridge.setBiome(newBiome);
       gameBridge.setBiomeVisitStats(this.biomeManager.getVisitStats());
+      // Enable/disable ice momentum based on biome
+      this.iceMomentum.setEnabled(newBiome === Biome.IceCavern);
+      // Apply biome visual theme
+      this.applyBiomeTheme(newBiome);
     };
     this.biomeManager.onChange(this.onBiomeChange);
 
@@ -103,6 +140,8 @@ export class MainScene extends Phaser.Scene {
       this.onBiomeChange = null;
     }
     this.biomeManager.reset();
+    this.iceMomentum.reset();
+    this.iceMomentum.setEnabled(false);
     this.destroyEntities();
   }
 
@@ -117,12 +156,33 @@ export class MainScene extends Phaser.Scene {
 
     if (!this.snake || !this.food) return;
 
+    // Update lava pool spawning during Molten Core biome
+    if (
+      this.biomeManager.getCurrentBiome() === Biome.MoltenCore &&
+      this.lavaPoolManager
+    ) {
+      this.lavaPoolManager.update(delta, this.snake, this.food.getPosition());
+    }
+
     const stepped = this.snake.update(delta);
 
     if (stepped) {
+      // Apply Void Rift gravity nudge after normal movement, before collisions
+      if (
+        this.biomeManager.getCurrentBiome() === Biome.VoidRift &&
+        this.gravityWellManager
+      ) {
+        this.gravityWellManager.onSnakeStep(this.snake);
+      }
+
       // Check collisions after the snake moved to its new grid position
       if (this.checkCollisions()) {
         return; // Game over — stop processing this frame
+      }
+
+      // Check lava pool collision (Molten Core biome)
+      if (this.checkLavaCollision()) {
+        return; // Game over from lava — stop processing this frame
       }
 
       // Check food consumption — emit particles at the old food position on eat
@@ -163,11 +223,17 @@ export class MainScene extends Phaser.Scene {
     this.biomeManager.reset();
     this.biomeManager.start();
     // Sync initial biome state to bridge
-    gameBridge.setBiome(this.biomeManager.getCurrentBiome());
+    const initialBiome = this.biomeManager.getCurrentBiome();
+    gameBridge.setBiome(initialBiome);
     gameBridge.setBiomeTimeRemaining(this.biomeManager.getTimeRemaining());
     gameBridge.setBiomeVisitStats(this.biomeManager.getVisitStats());
+    // Reset and configure ice momentum for the starting biome
+    this.iceMomentum.reset();
+    this.iceMomentum.setEnabled(initialBiome === Biome.IceCavern);
     this.destroyEntities();
     this.createEntities();
+    // Apply initial biome visual theme (after entities exist so textures are swapped)
+    this.applyBiomeTheme(initialBiome);
   }
 
   /** End the current run: kill snake, persist high-score, transition to gameOver. */
@@ -196,9 +262,12 @@ export class MainScene extends Phaser.Scene {
       DEFAULT_DIRECTION,
       DEFAULT_SNAKE_LENGTH,
     );
+    this.snake.setIceMomentum(this.iceMomentum);
     this.snake.setupInput();
     this.snake.setupTouchInput();
     this.food = new Food(this, this.snake, this.rng);
+    this.lavaPoolManager = new LavaPoolManager(this, this.rng);
+    this.gravityWellManager = new GravityWellManager();
   }
 
   /** Destroy existing snake and food entities. */
@@ -210,6 +279,14 @@ export class MainScene extends Phaser.Scene {
     if (this.food) {
       this.food.destroy();
       this.food = null;
+    }
+    if (this.lavaPoolManager) {
+      this.lavaPoolManager.destroy();
+      this.lavaPoolManager = null;
+    }
+    if (this.gravityWellManager) {
+      this.gravityWellManager.destroy();
+      this.gravityWellManager = null;
     }
   }
 
@@ -236,6 +313,35 @@ export class MainScene extends Phaser.Scene {
       return true;
     }
 
+    return false;
+  }
+
+  /**
+   * Check lava pool collision. If the snake head is on a lava pool:
+   * - Burns 3 tail segments if the snake is long enough to survive.
+   * - Kills the snake (ends run) if it's too short.
+   *
+   * The consumed pool is removed after the collision.
+   *
+   * @returns `true` if the run ended (snake killed by lava).
+   */
+  private checkLavaCollision(): boolean {
+    if (!this.snake || !this.lavaPoolManager) return false;
+
+    const hitPos = this.lavaPoolManager.checkCollision(this.snake);
+    if (!hitPos) return false;
+
+    // Remove the pool that was hit
+    this.lavaPoolManager.removeAt(hitPos);
+
+    // Kill if snake is too short to survive the burn
+    if (this.snake.getLength() < LAVA_SURVIVAL_THRESHOLD) {
+      this.endRun();
+      return true;
+    }
+
+    // Burn tail segments
+    this.snake.burnTail(LAVA_BURN_SEGMENTS);
     return false;
   }
 
@@ -287,11 +393,32 @@ export class MainScene extends Phaser.Scene {
     return this.biomeManager;
   }
 
+  getLavaPoolManager(): LavaPoolManager | null {
+    return this.lavaPoolManager;
+  }
+
+  getIceMomentum(): IceMomentum {
+    return this.iceMomentum;
+  }
+
+  getGravityWellManager(): GravityWellManager | null {
+    return this.gravityWellManager;
+  }
+
+  /** Get the currently applied theme biome. */
+  getCurrentThemeBiome(): Biome {
+    return this.currentThemeBiome;
+  }
+
   // ── Arena grid ──────────────────────────────────────────────
 
-  private drawGrid(): void {
+  private drawGrid(color?: number, alpha?: number): void {
+    if (this.gridGfx) {
+      this.gridGfx.destroy();
+    }
     const gfx = this.add.graphics();
-    gfx.lineStyle(1, COLORS.GRID_LINE, 0.08);
+    this.gridGfx = gfx;
+    gfx.lineStyle(1, color ?? COLORS.GRID_LINE, alpha ?? 0.08);
 
     // Vertical lines
     for (let col = 1; col < GRID_COLS; col++) {
@@ -308,5 +435,43 @@ export class MainScene extends Phaser.Scene {
     }
 
     gfx.strokePath();
+    // Send grid to back so entities render on top
+    gfx.setDepth(-1);
+  }
+
+  // ── Biome visual theme application ────────────────────────────
+
+  /**
+   * Apply the visual theme for the given biome.
+   *
+   * Updates:
+   * - Camera background colour
+   * - Grid-line colour/alpha (redrawn)
+   * - Snake sprite textures (head + body)
+   * - Food sprite texture
+   */
+  applyBiomeTheme(biome: Biome): void {
+    this.currentThemeBiome = biome;
+    const theme = getBiomeTheme(biome);
+    const c = theme.colors;
+
+    // 1. Camera background
+    this.cameras?.main?.setBackgroundColor(c.backgroundCss);
+
+    // 2. Redraw grid with biome colours
+    this.drawGrid(c.gridLine, c.gridAlpha);
+
+    // 3. Retexture snake sprites
+    if (this.snake) {
+      const headKey = biomeTextureKey(TEXTURE_KEYS.SNAKE_HEAD, biome);
+      const bodyKey = biomeTextureKey(TEXTURE_KEYS.SNAKE_BODY, biome);
+      this.snake.retextureSprites(headKey, bodyKey);
+    }
+
+    // 4. Retexture food sprite
+    if (this.food) {
+      const foodKey = biomeTextureKey(TEXTURE_KEYS.FOOD, biome);
+      this.food.getSprite().setTexture(foodKey);
+    }
   }
 }

@@ -18,6 +18,7 @@ export const COLORS = {
   SNAKE_BODY: 0x00c8d4,
   FOOD: 0xff2d78,
   PARTICLE: 0xff2d78,
+  LAVA_POOL: 0xff6600,
 } as const;
 
 // ── Texture Keys (used by Boot preload and gameplay scenes) ──────
@@ -26,7 +27,19 @@ export const TEXTURE_KEYS = {
   SNAKE_BODY: "snake-body",
   FOOD: "food",
   PARTICLE: "particle",
+  LAVA_POOL: "lava-pool",
 } as const;
+
+/**
+ * Build a biome-specific texture key.
+ * E.g. biomeTextureKey("snake-head", "IceCavern") → "snake-head-IceCavern"
+ */
+export function biomeTextureKey(
+  base: string,
+  biome: string,
+): string {
+  return `${base}-${biome}`;
+}
 
 // ── Scene class type ─────────────────────────────────────────────
 type SceneClass = new (...args: unknown[]) => unknown;

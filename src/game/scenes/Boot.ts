@@ -1,5 +1,7 @@
 import Phaser from "phaser";
-import { TILE_SIZE, COLORS, TEXTURE_KEYS } from "../config";
+import { TILE_SIZE, COLORS, TEXTURE_KEYS, biomeTextureKey } from "../config";
+import { BIOME_CYCLE } from "../systems/BiomeManager";
+import { BIOME_THEMES } from "../systems/BiomeTheme";
 
 /**
  * Boot scene — generates all visual-primitive textures at startup so
@@ -18,6 +20,7 @@ export class Boot extends Phaser.Scene {
 
   create(): void {
     this.generateTextures();
+    this.generateBiomeTextures();
     this.scene.start("MainScene");
   }
 
@@ -69,6 +72,70 @@ export class Boot extends Phaser.Scene {
         particleSize
       );
       particleGfx.destroy();
+    }
+
+    // ── Lava pool: orange filled circle for Molten Core biome ───
+    if (!this.textures.exists(TEXTURE_KEYS.LAVA_POOL)) {
+      const lavaGfx = this.make.graphics({ x: 0, y: 0 }, false);
+      lavaGfx.fillStyle(COLORS.LAVA_POOL, 0.85);
+      lavaGfx.fillCircle(half, half, half - 1);
+      lavaGfx.generateTexture(TEXTURE_KEYS.LAVA_POOL, size, size);
+      lavaGfx.destroy();
+    }
+  }
+
+  /**
+   * Generate per-biome texture variants for snake head, body, food,
+   * and particle so biome transitions can swap textures instantly.
+   */
+  private generateBiomeTextures(): void {
+    const size = TILE_SIZE;
+    const half = size / 2;
+    const particleSize = 6;
+
+    for (const biome of BIOME_CYCLE) {
+      const theme = BIOME_THEMES[biome];
+      const c = theme.colors;
+
+      // Snake head for this biome
+      const headKey = biomeTextureKey(TEXTURE_KEYS.SNAKE_HEAD, biome);
+      if (!this.textures.exists(headKey)) {
+        const gfx = this.make.graphics({ x: 0, y: 0 }, false);
+        gfx.fillStyle(c.snakeHead, 1);
+        gfx.fillRoundedRect(1, 1, size - 2, size - 2, 4);
+        gfx.generateTexture(headKey, size, size);
+        gfx.destroy();
+      }
+
+      // Snake body for this biome
+      const bodyKey = biomeTextureKey(TEXTURE_KEYS.SNAKE_BODY, biome);
+      if (!this.textures.exists(bodyKey)) {
+        const gfx = this.make.graphics({ x: 0, y: 0 }, false);
+        gfx.fillStyle(c.snakeBody, 1);
+        gfx.fillRoundedRect(2, 2, size - 4, size - 4, 3);
+        gfx.generateTexture(bodyKey, size, size);
+        gfx.destroy();
+      }
+
+      // Food for this biome
+      const foodKey = biomeTextureKey(TEXTURE_KEYS.FOOD, biome);
+      if (!this.textures.exists(foodKey)) {
+        const gfx = this.make.graphics({ x: 0, y: 0 }, false);
+        gfx.fillStyle(c.food, 1);
+        gfx.fillCircle(half, half, half - 2);
+        gfx.generateTexture(foodKey, size, size);
+        gfx.destroy();
+      }
+
+      // Particle for this biome
+      const pKey = biomeTextureKey(TEXTURE_KEYS.PARTICLE, biome);
+      if (!this.textures.exists(pKey)) {
+        const gfx = this.make.graphics({ x: 0, y: 0 }, false);
+        gfx.fillStyle(c.particle, 1);
+        gfx.fillCircle(particleSize / 2, particleSize / 2, particleSize / 2);
+        gfx.generateTexture(pKey, particleSize, particleSize);
+        gfx.destroy();
+      }
     }
   }
 }
