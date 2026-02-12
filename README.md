@@ -1,36 +1,43 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Exquisite Snake
 
-## Getting Started
+Exquisite Snake is a Next.js App Router project configured for static export.
 
-First, run the development server:
+## Install
+
+```bash
+npm ci
+```
+
+## Run in Development
 
 ```bash
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open `http://localhost:3000`.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Static Export Workflow
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+Static export is configured in `next.config.ts` with `output: "export"`.
 
-## Learn More
+Build the production export:
 
-To learn more about Next.js, take a look at the following resources:
+```bash
+npm run export
+```
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+This generates static files in `out/`.
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+Notes:
+- `npm run build` also runs `next build` and produces the same static-export output in `out/`.
+- Deploy the contents of `out/` to any static hosting provider.
 
-## Deploy on Vercel
+## Local Preview of the Export
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+After building/exporting, serve the generated `out/` directory locally:
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+```bash
+npm run start
+```
+
+`npm run start` runs `npx --yes serve out`, which previews the exported site locally (default `http://localhost:3000`).
