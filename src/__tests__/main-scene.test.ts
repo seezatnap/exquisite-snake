@@ -39,11 +39,27 @@ vi.mock("phaser", () => {
     add = {
       graphics: () => mockGraphics,
       sprite: vi.fn(() => createMockSprite()),
+      particles: vi.fn(() => ({
+        explode: vi.fn(),
+        destroy: vi.fn(),
+      })),
     };
     input = {
       keyboard: {
         on: mockKeyboardOn,
+        off: vi.fn(),
       },
+    };
+    cameras = {
+      main: {
+        shake: vi.fn(),
+      },
+    };
+    textures = {
+      exists: vi.fn().mockReturnValue(true),
+    };
+    time = {
+      delayedCall: vi.fn(),
     };
     constructor(public config?: { key: string }) {}
   }
@@ -67,6 +83,7 @@ vi.mock("phaser", () => {
 
 // Import after mock
 import { MainScene } from "@/game/scenes/MainScene";
+import { Snake } from "@/game/entities/Snake";
 
 // Spy on gameBridge methods
 const spySetPhase = vi.spyOn(gameBridge, "setPhase");
@@ -481,6 +498,16 @@ describe("MainScene – entity management", () => {
     const head = scene.getSnake()!.getHeadPosition();
     expect(head.col).toBe(Math.floor(GRID_COLS / 2));
     expect(head.row).toBe(Math.floor(GRID_ROWS / 2));
+  });
+
+  it("calls setupTouchInput alongside setupInput when entering 'playing'", () => {
+    const spy = vi.spyOn(Snake.prototype, "setupTouchInput");
+    const scene = new MainScene();
+    scene.create();
+    scene.enterPhase("playing");
+
+    expect(spy).toHaveBeenCalled();
+    spy.mockRestore();
   });
 
   it("destroys old entities on replay (entering 'playing' again)", () => {

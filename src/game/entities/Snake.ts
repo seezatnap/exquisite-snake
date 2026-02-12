@@ -65,6 +65,9 @@ export class Snake {
   /** Touch/swipe input controller (created lazily via setupTouchInput). */
   private touchInput: TouchInput | null = null;
 
+  /** Stored keyboard handler reference for cleanup in destroy(). */
+  private keydownHandler: ((event: { code: string }) => void) | null = null;
+
   constructor(
     scene: Phaser.Scene,
     headPos: GridPos,
@@ -125,15 +128,13 @@ export class Snake {
    */
   setupInput(): void {
     if (!this.scene.input?.keyboard) return;
-    this.scene.input.keyboard.on(
-      "keydown",
-      (event: { code: string }) => {
-        const dir = KEY_DIRECTION_MAP[event.code];
-        if (dir) {
-          this.bufferDirection(dir);
-        }
-      },
-    );
+    this.keydownHandler = (event: { code: string }) => {
+      const dir = KEY_DIRECTION_MAP[event.code];
+      if (dir) {
+        this.bufferDirection(dir);
+      }
+    };
+    this.scene.input.keyboard.on("keydown", this.keydownHandler);
   }
 
   /**
@@ -303,9 +304,13 @@ export class Snake {
 
   // ── Cleanup ────────────────────────────────────────────────────
 
-  /** Destroy all sprites, detach touch input, and reset state. */
+  /** Destroy all sprites, detach input listeners, and reset state. */
   destroy(): void {
     this.alive = false;
+    if (this.keydownHandler && this.scene.input?.keyboard) {
+      this.scene.input.keyboard.off("keydown", this.keydownHandler);
+      this.keydownHandler = null;
+    }
     this.touchInput?.detach();
     this.touchInput = null;
     for (const sprite of this.sprites) {
