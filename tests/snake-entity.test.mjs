@@ -1,0 +1,201 @@
+import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
+import path from "node:path";
+import test from "node:test";
+import vm from "node:vm";
+import ts from "typescript";
+import { fileURLToPath } from "node:url";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const projectRoot = path.resolve(__dirname, "..");
+
+const MOCK_CONFIG = Object.freeze({
+  GRID_COLS: 40,
+  GRID_ROWS: 30,
+  TILE_SIZE: 24,
+});
+
+function transpile(source, fileName) {
+  return ts.transpileModule(source, {
+    compilerOptions: {
+      module: ts.ModuleKind.CommonJS,
+      target: ts.ScriptTarget.ES2020,
+      esModuleInterop: true,
+    },
+    fileName,
+  }).outputText;
+}
+
+async function loadSnakeModule() {
+  const [gridSource, snakeSource] = await Promise.all([
+    readFile(path.join(projectRoot, "src/game/utils/grid.ts"), "utf8"),
+    readFile(path.join(projectRoot, "src/game/entities/Snake.ts"), "utf8"),
+  ]);
+
+  const gridModule = { exports: {} };
+  const gridContext = vm.createContext({
+    module: gridModule,
+    exports: gridModule.exports,
+    require(specifier) {
+      if (specifier === "../config") {
+        return MOCK_CONFIG;
+      }
+
+      throw new Error(`Unexpected module request: ${specifier}`);
+    },
+  });
+
+  vm.runInContext(transpile(gridSource, "grid.ts"), gridContext, {
+    filename: "grid.cjs",
+  });
+
+  const snakeModule = { exports: {} };
+  const snakeContext = vm.createContext({
+    module: snakeModule,
+    exports: snakeModule.exports,
+    require(specifier) {
+      if (specifier === "../utils/grid") {
+        return gridModule.exports;
+      }
+
+      throw new Error(`Unexpected module request: ${specifier}`);
+    },
+  });
+
+  vm.runInContext(transpile(snakeSource, "Snake.ts"), snakeContext, {
+    filename: "Snake.cjs",
+  });
+
+  return snakeModule.exports;
+}
+
+const toPlain = (value) => JSON.parse(JSON.stringify(value));
+
+test("Snake maps arrow keys and WASD inputs to directions", async () => {
+  const snakeModule = await loadSnakeModule();
+
+  assert.equal(snakeModule.keyboardInputToDirection({ key: "ArrowUp" }), "up");
+  assert.equal(snakeModule.keyboardInputToDirection({ key: "W" }), "up");
+  assert.equal(snakeModule.keyboardInputToDirection({ key: "d" }), "right");
+  assert.equal(snakeModule.keyboardInputToDirection({ code: "KeyA" }), "left");
+  assert.equal(snakeModule.keyboardInputToDirection({ code: "ArrowDown" }), "down");
+  assert.equal(snakeModule.keyboardInputToDirection({ key: "Enter" }), null);
+});
+
+test("Snake buffers turns while rejecting 180-degree reversals", async () => {
+  const snakeModule = await loadSnakeModule();
+  const snake = new snakeModule.Snake({
+    initialHeadPosition: { x: 5, y: 5 },
+    initialDirection: "right",
+    inputBufferSize: 2,
+  });
+
+  assert.equal(snake.queueDirection("left"), false);
+  assert.equal(snake.queueDirection("up"), true);
+  assert.equal(snake.queueDirection("down"), false);
+  assert.equal(snake.queueDirection("left"), true);
+  assert.equal(snake.queueDirection("up"), false);
+  assert.deepEqual(toPlain(snake.queuedDirections), ["up", "left"]);
+});
+
+test("Snake consumes buffered turns in order across movement steps", async () => {
+  const snakeModule = await loadSnakeModule();
+  const snake = new snakeModule.Snake({
+    initialHeadPosition: { x: 5, y: 5 },
+    initialDirection: "right",
+    initialLength: 3,
+  });
+
+  snake.queueDirection("up");
+  snake.queueDirection("left");
+
+  assert.deepEqual(toPlain(snake.step()), { x: 5, y: 4 });
+  assert.equal(snake.direction, "up");
+  assert.deepEqual(toPlain(snake.step()), { x: 4, y: 4 });
+  assert.equal(snake.direction, "left");
+  assert.deepEqual(toPlain(snake.getSegments()), [
+    { x: 4, y: 4 },
+    { x: 5, y: 4 },
+    { x: 5, y: 5 },
+  ]);
+});
+
+test("Snake growth keeps tail segments and works with fixed-step tick timing", async () => {
+  const snakeModule = await loadSnakeModule();
+  const snake = new snakeModule.Snake({
+    initialHeadPosition: { x: 2, y: 2 },
+    initialDirection: "right",
+    initialLength: 2,
+    stepDurationMs: 100,
+  });
+
+  snake.grow(2);
+  assert.equal(snake.pendingGrowth, 2);
+
+  assert.equal(snake.tick(90), 0);
+  assert.equal(snake.interpolationAlpha, 0.9);
+  assert.deepEqual(toPlain(snake.head), { x: 2, y: 2 });
+
+  assert.equal(snake.tick(10), 1);
+  assert.equal(snake.length, 3);
+  assert.equal(snake.pendingGrowth, 1);
+
+  assert.equal(snake.tick(100), 1);
+  assert.equal(snake.length, 4);
+  assert.equal(snake.pendingGrowth, 0);
+
+  assert.equal(snake.tick(100), 1);
+  assert.equal(snake.length, 4);
+  assert.deepEqual(toPlain(snake.head), { x: 5, y: 2 });
+});
+
+test("Snake keyboard binding queues mapped directions and unregisters cleanly", async () => {
+  const snakeModule = await loadSnakeModule();
+  const snake = new snakeModule.Snake({
+    initialHeadPosition: { x: 4, y: 4 },
+    initialDirection: "up",
+  });
+
+  let onCallCount = 0;
+  let offCallCount = 0;
+  let listenerRef;
+  let listenerContext;
+  const keyboard = {
+    on(eventName, listener, context) {
+      onCallCount += 1;
+      assert.equal(eventName, "keydown");
+      listenerRef = listener;
+      listenerContext = context;
+    },
+    off(eventName, listener, context) {
+      offCallCount += 1;
+      assert.equal(eventName, "keydown");
+      assert.equal(listener, listenerRef);
+      assert.equal(context, listenerContext);
+    },
+  };
+
+  snake.bindKeyboardControls(keyboard);
+  snake.bindKeyboardControls(keyboard);
+  assert.equal(onCallCount, 1);
+
+  let preventedCount = 0;
+  listenerRef.call(listenerContext, {
+    key: "d",
+    preventDefault() {
+      preventedCount += 1;
+    },
+  });
+  listenerRef.call(listenerContext, {
+    key: "a",
+    preventDefault() {
+      preventedCount += 1;
+    },
+  });
+
+  assert.equal(preventedCount, 1);
+  assert.deepEqual(toPlain(snake.queuedDirections), ["right"]);
+
+  snake.unbindKeyboardControls();
+  assert.equal(offCallCount, 1);
+});
