@@ -11,7 +11,7 @@
 ## Gameplay Mechanics
 
 - [x] (#6) Implement `src/game/utils/grid.ts` and movement timing primitives for grid-based logic with smooth interpolation between tiles (no jerky tile-snapping) [5 pts] (blocked by #4) (A)
-- [ ] (#7) Implement `src/game/entities/Snake.ts` with arrow-key/WASD movement, buffered input queueing, anti-180-degree turn rules, and segment growth support [5 pts] (blocked by #6)
+- [A] (#7) Implement `src/game/entities/Snake.ts` with arrow-key/WASD movement, buffered input queueing, anti-180-degree turn rules, and segment growth support [5 pts] (blocked by #6)
 - [ ] (#8) Implement `src/game/entities/Food.ts` spawn/eat behavior with safe spawn positions (not inside snake), score increment hooks, and snake growth trigger integration [5 pts] (blocked by #7)
 - [ ] (#9) Implement wall-collision and self-collision detection in `MainScene`, transition to game-over state, and deterministic reset logic for replay sessions [5 pts] (blocked by #7)
 - [x] (#10) Implement `src/game/utils/storage.ts` localStorage helpers and integrate high-score persistence (load on boot, update on run end, fault-tolerant fallbacks when storage is unavailable) [5 pts] (blocked by #5) (B)
@@ -20,7 +20,7 @@
 
 ## UI & Flow
 
-- [ ] (#13) Build `src/components/StartScreen.tsx` with animated snake-logo/title treatment, “Press any key” start prompt, and high-score display sourced from persisted data [5 pts] (blocked by #10)
+- [A] (#13) Build `src/components/StartScreen.tsx` with animated snake-logo/title treatment, “Press any key” start prompt, and high-score display sourced from persisted data [5 pts] (blocked by #10)
 - [x] (#14) Build `src/components/HUD.tsx` top bar showing score/high score and reserved placeholder slots for future biome indicator, rewind cooldown, and parasite inventory [5 pts] (blocked by #5) (B)
 - [ ] (#15) Build `src/components/GameOver.tsx` overlay with final score, high score, time survived, and a Play Again action wired to scene reset and state re-entry [5 pts] (blocked by #9, #10)
 - [ ] (#16) Integrate start/HUD/game-over overlays into a complete game loop (start -> playing -> game over -> replay), including keyboard-first navigation and consistent focus management between states [5 pts] (blocked by #13, #14, #15)
