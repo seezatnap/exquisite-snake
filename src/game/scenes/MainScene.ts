@@ -123,8 +123,29 @@ export const subscribeToMainSceneState = (
 export const getMainSceneStateSnapshot = (): OverlayGameState =>
   mainSceneStateBridge.getSnapshot();
 
+export const requestMainSceneReplay = (): boolean => {
+  const activeScene = MainScene.getActiveScene();
+
+  if (!activeScene) {
+    return false;
+  }
+
+  if (mainSceneStateBridge.getSnapshot().phase !== "game-over") {
+    return false;
+  }
+
+  activeScene.resetForReplay();
+  activeScene.startRun();
+  return true;
+};
+
 export class MainScene extends Phaser.Scene {
   static readonly KEY = MAIN_SCENE_KEY;
+  private static activeScene: MainScene | null = null;
+
+  static getActiveScene(): MainScene | null {
+    return MainScene.activeScene;
+  }
 
   private runStartMs: number | null = null;
 
@@ -137,6 +158,7 @@ export class MainScene extends Phaser.Scene {
   }
 
   create(): void {
+    MainScene.activeScene = this;
     mainSceneStateBridge.resetForNextRun();
     this.setPersistedHighScore(loadHighScore());
     this.rebuildSnakeForNextRun();
@@ -231,6 +253,10 @@ export class MainScene extends Phaser.Scene {
   }
 
   private handleShutdown(): void {
+    if (MainScene.activeScene === this) {
+      MainScene.activeScene = null;
+    }
+
     this.runStartMs = null;
     this.lastUpdateMs = null;
     this.snake.unbindKeyboardControls();

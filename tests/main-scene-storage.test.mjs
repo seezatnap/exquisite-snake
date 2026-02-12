@@ -340,3 +340,48 @@ test("MainScene resetForReplay restores deterministic snake and overlay state", 
   assert.equal(resetSnapshot.elapsedSurvivalMs, 0);
   assert.equal(resetSnapshot.highScore, 17);
 });
+
+test("requestMainSceneReplay resets scene state and starts a fresh run", async () => {
+  const sceneModule = await loadMainSceneModule({
+    loadHighScore() {
+      return 11;
+    },
+    persistHighScore(score) {
+      return score;
+    },
+  });
+
+  const scene = new sceneModule.MainScene();
+  scene.create();
+  scene.startRun();
+  scene.addScore(6);
+  scene.time.now = 1200;
+  scene.endRun();
+
+  const replayAccepted = sceneModule.requestMainSceneReplay();
+  const replaySnapshot = sceneModule.getMainSceneStateSnapshot();
+
+  assert.equal(replayAccepted, true);
+  assert.equal(replaySnapshot.phase, "playing");
+  assert.equal(replaySnapshot.score, 0);
+  assert.equal(replaySnapshot.elapsedSurvivalMs, 0);
+  assert.equal(replaySnapshot.highScore, 11);
+  assert.deepEqual(toPlain(scene.snake.getSegments()), [
+    { x: 8, y: 8 },
+    { x: 7, y: 8 },
+    { x: 6, y: 8 },
+  ]);
+});
+
+test("requestMainSceneReplay is ignored without an active scene in game-over phase", async () => {
+  const sceneModule = await loadMainSceneModule({
+    loadHighScore() {
+      return 0;
+    },
+    persistHighScore(score) {
+      return score;
+    },
+  });
+
+  assert.equal(sceneModule.requestMainSceneReplay(), false);
+});
