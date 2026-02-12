@@ -7,6 +7,7 @@ import {
   GRID_ROWS,
   COLORS,
   TEXTURE_KEYS,
+  DEPTH,
   biomeTextureKey,
 } from "../config";
 import { gameBridge, type GamePhase } from "../bridge";
@@ -27,6 +28,7 @@ import {
 } from "../entities/LavaPool";
 import { IceMomentum } from "../systems/IceMomentum";
 import { GravityWellManager } from "../entities/GravityWell";
+import { VoidVortex } from "../entities/VoidVortex";
 import { getBiomeTheme } from "../systems/BiomeTheme";
 import {
   type BiomeMechanicConfigs,
@@ -76,6 +78,9 @@ export class MainScene extends Phaser.Scene {
   /** Gravity well manager for the Void Rift biome (null when not playing). */
   private gravityWellManager: GravityWellManager | null = null;
 
+  /** Void vortex visual effect (persists across runs, shown only during Void Rift). */
+  private voidVortex: VoidVortex | null = null;
+
   /** Bound listener for biome change events (stored for cleanup). */
   private onBiomeChange: BiomeChangeListener | null = null;
 
@@ -114,6 +119,10 @@ export class MainScene extends Phaser.Scene {
     // Initialize biome transition effect system
     this.biomeTransition.init(this);
 
+    // Initialize void vortex visual (lives across runs, shown only in Void Rift)
+    this.voidVortex = new VoidVortex();
+    this.voidVortex.init(this);
+
     // Listen for phase changes originating from React overlays
     // (e.g. StartScreen "press any key" → playing, GameOver "Play Again" → playing).
     this.onBridgePhaseChange = (phase: GamePhase) => {
@@ -129,9 +138,14 @@ export class MainScene extends Phaser.Scene {
       if (previousBiome === Biome.MoltenCore) {
         this.lavaPoolManager?.clearAll();
       }
-      // Reset gravity well counter when leaving Void Rift
+      // Reset gravity well counter and hide vortex when leaving Void Rift
       if (previousBiome === Biome.VoidRift) {
         this.gravityWellManager?.reset();
+        this.voidVortex?.hide();
+      }
+      // Show vortex when entering Void Rift
+      if (newBiome === Biome.VoidRift) {
+        this.voidVortex?.show();
       }
       gameBridge.setBiome(newBiome);
       gameBridge.setBiomeVisitStats(this.biomeManager.getVisitStats());
@@ -164,6 +178,10 @@ export class MainScene extends Phaser.Scene {
       this.onBiomeChange = null;
     }
     this.biomeTransition.destroy();
+    if (this.voidVortex) {
+      this.voidVortex.destroy();
+      this.voidVortex = null;
+    }
     this.biomeManager.reset();
     this.iceMomentum.reset();
     this.iceMomentum.setEnabled(false);
@@ -181,6 +199,9 @@ export class MainScene extends Phaser.Scene {
 
     // Advance biome transition effect (purely visual — does not affect gameplay)
     this.biomeTransition.update(delta);
+
+    // Advance void vortex animation (purely visual)
+    this.voidVortex?.update(delta);
 
     if (!this.snake || !this.food) return;
 
@@ -456,6 +477,11 @@ export class MainScene extends Phaser.Scene {
     return this.gravityWellManager;
   }
 
+  /** Get the void vortex visual effect (for tests). */
+  getVoidVortex(): VoidVortex | null {
+    return this.voidVortex;
+  }
+
   /** Get the currently applied theme biome. */
   getCurrentThemeBiome(): Biome {
     return this.currentThemeBiome;
@@ -492,7 +518,7 @@ export class MainScene extends Phaser.Scene {
 
     gfx.strokePath();
     // Send grid to back so entities render on top
-    gfx.setDepth(-1);
+    gfx.setDepth(DEPTH.GRID);
   }
 
   // ── Biome visual theme application ────────────────────────────
@@ -517,17 +543,20 @@ export class MainScene extends Phaser.Scene {
     // 2. Redraw grid with biome colours
     this.drawGrid(c.gridLine, c.gridAlpha);
 
-    // 3. Retexture snake sprites
+    // 3. Retexture snake sprites and set depth
     if (this.snake) {
       const headKey = biomeTextureKey(TEXTURE_KEYS.SNAKE_HEAD, biome);
       const bodyKey = biomeTextureKey(TEXTURE_KEYS.SNAKE_BODY, biome);
       this.snake.retextureSprites(headKey, bodyKey);
+      this.snake.setDepthLayers(DEPTH.SNAKE_HEAD, DEPTH.SNAKE_BODY);
     }
 
-    // 4. Retexture food sprite
+    // 4. Retexture food sprite and set depth
     if (this.food) {
       const foodKey = biomeTextureKey(TEXTURE_KEYS.FOOD, biome);
-      this.food.getSprite().setTexture(foodKey);
+      const foodSprite = this.food.getSprite();
+      foodSprite.setTexture(foodKey);
+      foodSprite.setDepth(DEPTH.FOOD);
     }
   }
 }

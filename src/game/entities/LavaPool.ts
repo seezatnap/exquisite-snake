@@ -1,5 +1,5 @@
 import Phaser from "phaser";
-import { TEXTURE_KEYS } from "../config";
+import { TEXTURE_KEYS, DEPTH } from "../config";
 import { type GridPos, gridToPixel, gridEquals } from "../utils/grid";
 import type { Snake } from "./Snake";
 import {
@@ -18,11 +18,30 @@ export {
   LAVA_SPAWN_INTERVAL_MS,
 } from "../systems/BiomeMechanics";
 
+// ── Lava pool visual configuration ──────────────────────────────
+
+/** Period of the lava pool pulsing glow animation in ms. */
+export const LAVA_PULSE_PERIOD_MS = 1_200;
+
+/** Minimum alpha during the pulse cycle. */
+export const LAVA_PULSE_ALPHA_MIN = 0.6;
+
+/** Maximum alpha during the pulse cycle. */
+export const LAVA_PULSE_ALPHA_MAX = 1.0;
+
+/** Minimum scale during the pulse cycle. */
+export const LAVA_PULSE_SCALE_MIN = 0.85;
+
+/** Maximum scale during the pulse cycle. */
+export const LAVA_PULSE_SCALE_MAX = 1.05;
+
 // ── Single pool representation ──────────────────────────────────
 
 interface Pool {
   pos: GridPos;
   sprite: Phaser.GameObjects.Sprite;
+  /** Age of this pool in ms (used for pulsing animation phase). */
+  age: number;
 }
 
 // ── LavaPoolManager ─────────────────────────────────────────────
@@ -60,7 +79,8 @@ export class LavaPoolManager {
 
   /**
    * Advance the spawn timer by `deltaMs`. Spawns a new pool when the timer
-   * elapses, provided the pool cap hasn't been reached.
+   * elapses, provided the pool cap hasn't been reached. Also advances
+   * the pulsing glow animation on all active pools.
    *
    * @param deltaMs - Frame delta in milliseconds
    * @param snake   - Snake entity (used to avoid spawning on occupied cells)
@@ -74,6 +94,19 @@ export class LavaPoolManager {
       if (this.pools.length < this.maxPools) {
         this.spawnPool(snake, foodPos);
       }
+    }
+
+    // Animate pool pulsing glow
+    for (const pool of this.pools) {
+      pool.age += deltaMs;
+      const t =
+        (Math.sin((pool.age / LAVA_PULSE_PERIOD_MS) * Math.PI * 2) + 1) / 2;
+      const alpha =
+        LAVA_PULSE_ALPHA_MIN + t * (LAVA_PULSE_ALPHA_MAX - LAVA_PULSE_ALPHA_MIN);
+      const scale =
+        LAVA_PULSE_SCALE_MIN + t * (LAVA_PULSE_SCALE_MAX - LAVA_PULSE_SCALE_MIN);
+      pool.sprite.setAlpha(alpha);
+      pool.sprite.setScale(scale);
     }
   }
 
@@ -96,8 +129,9 @@ export class LavaPoolManager {
 
     const px = gridToPixel(cell);
     const sprite = this.scene.add.sprite(px.x, px.y, TEXTURE_KEYS.LAVA_POOL);
+    sprite.setDepth(DEPTH.MECHANIC_VISUALS);
 
-    this.pools.push({ pos: cell, sprite });
+    this.pools.push({ pos: cell, sprite, age: 0 });
   }
 
   // ── Collision detection ───────────────────────────────────────

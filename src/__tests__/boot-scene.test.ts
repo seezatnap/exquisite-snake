@@ -93,7 +93,7 @@ describe("Boot scene", () => {
     expect(typeof boot.create).toBe("function");
   });
 
-  it("create() generates all five texture keys", () => {
+  it("create() generates all six texture keys", () => {
     const boot = new Boot();
     boot.create();
 
@@ -110,14 +110,17 @@ describe("Boot scene", () => {
     expect(mockGenerateTexture).toHaveBeenCalledWith(
       TEXTURE_KEYS.LAVA_POOL
     );
+    expect(mockGenerateTexture).toHaveBeenCalledWith(
+      TEXTURE_KEYS.VOID_VORTEX
+    );
   });
 
   it("create() destroys all graphics objects after texture generation", () => {
     const boot = new Boot();
     boot.create();
 
-    // 5 base textures + 16 biome-specific textures (4 biomes × 4 types) = 21
-    expect(mockDestroyGraphics).toHaveBeenCalledTimes(21);
+    // 6 base textures + 16 biome-specific textures (4 biomes × 4 types) = 22
+    expect(mockDestroyGraphics).toHaveBeenCalledTimes(22);
   });
 
   it("create() transitions to MainScene", () => {
@@ -134,8 +137,8 @@ describe("Boot scene", () => {
     const boot = new Boot();
     boot.create();
 
-    // 3 base textures (SNAKE_BODY, PARTICLE, LAVA_POOL) + 16 biome-specific = 19
-    expect(mockGenerateTexture).toHaveBeenCalledTimes(19);
+    // 4 base textures (SNAKE_BODY, PARTICLE, LAVA_POOL, VOID_VORTEX) + 16 biome-specific = 20
+    expect(mockGenerateTexture).toHaveBeenCalledTimes(20);
     expect(mockGenerateTexture).toHaveBeenCalledWith(
       TEXTURE_KEYS.SNAKE_BODY
     );

@@ -82,6 +82,21 @@ export class Boot extends Phaser.Scene {
       lavaGfx.generateTexture(TEXTURE_KEYS.LAVA_POOL, size, size);
       lavaGfx.destroy();
     }
+
+    // ── Void vortex ring: purple annulus (ring shape) ─────────────
+    if (!this.textures.exists(TEXTURE_KEYS.VOID_VORTEX)) {
+      const vortexSize = 80;
+      const vortexHalf = vortexSize / 2;
+      const vortexGfx = this.make.graphics({ x: 0, y: 0 }, false);
+      // Outer circle
+      vortexGfx.fillStyle(COLORS.NEON_PURPLE, 0.7);
+      vortexGfx.fillCircle(vortexHalf, vortexHalf, vortexHalf - 2);
+      // Inner cutout (transparent center) — draw darker inner circle
+      vortexGfx.fillStyle(0x08001a, 0.8);
+      vortexGfx.fillCircle(vortexHalf, vortexHalf, vortexHalf * 0.55);
+      vortexGfx.generateTexture(TEXTURE_KEYS.VOID_VORTEX, vortexSize, vortexSize);
+      vortexGfx.destroy();
+    }
   }
 
   /**
