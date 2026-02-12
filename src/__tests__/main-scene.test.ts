@@ -672,6 +672,80 @@ describe("MainScene", () => {
     expect(snake.getHeadPosition()).toEqual({ col: 13, row: 1 });
   });
 
+  it("shared biome config allows tuning Ice momentum slide distance", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.setBiomeMechanicsConfig({
+      iceCavern: { turnMomentumTiles: 1 },
+    });
+    scene.enterPhase("playing");
+
+    const snake = scene.getSnake()!;
+    snake.getTicker().setInterval(60_000);
+    scene.update(0, 45_000); // Neon -> Ice
+    expect(scene.getCurrentBiome()).toBe(Biome.IceCavern);
+
+    snake.reset({ col: 10, row: 10 }, "right", 1);
+    snake.getTicker().setInterval(100);
+    snake.bufferDirection("up");
+
+    scene.update(0, 100); // slide tile 1
+    expect(snake.getDirection()).toBe("right");
+    expect(snake.getHeadPosition()).toEqual({ col: 11, row: 10 });
+
+    scene.update(0, 100); // delayed turn applies
+    expect(snake.getDirection()).toBe("up");
+    expect(snake.getHeadPosition()).toEqual({ col: 11, row: 9 });
+  });
+
+  it("shared biome config uses injected RNG for Void tie-breaks", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.setBiomeMechanicsConfig({
+      voidRift: { gravityPullCadenceSteps: 1 },
+    });
+    scene.enterPhase("playing");
+
+    const snake = scene.getSnake()!;
+    snake.getTicker().setInterval(200_000); // isolate biome timing from movement
+    scene.update(0, 45_000); // Neon -> Ice
+    scene.update(0, 45_000); // Ice -> Molten
+    scene.update(0, 45_000); // Molten -> Void
+    expect(scene.getCurrentBiome()).toBe(Biome.VoidRift);
+
+    scene.setRng(() => 0.8); // deterministic vertical preference on tie
+    snake.reset({ col: 17, row: 13 }, "right", 1);
+    snake.getTicker().setInterval(100);
+
+    scene.update(0, 100); // head: (18,13), tie -> pulled down to (18,14)
+    expect(snake.getHeadPosition()).toEqual({ col: 18, row: 14 });
+  });
+
+  it("shared biome config clamps invalid balancing values", () => {
+    const scene = new MainScene();
+    scene.setBiomeMechanicsConfig({
+      iceCavern: { turnMomentumTiles: -5 },
+      moltenCore: {
+        spawnIntervalMs: Number.NaN,
+        spawnChancePerInterval: 5,
+        maxPools: -3,
+        burnTailSegments: 0,
+      },
+      voidRift: { gravityPullCadenceSteps: 0 },
+    });
+
+    expect(scene.getBiomeMechanicsConfig()).toEqual({
+      iceCavern: { turnMomentumTiles: 0 },
+      moltenCore: {
+        spawnIntervalMs: 1_500,
+        spawnChancePerInterval: 1,
+        maxPools: 0,
+        burnTailSegments: 1,
+      },
+      voidRift: { gravityPullCadenceSteps: 1 },
+    });
+  });
+
   // ── Replay lifecycle ───────────────────────────────────────
 
   it("entering 'playing' after gameOver resets score and time", () => {
