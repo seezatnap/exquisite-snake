@@ -17,6 +17,8 @@ const mockGraphics = {
   moveTo: mockMoveTo,
   lineTo: mockLineTo,
   strokePath: mockStrokePath,
+  setDepth: vi.fn(),
+  destroy: vi.fn(),
 };
 
 const mockSceneStart = vi.fn();
@@ -28,6 +30,7 @@ function createMockSprite() {
   return {
     destroy: mockDestroy,
     setPosition: mockSetPosition,
+    setTexture: vi.fn(),
     x: 0,
     y: 0,
   };
@@ -53,6 +56,7 @@ vi.mock("phaser", () => {
     cameras = {
       main: {
         shake: vi.fn(),
+        setBackgroundColor: vi.fn(),
       },
     };
     textures = {

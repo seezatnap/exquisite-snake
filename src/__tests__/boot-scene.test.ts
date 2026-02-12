@@ -25,6 +25,7 @@ function createMockGraphics() {
       mockGenerateTexture(key);
     }),
     destroy: mockDestroyGraphics,
+    setDepth: vi.fn(),
   };
 }
 
@@ -36,6 +37,11 @@ vi.mock("phaser", () => {
     };
     make = {
       graphics: () => createMockGraphics(),
+    };
+    cameras = {
+      main: {
+        setBackgroundColor: vi.fn(),
+      },
     };
 
     constructor(public config?: { key: string }) {}
@@ -110,8 +116,8 @@ describe("Boot scene", () => {
     const boot = new Boot();
     boot.create();
 
-    // 5 textures = 5 graphics objects destroyed
-    expect(mockDestroyGraphics).toHaveBeenCalledTimes(5);
+    // 5 base textures + 16 biome-specific textures (4 biomes × 4 types) = 21
+    expect(mockDestroyGraphics).toHaveBeenCalledTimes(21);
   });
 
   it("create() transitions to MainScene", () => {
@@ -128,8 +134,8 @@ describe("Boot scene", () => {
     const boot = new Boot();
     boot.create();
 
-    // Only SNAKE_BODY, PARTICLE, and LAVA_POOL should be generated
-    expect(mockGenerateTexture).toHaveBeenCalledTimes(3);
+    // 3 base textures (SNAKE_BODY, PARTICLE, LAVA_POOL) + 16 biome-specific = 19
+    expect(mockGenerateTexture).toHaveBeenCalledTimes(19);
     expect(mockGenerateTexture).toHaveBeenCalledWith(
       TEXTURE_KEYS.SNAKE_BODY
     );

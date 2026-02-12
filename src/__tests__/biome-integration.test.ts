@@ -10,6 +10,7 @@ function createMockSprite() {
   return {
     destroy: mockDestroy,
     setPosition: mockSetPosition,
+    setTexture: vi.fn(),
     x: 0,
     y: 0,
   };
@@ -24,6 +25,8 @@ vi.mock("phaser", () => {
         moveTo: vi.fn(),
         lineTo: vi.fn(),
         strokePath: vi.fn(),
+        setDepth: vi.fn(),
+        destroy: vi.fn(),
       }),
       sprite: vi.fn(() => createMockSprite()),
       particles: vi.fn(() => ({
@@ -40,6 +43,7 @@ vi.mock("phaser", () => {
     cameras = {
       main: {
         shake: vi.fn(),
+        setBackgroundColor: vi.fn(),
       },
     };
     textures = {

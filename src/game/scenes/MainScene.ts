@@ -6,6 +6,8 @@ import {
   GRID_COLS,
   GRID_ROWS,
   COLORS,
+  TEXTURE_KEYS,
+  biomeTextureKey,
 } from "../config";
 import { gameBridge, type GamePhase } from "../bridge";
 import { loadHighScore, saveHighScore } from "../utils/storage";
@@ -24,6 +26,7 @@ import {
   LAVA_SURVIVAL_THRESHOLD,
 } from "../entities/LavaPool";
 import { IceMomentum } from "../systems/IceMomentum";
+import { getBiomeTheme } from "../systems/BiomeTheme";
 
 // ── Default spawn configuration ─────────────────────────────────
 
@@ -66,6 +69,12 @@ export class MainScene extends Phaser.Scene {
   /** Bound listener for biome change events (stored for cleanup). */
   private onBiomeChange: BiomeChangeListener | null = null;
 
+  /** The grid-line Graphics object (redrawn on biome theme changes). */
+  private gridGfx: Phaser.GameObjects.Graphics | null = null;
+
+  /** Currently applied biome (for theme tracking). */
+  private currentThemeBiome: Biome = Biome.NeonCity;
+
   /**
    * Injectable RNG function for deterministic replay sessions.
    * Returns a value in [0, 1). Defaults to Math.random.
@@ -104,6 +113,8 @@ export class MainScene extends Phaser.Scene {
       gameBridge.setBiomeVisitStats(this.biomeManager.getVisitStats());
       // Enable/disable ice momentum based on biome
       this.iceMomentum.setEnabled(newBiome === Biome.IceCavern);
+      // Apply biome visual theme
+      this.applyBiomeTheme(newBiome);
     };
     this.biomeManager.onChange(this.onBiomeChange);
 
@@ -205,6 +216,8 @@ export class MainScene extends Phaser.Scene {
     this.iceMomentum.setEnabled(initialBiome === Biome.IceCavern);
     this.destroyEntities();
     this.createEntities();
+    // Apply initial biome visual theme (after entities exist so textures are swapped)
+    this.applyBiomeTheme(initialBiome);
   }
 
   /** End the current run: kill snake, persist high-score, transition to gameOver. */
@@ -367,11 +380,20 @@ export class MainScene extends Phaser.Scene {
     return this.iceMomentum;
   }
 
+  /** Get the currently applied theme biome. */
+  getCurrentThemeBiome(): Biome {
+    return this.currentThemeBiome;
+  }
+
   // ── Arena grid ──────────────────────────────────────────────
 
-  private drawGrid(): void {
+  private drawGrid(color?: number, alpha?: number): void {
+    if (this.gridGfx) {
+      this.gridGfx.destroy();
+    }
     const gfx = this.add.graphics();
-    gfx.lineStyle(1, COLORS.GRID_LINE, 0.08);
+    this.gridGfx = gfx;
+    gfx.lineStyle(1, color ?? COLORS.GRID_LINE, alpha ?? 0.08);
 
     // Vertical lines
     for (let col = 1; col < GRID_COLS; col++) {
@@ -388,5 +410,43 @@ export class MainScene extends Phaser.Scene {
     }
 
     gfx.strokePath();
+    // Send grid to back so entities render on top
+    gfx.setDepth(-1);
+  }
+
+  // ── Biome visual theme application ────────────────────────────
+
+  /**
+   * Apply the visual theme for the given biome.
+   *
+   * Updates:
+   * - Camera background colour
+   * - Grid-line colour/alpha (redrawn)
+   * - Snake sprite textures (head + body)
+   * - Food sprite texture
+   */
+  applyBiomeTheme(biome: Biome): void {
+    this.currentThemeBiome = biome;
+    const theme = getBiomeTheme(biome);
+    const c = theme.colors;
+
+    // 1. Camera background
+    this.cameras?.main?.setBackgroundColor(c.backgroundCss);
+
+    // 2. Redraw grid with biome colours
+    this.drawGrid(c.gridLine, c.gridAlpha);
+
+    // 3. Retexture snake sprites
+    if (this.snake) {
+      const headKey = biomeTextureKey(TEXTURE_KEYS.SNAKE_HEAD, biome);
+      const bodyKey = biomeTextureKey(TEXTURE_KEYS.SNAKE_BODY, biome);
+      this.snake.retextureSprites(headKey, bodyKey);
+    }
+
+    // 4. Retexture food sprite
+    if (this.food) {
+      const foodKey = biomeTextureKey(TEXTURE_KEYS.FOOD, biome);
+      this.food.getSprite().setTexture(foodKey);
+    }
   }
 }
