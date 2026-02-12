@@ -22,13 +22,13 @@
 
 - [x] (#13) Build `src/components/StartScreen.tsx` with animated snake-logo/title treatment, “Press any key” start prompt, and high-score display sourced from persisted data [5 pts] (blocked by #10) (A)
 - [x] (#14) Build `src/components/HUD.tsx` top bar showing score/high score and reserved placeholder slots for future biome indicator, rewind cooldown, and parasite inventory [5 pts] (blocked by #5) (B)
-- [A] (#15) Build `src/components/GameOver.tsx` overlay with final score, high score, time survived, and a Play Again action wired to scene reset and state re-entry [5 pts] (blocked by #9, #10)
+- [x] (#15) Build `src/components/GameOver.tsx` overlay with final score, high score, time survived, and a Play Again action wired to scene reset and state re-entry [5 pts] (blocked by #9, #10) (A)
 - [ ] (#16) Integrate start/HUD/game-over overlays into a complete game loop (start -> playing -> game over -> replay), including keyboard-first navigation and consistent focus management between states [5 pts] (blocked by #13, #14, #15)
 
 ## Visual Polish & Performance
 
 - [x] (#17) Implement `src/styles/globals.css` neon theme tokens and Tailwind-driven dark-cyberpunk styling (pink/cyan on dark), including visible arena grid lines and responsive layout polish for surrounding UI [5 pts] (blocked by #2) (A)
-- [A] (#18) Add gameplay effects: particle burst on food pickup and subtle screen-shake on collision/death, tuned to remain readable and non-disorienting [5 pts] (blocked by #8, #9, #17)
+- [x] (#18) Add gameplay effects: particle burst on food pickup and subtle screen-shake on collision/death, tuned to remain readable and non-disorienting [5 pts] (blocked by #8, #9, #17) (A)
 - [ ] (#19) Execute performance and quality hardening for Phase 1: validate 60 FPS target under normal play, add focused tests for grid/input/storage logic, run end-to-end gameplay QA, and confirm static export output is production-ready [5 pts] (blocked by #12, #16, #18)
 
 ## Follow-up tasks (from sprint review)
@@ -36,5 +36,5 @@
 - [x] (#21) Eliminate dual source of truth in `MainScene` by removing local `phase`/`score`/`highScore`/`elapsedTime` fields and reading from `gameBridge.getState()` instead, so external bridge consumers and the scene cannot drift out of sync (blocked by #5) (C)
 
 ## Follow-up tasks (from sprint review)
-- [B] (#22) Call `snake.setupTouchInput()` in `MainScene.createEntities()` alongside `setupInput()` so touch/swipe controls are actually active during gameplay (blocked by #11)
-- [B] (#23) Remove the keyboard `keydown` listener in `Snake.destroy()` to prevent duplicate handlers accumulating across replays — each `startRun` calls `setupInput()` on a new Snake, but the old listener on `scene.input.keyboard` is never cleaned up (blocked by #7)
+- [x] (#22) Call `snake.setupTouchInput()` in `MainScene.createEntities()` alongside `setupInput()` so touch/swipe controls are actually active during gameplay (blocked by #11) (B)
+- [x] (#23) Remove the keyboard `keydown` listener in `Snake.destroy()` to prevent duplicate handlers accumulating across replays — each `startRun` calls `setupInput()` on a new Snake, but the old listener on `scene.input.keyboard` is never cleaned up (blocked by #7) (B)
