@@ -388,6 +388,16 @@ export class Snake {
     return this.iceMomentum;
   }
 
+  /**
+   * Swap all sprite textures to new keys (used for biome theme changes).
+   * Index 0 gets `headKey`, all others get `bodyKey`.
+   */
+  retextureSprites(headKey: string, bodyKey: string): void {
+    for (let i = 0; i < this.sprites.length; i++) {
+      this.sprites[i].setTexture(i === 0 ? headKey : bodyKey);
+    }
+  }
+
   // ── Cleanup ────────────────────────────────────────────────────
 
   /** Destroy all sprites, detach input listeners, and reset state. */

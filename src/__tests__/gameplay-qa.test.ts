@@ -24,6 +24,8 @@ const mockGraphics = {
   moveTo: vi.fn(),
   lineTo: vi.fn(),
   strokePath: vi.fn(),
+  setDepth: vi.fn(),
+  destroy: vi.fn(),
 };
 
 const mockDestroy = vi.fn();
@@ -31,7 +33,7 @@ const mockSetPosition = vi.fn();
 const mockKeyboardOn = vi.fn();
 
 function createMockSprite() {
-  return { destroy: mockDestroy, setPosition: mockSetPosition, x: 0, y: 0 };
+  return { destroy: mockDestroy, setPosition: mockSetPosition, setTexture: vi.fn(), x: 0, y: 0 };
 }
 
 vi.mock("phaser", () => {
@@ -43,7 +45,7 @@ vi.mock("phaser", () => {
       particles: mockAddParticles,
     };
     input = { keyboard: { on: mockKeyboardOn, off: vi.fn() } };
-    cameras = { main: { shake: mockShake } };
+    cameras = { main: { shake: mockShake, setBackgroundColor: vi.fn() } };
     textures = { exists: mockTexturesExists };
     time = { delayedCall: mockDelayedCall };
     constructor(public config?: { key: string }) {}

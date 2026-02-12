@@ -30,6 +30,17 @@ export const TEXTURE_KEYS = {
   LAVA_POOL: "lava-pool",
 } as const;
 
+/**
+ * Build a biome-specific texture key.
+ * E.g. biomeTextureKey("snake-head", "IceCavern") → "snake-head-IceCavern"
+ */
+export function biomeTextureKey(
+  base: string,
+  biome: string,
+): string {
+  return `${base}-${biome}`;
+}
+
 // ── Scene class type ─────────────────────────────────────────────
 type SceneClass = new (...args: unknown[]) => unknown;
 
