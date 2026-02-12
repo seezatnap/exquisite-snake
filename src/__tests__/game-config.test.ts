@@ -33,6 +33,11 @@ import {
   createGameConfig,
 } from "@/game/config";
 
+// Get mocked Phaser for passing to createGameConfig
+import Phaser from "phaser";
+
+class StubScene {}
+
 describe("Game config", () => {
   it("exports positive arena dimensions", () => {
     expect(ARENA_WIDTH).toBeGreaterThan(0);
@@ -92,20 +97,20 @@ describe("TEXTURE_KEYS", () => {
 describe("createGameConfig", () => {
   it("returns a config object with arena dimensions", () => {
     const parent = document.createElement("div");
-    const config = createGameConfig(parent);
+    const config = createGameConfig(parent, Phaser, [StubScene as never]);
     expect(config.width).toBe(ARENA_WIDTH);
     expect(config.height).toBe(ARENA_HEIGHT);
   });
 
   it("sets the provided element as parent", () => {
     const parent = document.createElement("div");
-    const config = createGameConfig(parent);
+    const config = createGameConfig(parent, Phaser, [StubScene as never]);
     expect(config.parent).toBe(parent);
   });
 
   it("configures scale mode FIT with CENTER_BOTH", () => {
     const parent = document.createElement("div");
-    const config = createGameConfig(parent);
+    const config = createGameConfig(parent, Phaser, [StubScene as never]);
     expect(config.scale).toBeDefined();
     expect(
       (config.scale as Record<string, unknown>).mode
@@ -115,16 +120,16 @@ describe("createGameConfig", () => {
     ).toBeDefined();
   });
 
-  it("includes Boot scene in scene list", () => {
+  it("includes scenes in scene list", () => {
     const parent = document.createElement("div");
-    const config = createGameConfig(parent);
+    const config = createGameConfig(parent, Phaser, [StubScene as never]);
     expect(Array.isArray(config.scene)).toBe(true);
     expect((config.scene as unknown[]).length).toBeGreaterThan(0);
   });
 
   it("sets dark background color", () => {
     const parent = document.createElement("div");
-    const config = createGameConfig(parent);
+    const config = createGameConfig(parent, Phaser, [StubScene as never]);
     expect(config.backgroundColor).toBe("#0a0a0a");
   });
 });

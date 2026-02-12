@@ -1,11 +1,9 @@
 "use client";
 
 import { useEffect, useRef } from "react";
-import Phaser from "phaser";
-import { createGameConfig } from "@/game/config";
 
 export default function Game() {
-  const gameRef = useRef<Phaser.Game | null>(null);
+  const gameRef = useRef<unknown>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -15,14 +13,34 @@ export default function Game() {
     const parent = containerRef.current;
     if (!parent) return;
 
-    const game = new Phaser.Game(createGameConfig(parent));
+    let cancelled = false;
 
-    gameRef.current = game;
+    async function init() {
+      const [Phaser, { createGameConfig }, { Boot }, { MainScene }] =
+        await Promise.all([
+          import("phaser").then((m) => m.default),
+          import("@/game/config"),
+          import("@/game/scenes/Boot"),
+          import("@/game/scenes/MainScene"),
+        ]);
+
+      if (cancelled) return;
+
+      const config = createGameConfig(parent!, Phaser, [Boot, MainScene]);
+      const game = new Phaser.Game(config);
+      gameRef.current = game;
+    }
+
+    init();
 
     return () => {
+      cancelled = true;
       // Destroy the Phaser instance on unmount to prevent duplicate canvases
-      game.destroy(true);
-      gameRef.current = null;
+      const game = gameRef.current as { destroy: (removeCanvas: boolean) => void } | null;
+      if (game) {
+        game.destroy(true);
+        gameRef.current = null;
+      }
     };
   }, []);
 
