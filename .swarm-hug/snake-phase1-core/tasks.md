@@ -5,8 +5,8 @@
 - [x] (#1) Initialize a Next.js 14+ App Router project in TypeScript strict mode with Tailwind CSS and npm, configure static export (`next build && next export`) for client-only deployment, and scaffold the Phase 1 directory/file structure under `src/` (including empty `game/systems/` for future phases) [5 pts] (A)
 - [x] (#2) Implement `src/app/layout.tsx` and `src/app/page.tsx` to provide global Tailwind/font setup and mount a client-side `<Game />` entry point with proper overlay layering for menus/HUD [5 pts] (blocked by #1) (A)
 - [x] (#3) Build `src/components/Game.tsx` as a Phaser wrapper using `dynamic(..., { ssr: false })`, with safe game instance mount/unmount and cleanup to avoid duplicate canvas instances on rerender/navigation [5 pts] (blocked by #2) (A)
-- [ ] (#4) Create `src/game/config.ts` and `src/game/scenes/Boot.ts` with Phaser scale/config defaults, arena dimensions, and preload setup for assets/visual primitives needed by gameplay and neon UI polish [5 pts] (blocked by #3)
-- [ ] (#5) Define `src/game/scenes/MainScene.ts` core scene skeleton plus a Phaser↔React state bridge for game phase, score/high score, and elapsed survival time updates consumed by overlays [5 pts] (blocked by #3)
+- [x] (#4) Create `src/game/config.ts` and `src/game/scenes/Boot.ts` with Phaser scale/config defaults, arena dimensions, and preload setup for assets/visual primitives needed by gameplay and neon UI polish [5 pts] (blocked by #3) (A)
+- [x] (#5) Define `src/game/scenes/MainScene.ts` core scene skeleton plus a Phaser↔React state bridge for game phase, score/high score, and elapsed survival time updates consumed by overlays [5 pts] (blocked by #3) (A)
 
 ## Gameplay Mechanics
 
@@ -30,3 +30,7 @@
 - [x] (#17) Implement `src/styles/globals.css` neon theme tokens and Tailwind-driven dark-cyberpunk styling (pink/cyan on dark), including visible arena grid lines and responsive layout polish for surrounding UI [5 pts] (blocked by #2) (A)
 - [ ] (#18) Add gameplay effects: particle burst on food pickup and subtle screen-shake on collision/death, tuned to remain readable and non-disorienting [5 pts] (blocked by #8, #9, #17)
 - [ ] (#19) Execute performance and quality hardening for Phase 1: validate 60 FPS target under normal play, add focused tests for grid/input/storage logic, run end-to-end gameplay QA, and confirm static export output is production-ready [5 pts] (blocked by #12, #16, #18)
+
+## Follow-up tasks (from sprint review)
+- [ ] (#20) Restore SSR-safe Phaser loading in `src/components/Game.tsx` — sprint 4 replaced the `dynamic(..., { ssr: false })` wrapper and async `import("phaser")` from task #3 with a direct top-level `import Phaser from "phaser"`, which will crash during Next.js server-side rendering since Phaser requires browser globals (`window`, `document`) (blocked by #4)
+- [ ] (#21) Eliminate dual source of truth in `MainScene` by removing local `phase`/`score`/`highScore`/`elapsedTime` fields and reading from `gameBridge.getState()` instead, so external bridge consumers and the scene cannot drift out of sync (blocked by #5)

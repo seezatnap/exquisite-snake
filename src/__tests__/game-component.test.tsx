@@ -14,6 +14,10 @@ vi.mock("phaser", () => {
   const CENTER_BOTH = 1;
   const AUTO = 0;
 
+  class MockScene {
+    constructor() {}
+  }
+
   class MockGame {
     destroy: typeof mockDestroy;
     constructor(public config: Record<string, unknown>) {
@@ -25,10 +29,12 @@ vi.mock("phaser", () => {
   return {
     default: {
       Game: MockGame,
+      Scene: MockScene,
       AUTO,
       Scale: { FIT, CENTER_BOTH },
     },
     Game: MockGame,
+    Scene: MockScene,
     AUTO,
     Scale: { FIT, CENTER_BOTH },
   };
@@ -108,13 +114,12 @@ describe("Game component", () => {
     expect(source).toContain('import Phaser from "phaser"');
   });
 
-  it("source file imports config dimensions", () => {
+  it("source file imports createGameConfig from game config", () => {
     const source = fs.readFileSync(
       path.join(ROOT, "src/components/Game.tsx"),
       "utf-8"
     );
-    expect(source).toContain("ARENA_WIDTH");
-    expect(source).toContain("ARENA_HEIGHT");
+    expect(source).toContain("createGameConfig");
   });
 
   it("source file uses useEffect and useRef for lifecycle", () => {

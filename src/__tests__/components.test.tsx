@@ -3,6 +3,9 @@ import { render } from "@testing-library/react";
 
 // Mock Phaser before importing Game, since Game now imports Phaser
 vi.mock("phaser", () => {
+  class MockScene {
+    constructor() {}
+  }
   class MockGame {
     constructor() {}
     destroy() {}
@@ -10,10 +13,12 @@ vi.mock("phaser", () => {
   return {
     default: {
       Game: MockGame,
+      Scene: MockScene,
       AUTO: 0,
       Scale: { FIT: 1, CENTER_BOTH: 1 },
     },
     Game: MockGame,
+    Scene: MockScene,
     AUTO: 0,
     Scale: { FIT: 1, CENTER_BOTH: 1 },
   };
