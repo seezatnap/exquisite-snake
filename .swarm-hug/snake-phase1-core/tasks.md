@@ -10,18 +10,18 @@
 
 ## Gameplay Mechanics
 
-- [A] (#6) Implement `src/game/utils/grid.ts` and movement timing primitives for grid-based logic with smooth interpolation between tiles (no jerky tile-snapping) [5 pts] (blocked by #4)
+- [x] (#6) Implement `src/game/utils/grid.ts` and movement timing primitives for grid-based logic with smooth interpolation between tiles (no jerky tile-snapping) [5 pts] (blocked by #4) (A)
 - [ ] (#7) Implement `src/game/entities/Snake.ts` with arrow-key/WASD movement, buffered input queueing, anti-180-degree turn rules, and segment growth support [5 pts] (blocked by #6)
 - [ ] (#8) Implement `src/game/entities/Food.ts` spawn/eat behavior with safe spawn positions (not inside snake), score increment hooks, and snake growth trigger integration [5 pts] (blocked by #7)
 - [ ] (#9) Implement wall-collision and self-collision detection in `MainScene`, transition to game-over state, and deterministic reset logic for replay sessions [5 pts] (blocked by #7)
-- [B] (#10) Implement `src/game/utils/storage.ts` localStorage helpers and integrate high-score persistence (load on boot, update on run end, fault-tolerant fallbacks when storage is unavailable) [5 pts] (blocked by #5)
+- [x] (#10) Implement `src/game/utils/storage.ts` localStorage helpers and integrate high-score persistence (load on boot, update on run end, fault-tolerant fallbacks when storage is unavailable) [5 pts] (blocked by #5) (B)
 - [ ] (#11) Implement mobile-friendly touch/swipe controls with threshold/debounce tuning and map them into the same buffered direction-input system used by keyboard controls [5 pts] (blocked by #7)
-- [A] (#12) Implement responsive canvas sizing and resize handling so the arena scales cleanly across viewport/device changes while preserving gameplay grid integrity [5 pts] (blocked by #4)
+- [x] (#12) Implement responsive canvas sizing and resize handling so the arena scales cleanly across viewport/device changes while preserving gameplay grid integrity [5 pts] (blocked by #4) (A)
 
 ## UI & Flow
 
 - [ ] (#13) Build `src/components/StartScreen.tsx` with animated snake-logo/title treatment, “Press any key” start prompt, and high-score display sourced from persisted data [5 pts] (blocked by #10)
-- [B] (#14) Build `src/components/HUD.tsx` top bar showing score/high score and reserved placeholder slots for future biome indicator, rewind cooldown, and parasite inventory [5 pts] (blocked by #5)
+- [x] (#14) Build `src/components/HUD.tsx` top bar showing score/high score and reserved placeholder slots for future biome indicator, rewind cooldown, and parasite inventory [5 pts] (blocked by #5) (B)
 - [ ] (#15) Build `src/components/GameOver.tsx` overlay with final score, high score, time survived, and a Play Again action wired to scene reset and state re-entry [5 pts] (blocked by #9, #10)
 - [ ] (#16) Integrate start/HUD/game-over overlays into a complete game loop (start -> playing -> game over -> replay), including keyboard-first navigation and consistent focus management between states [5 pts] (blocked by #13, #14, #15)
 
@@ -32,5 +32,5 @@
 - [ ] (#19) Execute performance and quality hardening for Phase 1: validate 60 FPS target under normal play, add focused tests for grid/input/storage logic, run end-to-end gameplay QA, and confirm static export output is production-ready [5 pts] (blocked by #12, #16, #18)
 
 ## Follow-up tasks (from sprint review)
-- [C] (#20) Restore SSR-safe Phaser loading in `src/components/Game.tsx` — sprint 4 replaced the `dynamic(..., { ssr: false })` wrapper and async `import("phaser")` from task #3 with a direct top-level `import Phaser from "phaser"`, which will crash during Next.js server-side rendering since Phaser requires browser globals (`window`, `document`) (blocked by #4)
-- [C] (#21) Eliminate dual source of truth in `MainScene` by removing local `phase`/`score`/`highScore`/`elapsedTime` fields and reading from `gameBridge.getState()` instead, so external bridge consumers and the scene cannot drift out of sync (blocked by #5)
+- [x] (#20) Restore SSR-safe Phaser loading in `src/components/Game.tsx` — sprint 4 replaced the `dynamic(..., { ssr: false })` wrapper and async `import("phaser")` from task #3 with a direct top-level `import Phaser from "phaser"`, which will crash during Next.js server-side rendering since Phaser requires browser globals (`window`, `document`) (blocked by #4) (C)
+- [x] (#21) Eliminate dual source of truth in `MainScene` by removing local `phase`/`score`/`highScore`/`elapsedTime` fields and reading from `gameBridge.getState()` instead, so external bridge consumers and the scene cannot drift out of sync (blocked by #5) (C)
