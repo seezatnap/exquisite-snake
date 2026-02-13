@@ -2,6 +2,11 @@
 
 import { useEffect, useState, useCallback, useRef } from "react";
 import { gameBridge, type GamePhase } from "@/game/bridge";
+import {
+  BIOME_CYCLE_ORDER,
+  BIOME_CONFIG,
+  type BiomeVisitStats,
+} from "@/game/systems/BiomeManager";
 
 /**
  * Format milliseconds into a human-readable "Xm Ys" or "Xs" string.
@@ -38,6 +43,9 @@ export default function GameOver() {
   const [elapsedTime, setElapsedTime] = useState<number>(
     () => gameBridge.getState().elapsedTime,
   );
+  const [biomeVisitStats, setBiomeVisitStats] = useState<BiomeVisitStats>(
+    () => gameBridge.getState().biomeVisitStats,
+  );
 
   const playAgainRef = useRef<HTMLButtonElement | null>(null);
 
@@ -46,17 +54,21 @@ export default function GameOver() {
     const onScore = (s: number) => setScore(s);
     const onHighScore = (hs: number) => setHighScore(hs);
     const onElapsedTime = (t: number) => setElapsedTime(t);
+    const onBiomeVisitStats = (stats: BiomeVisitStats) =>
+      setBiomeVisitStats(stats);
 
     gameBridge.on("phaseChange", onPhase);
     gameBridge.on("scoreChange", onScore);
     gameBridge.on("highScoreChange", onHighScore);
     gameBridge.on("elapsedTimeChange", onElapsedTime);
+    gameBridge.on("biomeVisitStatsChange", onBiomeVisitStats);
 
     return () => {
       gameBridge.off("phaseChange", onPhase);
       gameBridge.off("scoreChange", onScore);
       gameBridge.off("highScoreChange", onHighScore);
       gameBridge.off("elapsedTimeChange", onElapsedTime);
+      gameBridge.off("biomeVisitStatsChange", onBiomeVisitStats);
     };
   }, []);
 
@@ -100,6 +112,18 @@ export default function GameOver() {
   if (phase !== "gameOver") return <div id="game-over" />;
 
   const isNewHighScore = score > 0 && score >= highScore;
+  const visitedBiomes = BIOME_CYCLE_ORDER.filter(
+    (biome) => biomeVisitStats[biome] > 0,
+  );
+  const biomesVisitedText = visitedBiomes
+    .map((biome) => {
+      const visits = biomeVisitStats[biome];
+      if (visits > 1) {
+        return `${BIOME_CONFIG[biome].label} x${visits}`;
+      }
+      return BIOME_CONFIG[biome].label;
+    })
+    .join(" • ");
 
   return (
     <div
@@ -153,6 +177,22 @@ export default function GameOver() {
           </span>
           <p className="font-mono text-lg tabular-nums text-foreground/80">
             {formatTime(elapsedTime)}
+          </p>
+        </div>
+
+        {/* Biomes visited */}
+        <div className="text-center" data-testid="biomes-visited">
+          <span className="font-mono text-xs tracking-wide text-foreground/50">
+            BIOMES VISITED
+          </span>
+          <p className="font-mono text-lg tabular-nums text-foreground/80">
+            {visitedBiomes.length}/{BIOME_CYCLE_ORDER.length}
+          </p>
+          <p
+            className="font-mono text-xs text-foreground/60"
+            data-testid="biomes-visited-list"
+          >
+            {biomesVisitedText || "None"}
           </p>
         </div>
       </div>
