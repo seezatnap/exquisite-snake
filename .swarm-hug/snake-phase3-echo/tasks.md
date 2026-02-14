@@ -14,7 +14,7 @@
 ## Rendering & Biome
 
 - [x] (#6) Render the ghost as a distinct translucent hazard (40% opacity, dashed outline) with trailing particles, using current renderer systems and matching existing segment geometry. [5 pts] (blocked by #2, #3) (B)
-- [ ] (#7) Apply biome-aware tinting to ghost visuals so trail and particles are colored by the current biome while preserving opacity and dashed styling, including smooth transitions if the biome changes during replay. [5 pts] (blocked by #6)
+- [A] (#7) Apply biome-aware tinting to ghost visuals so trail and particles are colored by the current biome while preserving opacity and dashed styling, including smooth transitions if the biome changes during replay. [5 pts] (blocked by #6)
 
 ## Rewind Preparation
 
@@ -25,5 +25,5 @@
 - [ ] (#9) Add automated tests for 5-second delay accuracy, ghost self-overlap kill behavior, fade-out and bounded buffer lifecycle, delayed food particle burst timing, and biome-tinted ghost rendering metadata. [5 pts] (blocked by #4, #5, #6, #7, #8)
 
 ## Follow-up tasks (from sprint review)
-- [ ] (#10) Wire the ghost fade lifecycle into `MainScene` rendering/collision so the replay trail remains represented with decreasing opacity through the fade window instead of disappearing immediately when replay enters `fading` (currently `readDelayedTrail()` returns `[]` in that state). (blocked by #3, #6)
-- [ ] (#11) Track and clear scheduled delayed ghost-food burst callbacks on run reset/end/scene shutdown so callbacks from a prior run cannot fire during a later run and emit stale particle bursts at stale coordinates. (blocked by #5)
+- [A] (#10) Wire the ghost fade lifecycle into `MainScene` rendering/collision so the replay trail remains represented with decreasing opacity through the fade window instead of disappearing immediately when replay enters `fading` (currently `readDelayedTrail()` returns `[]` in that state). (blocked by #3, #6)
+- [B] (#11) Track and clear scheduled delayed ghost-food burst callbacks on run reset/end/scene shutdown so callbacks from a prior run cannot fire during a later run and emit stale particle bursts at stale coordinates. (blocked by #5)
