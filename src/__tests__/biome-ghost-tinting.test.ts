@@ -87,7 +87,7 @@ import {
 import { EchoGhost } from "@/game/entities/EchoGhost";
 import {
   Biome,
-  BiomeManager,
+  BiomeColorManager,
   BIOME_COLORS,
   BIOME_DURATION_MS,
   BIOME_TRANSITION_DURATION_MS,
@@ -170,24 +170,24 @@ describe("lerpColor", () => {
   });
 });
 
-// ── BiomeManager ─────────────────────────────────────────────────
+// ── BiomeColorManager ─────────────────────────────────────────────────
 
-describe("BiomeManager", () => {
+describe("BiomeColorManager", () => {
   it("starts in NeonCity biome", () => {
-    const mgr = new BiomeManager();
+    const mgr = new BiomeColorManager();
     mgr.start();
     expect(mgr.getCurrentBiome()).toBe(Biome.NeonCity);
   });
 
   it("transitions to IceCavern after BIOME_DURATION_MS", () => {
-    const mgr = new BiomeManager();
+    const mgr = new BiomeColorManager();
     mgr.start();
     mgr.update(BIOME_DURATION_MS);
     expect(mgr.getCurrentBiome()).toBe(Biome.IceCavern);
   });
 
   it("cycles through all biomes in order", () => {
-    const mgr = new BiomeManager();
+    const mgr = new BiomeColorManager();
     mgr.start();
     const visited: Biome[] = [mgr.getCurrentBiome()];
     for (let i = 0; i < 3; i++) {
@@ -203,14 +203,14 @@ describe("BiomeManager", () => {
   });
 
   it("wraps around to NeonCity after VoidRift", () => {
-    const mgr = new BiomeManager();
+    const mgr = new BiomeColorManager();
     mgr.start();
     mgr.update(BIOME_DURATION_MS * 4);
     expect(mgr.getCurrentBiome()).toBe(Biome.NeonCity);
   });
 
   it("emits change event on biome transition", () => {
-    const mgr = new BiomeManager();
+    const mgr = new BiomeColorManager();
     const listener = vi.fn();
     mgr.onChange(listener);
     mgr.start();
@@ -219,7 +219,7 @@ describe("BiomeManager", () => {
   });
 
   it("can unsubscribe from change events", () => {
-    const mgr = new BiomeManager();
+    const mgr = new BiomeColorManager();
     const listener = vi.fn();
     mgr.onChange(listener);
     mgr.offChange(listener);
@@ -229,13 +229,13 @@ describe("BiomeManager", () => {
   });
 
   it("does not advance when not running", () => {
-    const mgr = new BiomeManager();
+    const mgr = new BiomeColorManager();
     mgr.update(BIOME_DURATION_MS);
     expect(mgr.getCurrentBiome()).toBe(Biome.NeonCity);
   });
 
   it("resets to initial state", () => {
-    const mgr = new BiomeManager();
+    const mgr = new BiomeColorManager();
     mgr.start();
     mgr.update(BIOME_DURATION_MS);
     mgr.reset();
@@ -245,19 +245,19 @@ describe("BiomeManager", () => {
 
   describe("BiomeColorProvider implementation", () => {
     it("returns NeonCity snakeBody color when settled", () => {
-      const mgr = new BiomeManager();
+      const mgr = new BiomeColorManager();
       mgr.start();
       expect(mgr.getGhostBodyColor()).toBe(BIOME_COLORS[Biome.NeonCity].snakeBody);
     });
 
     it("returns NeonCity particle color when settled", () => {
-      const mgr = new BiomeManager();
+      const mgr = new BiomeColorManager();
       mgr.start();
       expect(mgr.getGhostParticleColor()).toBe(BIOME_COLORS[Biome.NeonCity].particle);
     });
 
     it("returns IceCavern colors after full transition", () => {
-      const mgr = new BiomeManager();
+      const mgr = new BiomeColorManager();
       mgr.start();
       // Trigger transition
       mgr.update(BIOME_DURATION_MS);
@@ -268,7 +268,7 @@ describe("BiomeManager", () => {
     });
 
     it("returns interpolated color during transition", () => {
-      const mgr = new BiomeManager();
+      const mgr = new BiomeColorManager();
       mgr.start();
       // Trigger biome change
       mgr.update(BIOME_DURATION_MS);
@@ -285,7 +285,7 @@ describe("BiomeManager", () => {
     });
 
     it("transition progress goes from 0 to 1", () => {
-      const mgr = new BiomeManager();
+      const mgr = new BiomeColorManager();
       mgr.start();
 
       // Before transition, should be settled
@@ -504,12 +504,12 @@ describe("GhostRenderer biome-aware tinting", () => {
     });
   });
 
-  describe("BiomeManager as color provider with GhostRenderer", () => {
+  describe("BiomeColorManager as color provider with GhostRenderer", () => {
     it("uses NeonCity colors at start", () => {
       const scene = createScene();
       const renderer = new GhostRenderer(scene);
       const ghost = makeActiveGhost();
-      const mgr = new BiomeManager();
+      const mgr = new BiomeColorManager();
       mgr.start();
       renderer.setBiomeColorProvider(mgr);
 
@@ -524,7 +524,7 @@ describe("GhostRenderer biome-aware tinting", () => {
       const scene = createScene();
       const renderer = new GhostRenderer(scene);
       const ghost = makeActiveGhost();
-      const mgr = new BiomeManager();
+      const mgr = new BiomeColorManager();
       mgr.start();
       renderer.setBiomeColorProvider(mgr);
 
@@ -544,7 +544,7 @@ describe("GhostRenderer biome-aware tinting", () => {
       const scene = createScene();
       const renderer = new GhostRenderer(scene);
       const ghost = makeActiveGhost();
-      const mgr = new BiomeManager();
+      const mgr = new BiomeColorManager();
       mgr.start();
       renderer.setBiomeColorProvider(mgr);
 
@@ -619,13 +619,13 @@ describe("Biome ghost tinting source integration", () => {
     expect(ghostRendererSource).toContain("getGhostParticleColor");
   });
 
-  it("MainScene imports BiomeManager", () => {
-    expect(mainSceneSource).toContain("BiomeManager");
+  it("MainScene imports BiomeColorManager", () => {
+    expect(mainSceneSource).toContain("BiomeColorManager");
     expect(mainSceneSource).toContain("BiomeTheme");
   });
 
-  it("MainScene creates BiomeManager in createEntities", () => {
-    expect(mainSceneSource).toContain("new BiomeManager()");
+  it("MainScene creates BiomeColorManager in createEntities", () => {
+    expect(mainSceneSource).toContain("new BiomeColorManager()");
   });
 
   it("MainScene sets biome color provider on ghost renderer", () => {
@@ -657,11 +657,11 @@ describe("Biome ghost tinting source integration", () => {
     expect(biomeThemeSource).toContain("lerpColor");
   });
 
-  it("BiomeManager implements BiomeColorProvider", () => {
+  it("BiomeColorManager implements BiomeColorProvider", () => {
     expect(biomeThemeSource).toContain("implements BiomeColorProvider");
   });
 
-  it("BiomeManager uses lerpColor during transitions", () => {
+  it("BiomeColorManager uses lerpColor during transitions", () => {
     expect(biomeThemeSource).toContain("lerpColor(");
   });
 
