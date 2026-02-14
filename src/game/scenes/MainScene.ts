@@ -33,6 +33,8 @@ const GHOST_LINE_WIDTH = 2;
 const GHOST_DASH_LENGTH = 4;
 const GHOST_DASH_GAP = 4;
 const GHOST_OPACITY = 0.4;
+const GHOST_BIOME_DEFAULT_TINT = COLORS.NEON_PURPLE;
+const GHOST_BIOME_TRANSITION_MS = 250;
 
 // ── Default spawn configuration ─────────────────────────────────
 
@@ -80,6 +82,21 @@ export class MainScene extends Phaser.Scene {
 
   /** Whether the ghost delay window has completed and replay has started. */
   private isGhostReplayActive = false;
+
+  /** Current ghost trail tint before transition progress is applied. */
+  private ghostTrailTint: number = GHOST_BIOME_DEFAULT_TINT;
+
+  /** Tint we are transitioning from for the current ghost trail color update. */
+  private ghostTrailTintTransitionStart: number = GHOST_BIOME_DEFAULT_TINT;
+
+  /** Tint we are transitioning to for the current ghost trail color update. */
+  private ghostTrailTintTransitionTarget: number = GHOST_BIOME_DEFAULT_TINT;
+
+  /** Total duration of the active tint transition in ms. */
+  private ghostTrailTintTransitionDurationMs = 0;
+
+  /** Elapsed progress toward the active tint transition target in ms. */
+  private ghostTrailTintTransitionElapsedMs = 0;
 
   /**
    * Injectable RNG function for deterministic replay sessions.
@@ -129,6 +146,7 @@ export class MainScene extends Phaser.Scene {
     if (!this.snake || !this.food) return;
 
     const stepped = this.snake.update(delta);
+    this.advanceGhostTintTransition(delta);
 
     if (stepped) {
       this.echoGhost?.writePositions(this.snake.getSegments());
@@ -146,11 +164,14 @@ export class MainScene extends Phaser.Scene {
       if (replayState === "exhausted") {
         this.isGhostReplayActive = false;
       }
+    }
 
-      const ghostTrail = this.echoGhost?.readDelayedTrail() ?? [];
-      const ghostOpacity = this.echoGhost?.getReplayOpacity() ?? 0;
-      this.renderEchoGhost(ghostTrail, ghostOpacity);
+    const ghostTrail = this.echoGhost?.readDelayedTrail() ?? [];
+    const ghostOpacity = this.echoGhost?.getReplayOpacity() ?? 0;
+    const ghostTint = this.getCurrentGhostTrailTint();
+    this.renderEchoGhost(ghostTrail, ghostOpacity, ghostTint);
 
+    if (stepped) {
       // Check collisions after the snake moved to its new grid position
       if (this.checkCollisions(ghostTrail)) {
         return; // Game over — stop processing this frame
@@ -226,6 +247,7 @@ export class MainScene extends Phaser.Scene {
   /** Create snake and food entities for a new run. */
   private createEntities(): void {
     this.echoGhostGraphics = this.add.graphics();
+    this.resetGhostTrailTint();
 
     this.snake = new Snake(
       this,
@@ -260,11 +282,25 @@ export class MainScene extends Phaser.Scene {
     this.isGhostReplayActive = false;
   }
 
+  /** Set the current ghost tint, optionally animating it over a short transition. */
+  setEchoGhostBiomeTint(
+    tintColor: number,
+    transitionMs = GHOST_BIOME_TRANSITION_MS,
+  ): void {
+    this.setGhostTrailTint(tintColor, transitionMs);
+  }
+
+  /** Read the current ghost tint value for testability and future biome integration. */
+  getEchoGhostBiomeTint(): number {
+    return this.ghostTrailTint;
+  }
+
   // ── Ghost rendering ─────────────────────────────────────────
 
   private renderEchoGhost(
     trail: readonly GridPos[],
     opacityMultiplier: number,
+    tintColor: number,
   ): void {
     if (!this.echoGhostGraphics) return;
 
@@ -280,7 +316,11 @@ export class MainScene extends Phaser.Scene {
     }
 
     const segmentSize = TILE_SIZE - GHOST_SEGMENT_INSET * 2;
-    this.echoGhostGraphics.lineStyle(GHOST_LINE_WIDTH, COLORS.NEON_PURPLE, alpha);
+    this.echoGhostGraphics.lineStyle(
+      GHOST_LINE_WIDTH,
+      this.normalizeTintColor(tintColor),
+      alpha,
+    );
 
     for (let i = 0; i < trail.length; i++) {
       const segment = trail[i];
@@ -293,7 +333,7 @@ export class MainScene extends Phaser.Scene {
 
       if (i === 0 || i === trail.length - 1 || i % 3 === 0) {
         const pixel = gridToPixel(segment);
-        emitGhostTrailParticles(this, pixel.x, pixel.y, alpha);
+        emitGhostTrailParticles(this, pixel.x, pixel.y, alpha, tintColor);
       }
     }
   }
@@ -345,6 +385,90 @@ export class MainScene extends Phaser.Scene {
         startY + stepY * dashEnd,
       );
     }
+  }
+
+  private resetGhostTrailTint(): void {
+    this.ghostTrailTint = GHOST_BIOME_DEFAULT_TINT;
+    this.ghostTrailTintTransitionStart = GHOST_BIOME_DEFAULT_TINT;
+    this.ghostTrailTintTransitionTarget = GHOST_BIOME_DEFAULT_TINT;
+    this.ghostTrailTintTransitionDurationMs = 0;
+    this.ghostTrailTintTransitionElapsedMs = 0;
+  }
+
+  private setGhostTrailTint(
+    tintColor: number,
+    transitionMs = GHOST_BIOME_TRANSITION_MS,
+  ): void {
+    const target = this.normalizeTintColor(tintColor);
+    if (this.ghostTrailTint === target && !this.isTweeningGhostTint()) {
+      return;
+    }
+
+    if (this.ghostTrailTint === target) {
+      this.ghostTrailTintTransitionElapsedMs = this.ghostTrailTintTransitionDurationMs;
+      return;
+    }
+
+    this.ghostTrailTintTransitionStart = this.getCurrentGhostTrailTint();
+    this.ghostTrailTintTransitionTarget = target;
+    this.ghostTrailTintTransitionDurationMs = Math.max(
+      1,
+      transitionMs,
+    );
+    this.ghostTrailTintTransitionElapsedMs = 0;
+  }
+
+  private isTweeningGhostTint(): boolean {
+    return this.ghostTrailTintTransitionElapsedMs < this.ghostTrailTintTransitionDurationMs;
+  }
+
+  private advanceGhostTintTransition(delta: number): void {
+    if (!this.isTweeningGhostTint()) {
+      return;
+    }
+
+    this.ghostTrailTintTransitionElapsedMs += delta;
+    const progress = Math.min(
+      1,
+      this.ghostTrailTintTransitionElapsedMs /
+        this.ghostTrailTintTransitionDurationMs,
+    );
+
+    this.ghostTrailTint = this.blendColor(
+      this.ghostTrailTintTransitionStart,
+      this.ghostTrailTintTransitionTarget,
+      progress,
+    );
+
+    if (progress >= 1) {
+      this.ghostTrailTintTransitionElapsedMs = this.ghostTrailTintTransitionDurationMs;
+    }
+  }
+
+  private getCurrentGhostTrailTint(): number {
+    return this.ghostTrailTint;
+  }
+
+  private normalizeTintColor(value: number): number {
+    return Math.max(0, Math.min(0xffffff, Math.floor(value)));
+  }
+
+  private blendColor(from: number, to: number, progress: number): number {
+    const progressClamped = Math.min(1, Math.max(0, progress));
+
+    const fromR = (from >> 16) & 0xff;
+    const fromG = (from >> 8) & 0xff;
+    const fromB = from & 0xff;
+
+    const toR = (to >> 16) & 0xff;
+    const toG = (to >> 8) & 0xff;
+    const toB = to & 0xff;
+
+    const outR = Math.round(fromR + (toR - fromR) * progressClamped);
+    const outG = Math.round(fromG + (toG - fromG) * progressClamped);
+    const outB = Math.round(fromB + (toB - fromB) * progressClamped);
+
+    return (outR << 16) | (outG << 8) | outB;
   }
 
   // ── Collision detection ───────────────────────────────────────

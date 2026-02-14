@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import fs from "fs";
 import path from "path";
 import { gameBridge } from "@/game/bridge";
-import { GRID_COLS, GRID_ROWS } from "@/game/config";
+import { COLORS, GRID_COLS, GRID_ROWS } from "@/game/config";
 import {
   DEFAULT_ECHO_DELAY_MS,
   EchoGhost,
@@ -467,6 +467,10 @@ describe("MainScene – ghost food burst timing", () => {
 });
 
 describe("MainScene – ghost rendering", () => {
+  const getEchoGhost = (scene: MainScene): EchoGhost | null => {
+    return (scene as unknown as { echoGhost: EchoGhost | null }).echoGhost;
+  };
+
   it("renders a dashed ghost trail with particle emissions once active", () => {
     const scene = new MainScene();
     const emitGhostTrailSpy = vi.spyOn(
@@ -505,6 +509,69 @@ describe("MainScene – ghost rendering", () => {
     expect(mockStrokePath).toHaveBeenCalled();
 
     emitGhostTrailSpy.mockRestore();
+  });
+
+  it("renders ghost visuals with the current biome tint", () => {
+    const scene = new MainScene();
+    const emitGhostTrailSpy = vi.spyOn(
+      effects,
+      "emitGhostTrailParticles",
+    );
+    scene.create();
+    scene.enterPhase("playing");
+
+    const ghost = getEchoGhost(scene);
+    expect(ghost).not.toBeNull();
+
+    mockLineStyle.mockClear();
+    mockMoveTo.mockClear();
+    mockLineTo.mockClear();
+    mockStrokePath.mockClear();
+    emitGhostTrailSpy.mockClear();
+
+    for (let i = 0; i < 40; i++) {
+      ghost!.writePositions([{ col: i, row: 0 }]);
+      ghost!.advanceReplayProgress();
+    }
+
+    scene.update(0, 0);
+
+    expect(mockLineStyle).toHaveBeenCalledWith(
+      2,
+      COLORS.NEON_PURPLE,
+      expect.any(Number),
+    );
+
+    const ghostTrailCall = emitGhostTrailSpy.mock.calls.at(-1)!;
+    expect(ghostTrailCall[4]).toBe(COLORS.NEON_PURPLE);
+    emitGhostTrailSpy.mockRestore();
+  });
+
+  it("smoothly interpolates ghost tint during a biome change", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.enterPhase("playing");
+
+    const ghost = getEchoGhost(scene);
+    expect(ghost).not.toBeNull();
+    for (let i = 0; i < 40; i++) {
+      ghost!.writePositions([{ col: i, row: 0 }]);
+      ghost!.advanceReplayProgress();
+    }
+
+    mockLineStyle.mockClear();
+    scene.setEchoGhostBiomeTint(COLORS.NEON_CYAN, 100);
+
+    scene.update(0, 25);
+    scene.update(0, 25);
+    scene.update(0, 25);
+    scene.update(0, 25);
+
+    const colors = mockLineStyle.mock.calls.map((entry) => entry[1] as number);
+    expect(colors.length).toBeGreaterThan(1);
+    expect(colors[0]).not.toEqual(colors[colors.length - 1]);
+    expect(colors[colors.length - 1]).toBe(COLORS.NEON_CYAN);
+    expect(scene.getEchoGhostBiomeTint()).toBe(COLORS.NEON_CYAN);
   });
 });
 
