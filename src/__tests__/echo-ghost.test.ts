@@ -458,6 +458,210 @@ describe("EchoGhost determinism", () => {
   });
 });
 
+// ── Constructor edge cases (zero / negative tick interval & delay) ──
+
+describe("EchoGhost constructor edge cases", () => {
+  it("throws RangeError for zero tick interval (Infinity capacity)", () => {
+    // Math.ceil(5000 / 0) = Infinity → new Array(Infinity) throws
+    expect(() => new EchoGhost(0)).toThrow(RangeError);
+  });
+
+  it("throws RangeError for negative tick interval (negative capacity)", () => {
+    // Math.ceil(5000 / -125) = -40 → new Array(-40) throws
+    expect(() => new EchoGhost(-125)).toThrow(RangeError);
+  });
+
+  it("delayTicks returns Infinity for zero interval", () => {
+    expect(delayTicks(0)).toBe(Infinity);
+  });
+
+  it("delayTicks returns negative value for negative interval", () => {
+    expect(delayTicks(-100)).toBe(-50);
+  });
+
+  it("handles negative bufferSeconds by clamping capacity to delayInTicks + 1", () => {
+    const ghost = new EchoGhost(125, -5);
+    // -5 * 1000 = -5000ms → Math.ceil(-5000 / 125) = -40
+    // Math.max(41, -40) = 41 → capacity clamped to delayInTicks + 1
+    expect(ghost.capacity).toBe(41);
+  });
+
+  it("handles zero bufferSeconds by clamping capacity to delayInTicks + 1", () => {
+    const ghost = new EchoGhost(125, 0);
+    // 0 * 1000 = 0ms → Math.ceil(0 / 125) = 0
+    // Math.max(41, 0) = 41 → capacity clamped to delayInTicks + 1
+    expect(ghost.capacity).toBe(41);
+  });
+
+  it("handles very small positive tick interval (1ms)", () => {
+    const ghost = new EchoGhost(1);
+    // 5000 / 1 = 5000 ticks delay
+    expect(ghost.delayInTicks).toBe(5000);
+    expect(ghost.capacity).toBeGreaterThan(5000);
+  });
+
+  it("handles fractional tick interval", () => {
+    const ghost = new EchoGhost(0.5);
+    // Math.ceil(5000 / 0.5) = 10000
+    expect(ghost.delayInTicks).toBe(10000);
+  });
+});
+
+// ── Reset (comprehensive) ───────────────────────────────────────
+
+describe("EchoGhost reset (comprehensive)", () => {
+  it("preserves delayInTicks and capacity after reset", () => {
+    const ghost = new EchoGhost(100, 15);
+    const originalDelay = ghost.delayInTicks;
+    const originalCapacity = ghost.capacity;
+
+    for (let i = 0; i < 20; i++) {
+      ghost.record(seg([i, 0]));
+    }
+
+    ghost.reset();
+
+    expect(ghost.delayInTicks).toBe(originalDelay);
+    expect(ghost.capacity).toBe(originalCapacity);
+  });
+
+  it("clears all individual frames from the buffer", () => {
+    const ghost = new EchoGhost(1000, 10);
+    // delay = 5 ticks, capacity = 10
+
+    for (let i = 0; i < 8; i++) {
+      ghost.record(seg([i, 0]));
+    }
+    // Verify frames are present before reset
+    expect(ghost.getFrameAtTick(3)).not.toBeNull();
+
+    ghost.reset();
+
+    // All old frames should be gone
+    for (let i = 0; i < 8; i++) {
+      expect(ghost.getFrameAtTick(i)).toBeNull();
+    }
+  });
+
+  it("reset after partial recording (less than delay)", () => {
+    const ghost = new EchoGhost(125);
+    // delay = 40, only record 10 frames
+    for (let i = 0; i < 10; i++) {
+      ghost.record(seg([i, 0]));
+    }
+
+    expect(ghost.getCurrentTick()).toBe(10);
+    expect(ghost.getCount()).toBe(10);
+    expect(ghost.isActive()).toBe(false);
+
+    ghost.reset();
+
+    expect(ghost.getCurrentTick()).toBe(0);
+    expect(ghost.getCount()).toBe(0);
+    expect(ghost.isActive()).toBe(false);
+  });
+
+  it("reset after buffer has wrapped around", () => {
+    const ghost = new EchoGhost(1000, 6);
+    // delay = 5 ticks, capacity = 6
+
+    // Overfill the buffer to cause wrap-around
+    for (let i = 0; i < 15; i++) {
+      ghost.record(seg([i, 0]));
+    }
+    expect(ghost.getCount()).toBe(6);
+    expect(ghost.getCurrentTick()).toBe(15);
+
+    ghost.reset();
+
+    expect(ghost.getCurrentTick()).toBe(0);
+    expect(ghost.getCount()).toBe(0);
+    expect(ghost.isActive()).toBe(false);
+    expect(ghost.getGhostTrail()).toBeNull();
+    expect(ghost.getGhostFrame()).toBeNull();
+  });
+
+  it("getGhostFrame returns null after reset", () => {
+    const ghost = new EchoGhost(125);
+    const delay = ghost.delayInTicks;
+
+    for (let i = 0; i < delay + 5; i++) {
+      ghost.record(seg([i, 0]));
+    }
+    expect(ghost.getGhostFrame()).not.toBeNull();
+
+    ghost.reset();
+    expect(ghost.getGhostFrame()).toBeNull();
+  });
+
+  it("multiple consecutive resets are idempotent", () => {
+    const ghost = new EchoGhost(125);
+
+    for (let i = 0; i < 10; i++) {
+      ghost.record(seg([i, 0]));
+    }
+
+    ghost.reset();
+    ghost.reset();
+    ghost.reset();
+
+    expect(ghost.getCurrentTick()).toBe(0);
+    expect(ghost.getCount()).toBe(0);
+    expect(ghost.isActive()).toBe(false);
+  });
+
+  it("recording after reset uses tick 0 again", () => {
+    const ghost = new EchoGhost(125);
+
+    for (let i = 0; i < 5; i++) {
+      ghost.record(seg([i, 0]));
+    }
+    expect(ghost.getCurrentTick()).toBe(5);
+
+    ghost.reset();
+    ghost.record(seg([99, 99]));
+
+    expect(ghost.getCurrentTick()).toBe(1);
+    const frame = ghost.getFrameAtTick(0);
+    expect(frame).not.toBeNull();
+    expect(frame!.tick).toBe(0);
+    expect(frame!.segments[0]).toEqual({ col: 99, row: 99 });
+  });
+
+  it("snapshot taken before reset is not affected by reset", () => {
+    const ghost = new EchoGhost(125);
+    ghost.record(seg([1, 1]));
+    ghost.record(seg([2, 2]));
+
+    const snap = ghost.snapshot();
+
+    ghost.reset();
+
+    // Snapshot should still have original data
+    expect(snap.currentTick).toBe(2);
+    expect(snap.count).toBe(2);
+    expect(snap.frames).toHaveLength(2);
+  });
+
+  it("can restore a snapshot after reset", () => {
+    const ghost = new EchoGhost(1000, 10);
+    const delay = ghost.delayInTicks;
+
+    for (let i = 0; i < delay + 3; i++) {
+      ghost.record(seg([i, 0]));
+    }
+    const snap = ghost.snapshot();
+    const trailBeforeReset = ghost.getGhostTrail();
+
+    ghost.reset();
+    expect(ghost.isActive()).toBe(false);
+
+    ghost.restore(snap);
+    expect(ghost.getCurrentTick()).toBe(snap.currentTick);
+    expect(ghost.getGhostTrail()).toEqual(trailBeforeReset);
+  });
+});
+
 // ── Edge cases ───────────────────────────────────────────────────
 
 describe("EchoGhost edge cases", () => {
