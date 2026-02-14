@@ -12,6 +12,7 @@ import {
 import { gameBridge, type GamePhase } from "../bridge";
 import { loadHighScore, saveHighScore } from "../utils/storage";
 import {
+  DEFAULT_MOVE_INTERVAL_MS,
   isInBounds,
   gridEquals,
   gridToPixel,
@@ -23,7 +24,12 @@ import {
 import { Snake } from "../entities/Snake";
 import { Food } from "../entities/Food";
 import { EchoGhost, type EchoGhostSnapshot } from "../entities/EchoGhost";
-import { PARASITE_COLORS, type ParasitePickup } from "../entities/Parasite";
+import {
+  PARASITE_COLORS,
+  ParasiteType,
+  type ParasitePickup,
+  type ParasiteSegment,
+} from "../entities/Parasite";
 import { emitFoodParticles, shakeCamera } from "../systems/effects";
 import {
   Biome,
@@ -159,6 +165,22 @@ const ECHO_GHOST_TRAIL_SPAWN_INTERVAL_MS = 90;
 const ECHO_GHOST_TRAIL_LIFESPAN_MS = 420;
 const ECHO_GHOST_TRAIL_MAX_PARTICLES = 40;
 const ECHO_GHOST_TRAIL_RADIUS_PX = TILE_SIZE * 0.24;
+const PARASITE_SEGMENT_GLOW_PULSE_PERIOD_MS = 320;
+const PARASITE_SEGMENT_GLOW_MIN_ALPHA = 0.16;
+const PARASITE_SEGMENT_GLOW_MAX_ALPHA = 0.42;
+const PARASITE_SEGMENT_GLOW_MIN_RADIUS_PX = TILE_SIZE * 0.36;
+const PARASITE_SEGMENT_GLOW_MAX_RADIUS_PX = TILE_SIZE * 0.52;
+const PARASITE_SEGMENT_ICON_LABELS: Record<ParasiteType, string> = {
+  [ParasiteType.Magnet]: "Mg",
+  [ParasiteType.Shield]: "Sh",
+  [ParasiteType.Splitter]: "Sp",
+};
+const PARASITE_SEGMENT_ICON_STYLE: Phaser.Types.GameObjects.Text.TextStyle = {
+  fontFamily: "monospace",
+  fontSize: "8px",
+  fontStyle: "bold",
+  color: "#e7f8ff",
+};
 
 interface BiomeTransitionEffectState {
   from: Biome;
@@ -175,6 +197,10 @@ interface EchoGhostTrailParticle {
   ageMs: number;
   lifespanMs: number;
   radiusPx: number;
+}
+interface ParasiteSegmentRenderSlot {
+  segment: ParasiteSegment;
+  anchor: GridPos;
 }
 
 function createBiomeMechanicsState(biome: Biome): BiomeMechanicsState {
@@ -201,6 +227,9 @@ export class MainScene extends Phaser.Scene {
   /** The snake entity for the current run (null when not playing). */
   private snake: Snake | null = null;
 
+  /** Baseline snake movement interval used for additive speed modifiers. */
+  private baseMoveIntervalMs = DEFAULT_MOVE_INTERVAL_MS;
+
   /** The food entity for the current run (null when not playing). */
   private food: Food | null = null;
 
@@ -209,6 +238,12 @@ export class MainScene extends Phaser.Scene {
 
   /** Sprite used to render the currently active parasite pickup (if any). */
   private parasitePickupSprite: Phaser.GameObjects.Sprite | null = null;
+
+  /** Graphics object used to render pulsing parasite glows over snake segments. */
+  private parasiteSegmentGlowGraphics: Phaser.GameObjects.Graphics | null = null;
+
+  /** Tiny type labels rendered on top of parasite-attached snake segments. */
+  private parasiteSegmentIconTexts: Phaser.GameObjects.Text[] = [];
 
   /** Biome rotation/timing owner for the current run. */
   private readonly biomeManager = new BiomeManager();
@@ -339,8 +374,8 @@ export class MainScene extends Phaser.Scene {
     }
 
     gameBridge.setElapsedTime(gameBridge.getState().elapsedTime + delta);
-    this.updateBiomeState(delta);
     this.parasiteManager.advanceTimers(delta);
+    this.updateBiomeState(delta);
 
     if (!this.snake || !this.food || !this.echoGhost) return;
     this.echoGhost.advance(delta);
@@ -442,16 +477,19 @@ export class MainScene extends Phaser.Scene {
       DEFAULT_DIRECTION,
       DEFAULT_SNAKE_LENGTH,
     );
+    this.baseMoveIntervalMs = this.snake.getTicker().interval;
     this.applyBiomeMovementMechanics(this.biomeManager.getCurrentBiome());
     this.snake.setupInput();
     this.snake.setupTouchInput();
     this.food = new Food(this, this.snake, this.rng);
     this.echoGhost = new EchoGhost();
     this.ensureParasitePickupSprite();
+    this.ensureParasiteSegmentVisuals();
     this.echoGhost.recordPath(this.snake.getSegments());
     this.ensureEchoGhostGraphics();
     this.clearEchoGhostVisualState();
     this.syncParasitePickupSprite(null, 0);
+    this.syncParasiteSegmentVisuals([], 0);
   }
 
   /** Destroy existing snake and food entities. */
@@ -469,6 +507,7 @@ export class MainScene extends Phaser.Scene {
       this.echoGhost = null;
     }
     this.destroyParasitePickupSprite();
+    this.destroyParasiteSegmentVisuals();
     this.destroyEchoGhostVisuals();
   }
 
@@ -919,9 +958,10 @@ export class MainScene extends Phaser.Scene {
     const ghostDelayMs = this.echoGhost.getDelayMs();
     const runIdAtEat = this.activeRunId;
     const activeParasitePickupPos = this.getActiveParasitePickupPosition();
+    const blockedRespawnCells = this.getFoodRespawnBlockedCells(activeParasitePickupPos);
     const eaten = this.food.checkEat(this.snake, (points) =>
       this.addScore(points, "food"),
-      activeParasitePickupPos ? [activeParasitePickupPos] : [],
+      blockedRespawnCells,
     );
     if (eaten) {
       emitFoodParticles(this, fx, fy);
@@ -939,25 +979,43 @@ export class MainScene extends Phaser.Scene {
       return;
     }
 
+    const blockedFoodCells = this.getParasitePickupBlockedCells();
+    const activePickupPos = this.getActiveParasitePickupPosition();
+    if (activePickupPos) {
+      blockedFoodCells.push(activePickupPos);
+    }
+
     const movementResolution = this.parasiteManager.onMovementTick({
       actor: "snake",
       deltaMs: delta,
       currentMoveIntervalMs: this.snake.getTicker().interval,
+      baseMoveIntervalMs: this.baseMoveIntervalMs,
       snakeSegments: this.snake.getSegments(),
       foodPosition: this.food.getPosition(),
+      blockedFoodCells,
     });
 
     if (movementResolution.nextMoveIntervalMs !== this.snake.getTicker().interval) {
       this.snake.getTicker().setInterval(movementResolution.nextMoveIntervalMs);
+    }
+    if (movementResolution.pulledFoodPosition) {
+      this.food.setPosition(movementResolution.pulledFoodPosition);
     }
   }
 
   private updateParasitePickup(): void {
     if (!this.snake || !this.food) {
       this.syncParasitePickupSprite(null, 0);
+      this.syncParasiteSegmentVisuals([], 0);
       return;
     }
 
+    this.parasiteManager.updateSplitterObstacleSpawn({
+      snakeSegments: this.snake.getSegments(),
+      foodPosition: this.food.getPosition(),
+      obstaclePositions: this.getSplitterObstacleBlockedCells(),
+      rng: this.rng,
+    });
     this.parasiteManager.updatePickupSpawn({
       snakeSegments: this.snake.getSegments(),
       foodPosition: this.food.getPosition(),
@@ -974,10 +1032,33 @@ export class MainScene extends Phaser.Scene {
       parasiteState.pickup,
       parasiteState.timers.glowPulseElapsedMs,
     );
+    this.syncParasiteSegmentVisuals(
+      parasiteState.activeSegments,
+      parasiteState.timers.glowPulseElapsedMs,
+    );
   }
 
   private getParasitePickupBlockedCells(): GridPos[] {
     return Array.from(this.moltenLavaPools.values(), (pool) => ({ ...pool }));
+  }
+
+  private getSplitterObstacleBlockedCells(): GridPos[] {
+    const blocked = this.getParasitePickupBlockedCells();
+    const activePickupPos = this.getActiveParasitePickupPosition();
+    if (activePickupPos) {
+      blocked.push(activePickupPos);
+    }
+    return blocked;
+  }
+
+  private getFoodRespawnBlockedCells(activePickupPos: GridPos | null): GridPos[] {
+    const blocked = this.parasiteManager.getState().splitterObstacles.map((obstacle) => ({
+      ...obstacle.position,
+    }));
+    if (activePickupPos) {
+      blocked.push({ ...activePickupPos });
+    }
+    return blocked;
   }
 
   private getActiveParasitePickupPosition(): GridPos | null {
@@ -1030,6 +1111,115 @@ export class MainScene extends Phaser.Scene {
   private destroyParasitePickupSprite(): void {
     this.parasitePickupSprite?.destroy?.();
     this.parasitePickupSprite = null;
+  }
+
+  private ensureParasiteSegmentVisuals(): void {
+    if (!this.parasiteSegmentGlowGraphics) {
+      this.parasiteSegmentGlowGraphics = this.add.graphics();
+      this.parasiteSegmentGlowGraphics.setDepth?.(
+        RENDER_DEPTH.PARASITE_SEGMENT_GLOW,
+      );
+    }
+  }
+
+  private ensureParasiteSegmentIconCount(count: number): void {
+    const targetCount = Math.max(0, Math.floor(count));
+    while (this.parasiteSegmentIconTexts.length < targetCount) {
+      const icon = this.add.text(0, 0, "", PARASITE_SEGMENT_ICON_STYLE);
+      icon.setOrigin?.(0.5, 0.5);
+      icon.setDepth?.(RENDER_DEPTH.PARASITE_SEGMENT_ICON);
+      icon.setVisible?.(false);
+      this.parasiteSegmentIconTexts.push(icon);
+    }
+  }
+
+  private syncParasiteSegmentVisuals(
+    activeSegments: readonly ParasiteSegment[],
+    glowElapsedMs: number,
+  ): void {
+    this.ensureParasiteSegmentVisuals();
+    this.parasiteSegmentGlowGraphics?.clear?.();
+
+    const renderSlots = this.resolveParasiteSegmentRenderSlots(activeSegments);
+    this.ensureParasiteSegmentIconCount(renderSlots.length);
+
+    for (let i = 0; i < renderSlots.length; i++) {
+      const slot = renderSlots[i];
+      const icon = this.parasiteSegmentIconTexts[i];
+      const pulse = this.getParasiteSegmentPulse(
+        glowElapsedMs,
+        slot.segment.attachedAtMs,
+      );
+      const alpha =
+        PARASITE_SEGMENT_GLOW_MIN_ALPHA +
+        pulse * (PARASITE_SEGMENT_GLOW_MAX_ALPHA - PARASITE_SEGMENT_GLOW_MIN_ALPHA);
+      const radius =
+        PARASITE_SEGMENT_GLOW_MIN_RADIUS_PX +
+        pulse * (PARASITE_SEGMENT_GLOW_MAX_RADIUS_PX - PARASITE_SEGMENT_GLOW_MIN_RADIUS_PX);
+      const px = gridToPixel(slot.anchor);
+      const color = PARASITE_COLORS[slot.segment.type];
+
+      this.parasiteSegmentGlowGraphics?.fillStyle?.(color, alpha);
+      this.parasiteSegmentGlowGraphics?.fillCircle?.(px.x, px.y, radius);
+      this.parasiteSegmentGlowGraphics?.fillStyle?.(color, alpha * 0.45);
+      this.parasiteSegmentGlowGraphics?.fillCircle?.(px.x, px.y, radius * 0.58);
+
+      icon.setText?.(PARASITE_SEGMENT_ICON_LABELS[slot.segment.type]);
+      icon.setPosition?.(px.x, px.y);
+      icon.setDepth?.(RENDER_DEPTH.PARASITE_SEGMENT_ICON);
+      icon.setVisible?.(true);
+    }
+
+    for (let i = renderSlots.length; i < this.parasiteSegmentIconTexts.length; i++) {
+      this.parasiteSegmentIconTexts[i].setVisible?.(false);
+    }
+  }
+
+  private resolveParasiteSegmentRenderSlots(
+    activeSegments: readonly ParasiteSegment[],
+  ): ParasiteSegmentRenderSlot[] {
+    if (!this.snake || activeSegments.length === 0) {
+      return [];
+    }
+
+    const snakeBody = this.snake.getSegments().slice(1);
+    const renderCount = Math.min(activeSegments.length, snakeBody.length);
+    if (renderCount <= 0) {
+      return [];
+    }
+
+    const recentParasites = activeSegments.slice(-renderCount);
+    const tailWindow = snakeBody.slice(-renderCount);
+    const slots: ParasiteSegmentRenderSlot[] = [];
+    for (let i = 0; i < renderCount; i++) {
+      const segment = recentParasites[i];
+      const anchor = tailWindow[renderCount - 1 - i];
+      slots.push({
+        segment,
+        anchor: { col: anchor.col, row: anchor.row },
+      });
+    }
+    return slots;
+  }
+
+  private getParasiteSegmentPulse(
+    glowElapsedMs: number,
+    attachedAtMs: number,
+  ): number {
+    const phase =
+      ((glowElapsedMs - attachedAtMs) / PARASITE_SEGMENT_GLOW_PULSE_PERIOD_MS) *
+      Math.PI *
+      2;
+    return (Math.sin(phase) + 1) / 2;
+  }
+
+  private destroyParasiteSegmentVisuals(): void {
+    this.parasiteSegmentGlowGraphics?.destroy?.();
+    this.parasiteSegmentGlowGraphics = null;
+    for (const icon of this.parasiteSegmentIconTexts) {
+      icon.destroy?.();
+    }
+    this.parasiteSegmentIconTexts = [];
   }
 
   private queueDelayedEchoGhostFoodBurst(
@@ -1264,6 +1454,12 @@ export class MainScene extends Phaser.Scene {
     this.gridGraphics?.setDepth?.(RENDER_DEPTH.BIOME_GRID);
     this.food?.getSprite()?.setDepth?.(RENDER_DEPTH.FOOD);
     this.parasitePickupSprite?.setDepth?.(RENDER_DEPTH.PARASITE_PICKUP);
+    this.parasiteSegmentGlowGraphics?.setDepth?.(
+      RENDER_DEPTH.PARASITE_SEGMENT_GLOW,
+    );
+    for (const icon of this.parasiteSegmentIconTexts) {
+      icon.setDepth?.(RENDER_DEPTH.PARASITE_SEGMENT_ICON);
+    }
     this.echoGhostGraphics?.setDepth?.(ECHO_GHOST_RENDER_DEPTH);
     this.snake?.setRenderDepth(RENDER_DEPTH.SNAKE);
     this.children?.depthSort?.();

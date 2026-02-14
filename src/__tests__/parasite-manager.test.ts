@@ -7,6 +7,7 @@ import {
   PARASITE_PICKUP_SPAWN_INTERVAL_MS,
   PARASITE_TYPES,
   ParasiteType,
+  SPLITTER_SCORE_MULTIPLIER,
   SPLITTER_OBSTACLE_INTERVAL_MS,
   createParasiteRuntimeState,
   cloneParasiteRuntimeState,
@@ -24,6 +25,7 @@ describe("Parasite scaffolding constants", () => {
     expect(PARASITE_PICKUP_SPAWN_INTERVAL_MS).toBe(3_000);
     expect(PARASITE_PICKUP_SPAWN_CHANCE_PER_INTERVAL).toBe(0.3);
     expect(SPLITTER_OBSTACLE_INTERVAL_MS).toBe(10_000);
+    expect(SPLITTER_SCORE_MULTIPLIER).toBe(1.5);
     expect(PARASITE_TYPES).toEqual(["magnet", "shield", "splitter"]);
   });
 });
@@ -262,6 +264,112 @@ describe("Parasite pickup consumption", () => {
   });
 });
 
+describe("Splitter obstacle spawning", () => {
+  it("spawns every 10 seconds while a splitter segment is attached", () => {
+    const manager = new ParasiteManager();
+    const snapshot = createParasiteRuntimeState();
+    snapshot.activeSegments.push({
+      id: "segment-splitter",
+      type: ParasiteType.Splitter,
+      attachedAtMs: 10,
+    });
+    manager.restoreState(snapshot);
+
+    manager.advanceTimers(SPLITTER_OBSTACLE_INTERVAL_MS - 1);
+    manager.updateSplitterObstacleSpawn({
+      snakeSegments: [],
+      foodPosition: null,
+      rng: () => 0,
+    });
+    expect(manager.getState().splitterObstacles).toEqual([]);
+
+    manager.advanceTimers(1);
+    manager.updateSplitterObstacleSpawn({
+      snakeSegments: [],
+      foodPosition: null,
+      rng: () => 0,
+    });
+    expect(manager.getState().splitterObstacles).toHaveLength(1);
+    expect(manager.getState().splitterObstacles[0]?.position).toEqual({
+      col: 0,
+      row: 0,
+    });
+
+    manager.advanceTimers(SPLITTER_OBSTACLE_INTERVAL_MS);
+    manager.updateSplitterObstacleSpawn({
+      snakeSegments: [],
+      foodPosition: null,
+      rng: () => 0,
+    });
+    expect(manager.getState().splitterObstacles).toHaveLength(2);
+    expect(manager.getState().splitterObstacles[1]?.position).toEqual({
+      col: 0,
+      row: 1,
+    });
+  });
+
+  it("places splitter obstacles on random empty cells only", () => {
+    const manager = new ParasiteManager();
+    const snapshot = createParasiteRuntimeState();
+    snapshot.activeSegments.push({
+      id: "segment-splitter",
+      type: ParasiteType.Splitter,
+      attachedAtMs: 0,
+    });
+    snapshot.pickup = {
+      id: "pickup-2",
+      type: ParasiteType.Magnet,
+      position: { col: 0, row: 0 },
+      spawnedAtMs: 5,
+    };
+    manager.restoreState(snapshot);
+    manager.advanceTimers(SPLITTER_OBSTACLE_INTERVAL_MS);
+
+    manager.updateSplitterObstacleSpawn({
+      snakeSegments: [{ col: 0, row: 1 }],
+      foodPosition: { col: 0, row: 2 },
+      obstaclePositions: [{ col: 0, row: 3 }],
+      rng: () => 0,
+    });
+
+    expect(manager.getState().splitterObstacles[0]?.position).toEqual({
+      col: 0,
+      row: 4,
+    });
+  });
+
+  it("keeps existing obstacles when splitter is detached and clears elapsed spawn time", () => {
+    const manager = new ParasiteManager();
+    const snapshot = createParasiteRuntimeState();
+    snapshot.activeSegments.push({
+      id: "segment-splitter",
+      type: ParasiteType.Splitter,
+      attachedAtMs: 0,
+    });
+    manager.restoreState(snapshot);
+    manager.advanceTimers(SPLITTER_OBSTACLE_INTERVAL_MS);
+    manager.updateSplitterObstacleSpawn({
+      snakeSegments: [],
+      foodPosition: null,
+      rng: () => 0,
+    });
+
+    const detached = manager.getState();
+    detached.activeSegments = [];
+    manager.restoreState(detached);
+    manager.advanceTimers(SPLITTER_OBSTACLE_INTERVAL_MS);
+    manager.updateSplitterObstacleSpawn({
+      snakeSegments: [],
+      foodPosition: null,
+      rng: () => 0,
+    });
+
+    const finalState = manager.getState();
+    expect(finalState.splitterObstacles).toHaveLength(1);
+    expect(finalState.timers.splitterObstacleElapsedMs).toBe(0);
+  });
+});
+
 describe("ParasiteManager integration hooks", () => {
   it("advances shared parasite timers on each update frame", () => {
     const manager = new ParasiteManager();
@@ -286,6 +394,7 @@ describe("ParasiteManager integration hooks", () => {
       foodPosition: { col: 12, row: 10 },
     });
     expect(movement.nextMoveIntervalMs).toBe(125);
+    expect(movement.pulledFoodPosition).toBeNull();
 
     const collision = manager.onCollisionCheck({
       actor: "snake",
@@ -305,6 +414,176 @@ describe("ParasiteManager integration hooks", () => {
     });
     expect(score).toEqual({
       awardedPoints: 3,
+      multiplier: 1,
+    });
+  });
+
+  it("consumes one shield segment to absorb wall/self collisions and block next food", () => {
+    const manager = new ParasiteManager();
+    const snapshot = createParasiteRuntimeState();
+    snapshot.activeSegments = [
+      { id: "segment-magnet", type: ParasiteType.Magnet, attachedAtMs: 10 },
+      { id: "segment-shield-a", type: ParasiteType.Shield, attachedAtMs: 20 },
+      { id: "segment-shield-b", type: ParasiteType.Shield, attachedAtMs: 30 },
+    ];
+    manager.restoreState(snapshot);
+
+    const wallCollision = manager.onCollisionCheck({
+      actor: "snake",
+      kind: "wall",
+      headPosition: { col: -1, row: 4 },
+    });
+    expect(wallCollision).toEqual({
+      cancelGameOver: true,
+      absorbedByShield: true,
+      consumedShieldSegmentId: "segment-shield-a",
+    });
+    expect(manager.getState().flags.blockNextFoodPickup).toBe(true);
+    expect(manager.getShieldSegmentCount()).toBe(1);
+
+    const selfCollision = manager.onCollisionCheck({
+      actor: "snake",
+      kind: "self",
+      headPosition: { col: 10, row: 10 },
+    });
+    expect(selfCollision).toEqual({
+      cancelGameOver: true,
+      absorbedByShield: true,
+      consumedShieldSegmentId: "segment-shield-b",
+    });
+    expect(manager.getShieldSegmentCount()).toBe(0);
+  });
+
+  it("does not absorb collisions without shield segments or for unsupported kinds", () => {
+    const manager = new ParasiteManager();
+    const snapshot = createParasiteRuntimeState();
+    snapshot.activeSegments.push({
+      id: "segment-shield",
+      type: ParasiteType.Shield,
+      attachedAtMs: 0,
+    });
+    manager.restoreState(snapshot);
+
+    expect(
+      manager.onCollisionCheck({
+        actor: "snake",
+        kind: "splitter-obstacle",
+        headPosition: { col: 8, row: 8 },
+      }),
+    ).toEqual({
+      cancelGameOver: false,
+      absorbedByShield: false,
+      consumedShieldSegmentId: null,
+    });
+    expect(manager.getShieldSegmentCount()).toBe(1);
+
+    manager.restoreState(createParasiteRuntimeState());
+    expect(
+      manager.onCollisionCheck({
+        actor: "snake",
+        kind: "wall",
+        headPosition: { col: -1, row: 8 },
+      }),
+    ).toEqual({
+      cancelGameOver: false,
+      absorbedByShield: false,
+      consumedShieldSegmentId: null,
+    });
+  });
+
+  it("blocks exactly one food contact after a shield absorb", () => {
+    const manager = new ParasiteManager();
+    const snapshot = createParasiteRuntimeState();
+    snapshot.activeSegments.push({
+      id: "segment-shield",
+      type: ParasiteType.Shield,
+      attachedAtMs: 0,
+    });
+    manager.restoreState(snapshot);
+
+    manager.onCollisionCheck({
+      actor: "snake",
+      kind: "wall",
+      headPosition: { col: -1, row: 5 },
+    });
+    expect(manager.getState().flags.blockNextFoodPickup).toBe(true);
+
+    const firstContact = manager.onFoodContact({
+      actor: "snake",
+      snakeHead: { col: 4, row: 5 },
+      foodPosition: { col: 4, row: 5 },
+    });
+    expect(firstContact).toEqual({
+      allowConsume: false,
+      blockedByShieldPenalty: true,
+    });
+    expect(manager.getState().flags.blockNextFoodPickup).toBe(false);
+
+    const secondContact = manager.onFoodContact({
+      actor: "snake",
+      snakeHead: { col: 4, row: 5 },
+      foodPosition: { col: 4, row: 5 },
+    });
+    expect(secondContact).toEqual({
+      allowConsume: true,
+      blockedByShieldPenalty: false,
+    });
+  });
+
+  it("applies Splitter score multiplier across all score sources while attached", () => {
+    const manager = new ParasiteManager();
+    const snapshot = createParasiteRuntimeState();
+    snapshot.activeSegments.push({
+      id: "segment-splitter",
+      type: ParasiteType.Splitter,
+      attachedAtMs: 12,
+    });
+    manager.restoreState(snapshot);
+
+    const sources = ["food", "system", "bonus"] as const;
+    for (const source of sources) {
+      expect(
+        manager.onScoreEvent({
+          actor: "snake",
+          source,
+          basePoints: 1,
+        }),
+      ).toEqual({
+        awardedPoints: 1.5,
+        multiplier: 1.5,
+      });
+    }
+  });
+
+  it("only multiplies positive score gains while Splitter is attached", () => {
+    const manager = new ParasiteManager();
+    const snapshot = createParasiteRuntimeState();
+    snapshot.activeSegments.push({
+      id: "segment-splitter",
+      type: ParasiteType.Splitter,
+      attachedAtMs: 90,
+    });
+    manager.restoreState(snapshot);
+
+    expect(
+      manager.onScoreEvent({
+        actor: "snake",
+        source: "system",
+        basePoints: 0,
+      }),
+    ).toEqual({
+      awardedPoints: 0,
+      multiplier: 1,
+    });
+
+    expect(
+      manager.onScoreEvent({
+        actor: "snake",
+        source: "bonus",
+        basePoints: -4,
+      }),
+    ).toEqual({
+      awardedPoints: -4,
       multiplier: 1,
     });
   });
@@ -342,8 +621,153 @@ describe("ParasiteManager integration hooks", () => {
     });
   });
 
+  it("applies stacked magnet speed bonuses from base movement interval", () => {
+    const manager = new ParasiteManager();
+    const snapshot = createParasiteRuntimeState();
+    snapshot.activeSegments = [
+      { id: "segment-1", type: ParasiteType.Magnet, attachedAtMs: 10 },
+      { id: "segment-2", type: ParasiteType.Shield, attachedAtMs: 20 },
+      { id: "segment-3", type: ParasiteType.Magnet, attachedAtMs: 30 },
+    ];
+    manager.restoreState(snapshot);
+
+    const movement = manager.onMovementTick({
+      actor: "snake",
+      deltaMs: 16,
+      currentMoveIntervalMs: 125,
+      baseMoveIntervalMs: 125,
+      snakeSegments: [
+        { col: 8, row: 5 },
+        { col: 7, row: 5 },
+        { col: 6, row: 5 },
+        { col: 5, row: 5 },
+      ],
+      foodPosition: { col: 20, row: 20 },
+    });
+
+    expect(movement.magnetSegments).toBe(2);
+    expect(movement.nextMoveIntervalMs).toBeCloseTo(125 / 1.2, 6);
+  });
+
+  it("returns to base movement interval when no magnet segments remain", () => {
+    const manager = new ParasiteManager();
+    const withMagnet = createParasiteRuntimeState();
+    withMagnet.activeSegments = [
+      { id: "segment-1", type: ParasiteType.Magnet, attachedAtMs: 10 },
+    ];
+    manager.restoreState(withMagnet);
+
+    manager.onMovementTick({
+      actor: "snake",
+      deltaMs: 16,
+      currentMoveIntervalMs: 125,
+      baseMoveIntervalMs: 125,
+      snakeSegments: [
+        { col: 8, row: 5 },
+        { col: 7, row: 5 },
+        { col: 6, row: 5 },
+      ],
+      foodPosition: { col: 12, row: 10 },
+    });
+
+    manager.restoreState(createParasiteRuntimeState());
+
+    const movement = manager.onMovementTick({
+      actor: "snake",
+      deltaMs: 16,
+      currentMoveIntervalMs: 113.636,
+      baseMoveIntervalMs: 125,
+      snakeSegments: [
+        { col: 8, row: 5 },
+        { col: 7, row: 5 },
+        { col: 6, row: 5 },
+      ],
+      foodPosition: { col: 12, row: 10 },
+    });
+
+    expect(movement.magnetSegments).toBe(0);
+    expect(movement.nextMoveIntervalMs).toBe(125);
+  });
+
+  it("does not alter movement interval without magnets when no speed reset is pending", () => {
+    const manager = new ParasiteManager();
+
+    const movement = manager.onMovementTick({
+      actor: "snake",
+      deltaMs: 16,
+      currentMoveIntervalMs: 100,
+      baseMoveIntervalMs: 125,
+      snakeSegments: [
+        { col: 8, row: 5 },
+        { col: 7, row: 5 },
+        { col: 6, row: 5 },
+      ],
+      foodPosition: { col: 12, row: 10 },
+    });
+
+    expect(movement.magnetSegments).toBe(0);
+    expect(movement.nextMoveIntervalMs).toBe(100);
+  });
+
+  it("pulls food one tile toward an in-range magnet segment", () => {
+    const manager = new ParasiteManager();
+    const snapshot = createParasiteRuntimeState();
+    snapshot.activeSegments = [
+      { id: "segment-1", type: ParasiteType.Magnet, attachedAtMs: 1 },
+    ];
+    manager.restoreState(snapshot);
+
+    const movement = manager.onMovementTick({
+      actor: "snake",
+      deltaMs: 16,
+      currentMoveIntervalMs: 125,
+      baseMoveIntervalMs: 125,
+      snakeSegments: [
+        { col: 6, row: 5 },
+        { col: 5, row: 5 },
+        { col: 4, row: 5 },
+      ],
+      foodPosition: { col: 5, row: 6 },
+    });
+
+    expect(movement.pulledFoodPosition).toEqual({ col: 4, row: 6 });
+  });
+
+  it("skips magnet pull when all closer cells are invalid", () => {
+    const manager = new ParasiteManager();
+    const snapshot = createParasiteRuntimeState();
+    snapshot.activeSegments = [
+      { id: "segment-1", type: ParasiteType.Magnet, attachedAtMs: 1 },
+    ];
+    manager.restoreState(snapshot);
+
+    const movement = manager.onMovementTick({
+      actor: "snake",
+      deltaMs: 16,
+      currentMoveIntervalMs: 125,
+      baseMoveIntervalMs: 125,
+      snakeSegments: [
+        { col: 6, row: 5 },
+        { col: 5, row: 5 },
+        { col: 4, row: 5 },
+      ],
+      foodPosition: { col: 5, row: 6 },
+      blockedFoodCells: [{ col: 4, row: 6 }],
+    });
+
+    expect(movement.pulledFoodPosition).toBeNull();
+  });
+
   it("exposes biome lifecycle hooks and config constants for MainScene integration", () => {
     const manager = new ParasiteManager();
+    const snapshot = createParasiteRuntimeState();
+    snapshot.splitterObstacles.push({
+      id: "obstacle-1",
+      position: { col: 2, row: 2 },
+      spawnedAtMs: 100,
+    });
+    snapshot.timers.splitterObstacleElapsedMs = 3_000;
+    manager.restoreState(snapshot);
 
     expect(() => manager.onBiomeEnter(Biome.NeonCity)).not.toThrow();
     expect(() => manager.onBiomeExit(Biome.NeonCity)).not.toThrow();
@@ -353,6 +777,18 @@ describe("ParasiteManager integration hooks", () => {
         to: Biome.IceCavern,
       })
     ).not.toThrow();
+    expect(manager.getState().splitterObstacles).toEqual([]);
+    expect(manager.getState().timers.splitterObstacleElapsedMs).toBe(0);
+
+    const withRunEndObstacle = createParasiteRuntimeState();
+    withRunEndObstacle.splitterObstacles.push({
+      id: "obstacle-2",
+      position: { col: 3, row: 3 },
+      spawnedAtMs: 200,
+    });
+    manager.restoreState(withRunEndObstacle);
+    manager.onRunEnd();
+    expect(manager.getState().splitterObstacles).toEqual([]);
 
     expect(manager.getConstants()).toEqual({
       maxSegments: 3,

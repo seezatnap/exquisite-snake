@@ -1,8 +1,13 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { gameBridge } from "@/game/bridge";
-import { TEXTURE_KEYS } from "@/game/config";
-import { GRID_COLS, GRID_ROWS } from "@/game/config";
-import { PARASITE_PICKUP_SPAWN_INTERVAL_MS } from "@/game/entities/Parasite";
+import { GRID_COLS, GRID_ROWS, RENDER_DEPTH, TEXTURE_KEYS } from "@/game/config";
+import {
+  PARASITE_COLORS,
+  PARASITE_PICKUP_SPAWN_INTERVAL_MS,
+  SPLITTER_OBSTACLE_INTERVAL_MS,
+  ParasiteType,
+  createParasiteRuntimeState,
+} from "@/game/entities/Parasite";
 import { Biome } from "@/game/systems/BiomeManager";
 
 function createMockGraphics() {
@@ -181,6 +186,27 @@ describe("MainScene parasite hook wiring", () => {
     ).toBe(true);
   });
 
+  it("applies magnet pull + speed updates from movement hook results", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.enterPhase("playing");
+
+    const parasiteState = createParasiteRuntimeState();
+    parasiteState.activeSegments = [
+      { id: "segment-magnet", type: ParasiteType.Magnet, attachedAtMs: 0 },
+    ];
+    scene.getParasiteManager().restoreState(parasiteState);
+
+    const snake = scene.getSnake()!;
+    snake.reset({ col: 5, row: 5 }, "right", 3);
+    scene.getFood()!.setPosition({ col: 5, row: 6 });
+
+    scene.update(0, snake.getTicker().interval);
+
+    expect(scene.getFood()!.getPosition()).toEqual({ col: 4, row: 6 });
+    expect(snake.getTicker().interval).toBeCloseTo(125 / 1.1, 6);
+  });
+
   it("checks wall collisions through parasite manager before game-over finalization", () => {
     const scene = new MainScene();
     scene.create();
@@ -204,6 +230,65 @@ describe("MainScene parasite hook wiring", () => {
     expect(scene.getPhase()).toBe("gameOver");
   });
 
+  it("absorbs wall collisions with shield segments and cancels game over", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.enterPhase("playing");
+
+    const parasiteState = createParasiteRuntimeState();
+    parasiteState.activeSegments.push({
+      id: "segment-shield",
+      type: ParasiteType.Shield,
+      attachedAtMs: 0,
+    });
+    scene.getParasiteManager().restoreState(parasiteState);
+
+    const snake = scene.getSnake()!;
+    snake.reset({ col: GRID_COLS - 1, row: 10 }, "right", 1);
+    scene.update(0, snake.getTicker().interval);
+
+    const stateAfterCollision = scene.getParasiteManager().getState();
+    expect(scene.getPhase()).toBe("playing");
+    expect(stateAfterCollision.activeSegments).toEqual([]);
+    expect(stateAfterCollision.flags.blockNextFoodPickup).toBe(true);
+  });
+
+  it("blocks first food contact after shield absorb, then consumes on second contact", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.enterPhase("playing");
+
+    const parasiteState = createParasiteRuntimeState();
+    parasiteState.activeSegments.push({
+      id: "segment-shield",
+      type: ParasiteType.Shield,
+      attachedAtMs: 0,
+    });
+    scene.getParasiteManager().restoreState(parasiteState);
+
+    const snake = scene.getSnake()!;
+    snake.reset({ col: GRID_COLS - 1, row: 10 }, "right", 1);
+    scene.update(0, snake.getTicker().interval);
+    expect(scene.getPhase()).toBe("playing");
+
+    const scoreBefore = scene.getScore();
+    const firstFoodPos = scene.getFood()!.getPosition();
+    const firstApproach = getApproachVector(firstFoodPos);
+    snake.reset(firstApproach.head, firstApproach.direction, 1);
+    scene.update(0, snake.getTicker().interval);
+
+    expect(scene.getScore()).toBe(scoreBefore);
+    expect(scene.getFood()!.getPosition()).toEqual(firstFoodPos);
+    expect(scene.getParasiteManager().getState().flags.blockNextFoodPickup).toBe(false);
+
+    const secondApproach = getApproachVector(firstFoodPos);
+    snake.reset(secondApproach.head, secondApproach.direction, 1);
+    scene.update(0, snake.getTicker().interval);
+
+    expect(scene.getScore()).toBe(scoreBefore + 1);
+    expect(scene.getFood()!.getPosition()).not.toEqual(firstFoodPos);
+  });
+
   it("routes food score gains through parasite scoring hook with food source metadata", () => {
     const scene = new MainScene();
     scene.create();
@@ -224,6 +309,29 @@ describe("MainScene parasite hook wiring", () => {
         source: "food",
       }),
     );
+  });
+
+  it("applies Splitter multiplier to food score gains via MainScene score path", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.enterPhase("playing");
+
+    const parasiteState = createParasiteRuntimeState();
+    parasiteState.activeSegments.push({
+      id: "segment-splitter",
+      type: ParasiteType.Splitter,
+      attachedAtMs: 0,
+    });
+    scene.getParasiteManager().restoreState(parasiteState);
+
+    const snake = scene.getSnake()!;
+    const foodPos = scene.getFood()!.getPosition();
+    const approach = getApproachVector(foodPos);
+    snake.reset(approach.head, approach.direction, 1);
+
+    scene.update(0, snake.getTicker().interval);
+
+    expect(scene.getScore()).toBe(1.5);
   });
 
   it("invokes biome enter/exit/transition hooks on biome rotation", () => {
@@ -296,5 +404,118 @@ describe("MainScene parasite hook wiring", () => {
     expect(parasiteState.activeSegments).toHaveLength(1);
     expect(parasiteState.activeSegments[0]?.type).toBe(spawnedPickup!.type);
     expect(parasiteState.counters.collected).toBe(1);
+  });
+
+  it("renders pulsing parasite glows and tiny type labels above snake depth", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.enterPhase("playing");
+    scene.getSnake()!.reset({ col: 10, row: 10 }, "right", 6);
+
+    const parasiteState = createParasiteRuntimeState();
+    parasiteState.activeSegments = [
+      { id: "segment-magnet", type: ParasiteType.Magnet, attachedAtMs: 40 },
+      { id: "segment-shield", type: ParasiteType.Shield, attachedAtMs: 80 },
+      { id: "segment-splitter", type: ParasiteType.Splitter, attachedAtMs: 120 },
+    ];
+    parasiteState.timers.glowPulseElapsedMs = 180;
+    scene.getParasiteManager().restoreState(parasiteState);
+
+    scene.update(0, 16);
+
+    const internals = scene as unknown as {
+      parasiteSegmentGlowGraphics: ReturnType<typeof createMockGraphics> | null;
+      parasiteSegmentIconTexts: ReturnType<typeof createMockText>[];
+    };
+
+    const glowGraphics = internals.parasiteSegmentGlowGraphics;
+    expect(glowGraphics).not.toBeNull();
+    expect(glowGraphics!.fillStyle).toHaveBeenCalledWith(
+      PARASITE_COLORS[ParasiteType.Magnet],
+      expect.any(Number),
+    );
+    expect(glowGraphics!.fillStyle).toHaveBeenCalledWith(
+      PARASITE_COLORS[ParasiteType.Shield],
+      expect.any(Number),
+    );
+    expect(glowGraphics!.fillStyle).toHaveBeenCalledWith(
+      PARASITE_COLORS[ParasiteType.Splitter],
+      expect.any(Number),
+    );
+    expect(glowGraphics!.fillCircle.mock.calls.length).toBeGreaterThanOrEqual(6);
+    expect(glowGraphics!.setDepth).toHaveBeenCalledWith(
+      RENDER_DEPTH.PARASITE_SEGMENT_GLOW,
+    );
+
+    const iconTexts = internals.parasiteSegmentIconTexts;
+    expect(iconTexts).toHaveLength(3);
+    const iconLabels = iconTexts.flatMap((icon) =>
+      icon.setText.mock.calls.map(([label]) => label)
+    );
+    expect(iconLabels).toEqual(expect.arrayContaining(["Mg", "Sh", "Sp"]));
+    for (const icon of iconTexts) {
+      expect(icon.setDepth).toHaveBeenCalledWith(RENDER_DEPTH.PARASITE_SEGMENT_ICON);
+      expect(icon.setVisible).toHaveBeenCalledWith(true);
+    }
+
+    expect(RENDER_DEPTH.PARASITE_SEGMENT_GLOW).toBeGreaterThan(RENDER_DEPTH.SNAKE);
+    expect(RENDER_DEPTH.PARASITE_SEGMENT_ICON).toBeGreaterThan(
+      RENDER_DEPTH.PARASITE_SEGMENT_GLOW,
+    );
+  });
+
+  it("spawns splitter obstacles every 10 seconds while splitter is attached", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.setRng(() => 0);
+    scene.enterPhase("playing");
+
+    const parasiteState = createParasiteRuntimeState();
+    parasiteState.activeSegments.push({
+      id: "segment-splitter",
+      type: ParasiteType.Splitter,
+      attachedAtMs: 0,
+    });
+    scene.getParasiteManager().restoreState(parasiteState);
+
+    scene.update(0, SPLITTER_OBSTACLE_INTERVAL_MS - 1);
+    expect(scene.getParasiteManager().getState().splitterObstacles).toHaveLength(0);
+
+    scene.update(0, 1);
+    const afterFirst = scene.getParasiteManager().getState().splitterObstacles;
+    expect(afterFirst).toHaveLength(1);
+    expect(scene.getSnake()!.isOnSnake(afterFirst[0]!.position)).toBe(false);
+    expect(afterFirst[0]!.position).not.toEqual(scene.getFood()!.getPosition());
+
+    scene.update(0, SPLITTER_OBSTACLE_INTERVAL_MS);
+    expect(scene.getParasiteManager().getState().splitterObstacles).toHaveLength(2);
+  });
+
+  it("clears splitter obstacles on biome change and on run end", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.enterPhase("playing");
+
+    const parasiteState = createParasiteRuntimeState();
+    parasiteState.splitterObstacles.push({
+      id: "obstacle-existing",
+      position: { col: 2, row: 2 },
+      spawnedAtMs: 500,
+    });
+    scene.getParasiteManager().restoreState(parasiteState);
+
+    scene.getSnake()!.getTicker().setInterval(60_000);
+    scene.update(0, 45_000);
+    expect(scene.getParasiteManager().getState().splitterObstacles).toEqual([]);
+
+    const withObstacle = createParasiteRuntimeState();
+    withObstacle.splitterObstacles.push({
+      id: "obstacle-existing-2",
+      position: { col: 3, row: 3 },
+      spawnedAtMs: 650,
+    });
+    scene.getParasiteManager().restoreState(withObstacle);
+    scene.endRun();
+    expect(scene.getParasiteManager().getState().splitterObstacles).toEqual([]);
   });
 });
