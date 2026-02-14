@@ -1,6 +1,9 @@
 import { describe, it, expect } from "vitest";
 
-import { EchoGhost } from "@/game/entities/EchoGhost";
+import {
+  EchoGhost,
+  type EchoGhostRewindState,
+} from "@/game/entities/EchoGhost";
 import { DEFAULT_MOVE_INTERVAL_MS } from "@/game/utils/grid";
 import type { GridPos } from "@/game/utils/grid";
 
@@ -137,5 +140,48 @@ describe("EchoGhost", () => {
         expect(ghost.getReplayOpacity()).toBe(0);
       }
     }
+  });
+
+  it("captures rewind snapshots with immutable copied buffers", () => {
+    const ghost = new EchoGhost(100, 300); // 3 ticks delay
+    const trail = (step: number): GridPos[] => [makePos(step, 0)];
+
+    ghost.writePositions(trail(1));
+    ghost.advanceReplayProgress();
+    ghost.writePositions(trail(2));
+    ghost.advanceReplayProgress();
+    ghost.writePositions(trail(3));
+    ghost.advanceReplayProgress();
+
+    const snapshot = ghost.captureRewindState();
+    const restored = new EchoGhost(100, 300);
+    restored.restoreRewindState(snapshot);
+
+    expect(restored.getDelayTicks()).toBe(snapshot.delayTicks);
+    expect(restored.getRecordedTickCount()).toBe(snapshot.writeCount);
+    expect(restored.readDelayedTrail()).toEqual([makePos(1, 0)]);
+
+    const mutable = snapshot as unknown as { buffer: (GridPos[] | null)[] };
+    if (mutable.buffer[1]) {
+      mutable.buffer[1][0].col = 99;
+    }
+
+    expect(restored.readDelayedTrail()).toEqual([makePos(1, 0)]);
+  });
+
+  it("emits rewind snapshots via a registered hook", () => {
+    const ghost = new EchoGhost(100, 300); // 3 ticks delay
+    const emissions: EchoGhostRewindState[] = [];
+
+    ghost.setRewindStateHook((state) => emissions.push(state));
+
+    ghost.writePositions([makePos(1, 0)]);
+    ghost.advanceReplayProgress();
+
+    expect(emissions.length).toBeGreaterThan(0);
+    const last = emissions[emissions.length - 1];
+    expect(last.writeCount).toBe(1);
+    expect(last.delayTicks).toBe(3);
+    expect(last.replayState).toBe("waiting");
   });
 });
