@@ -21,6 +21,13 @@ function formatTime(ms: number): string {
   return `${seconds}s`;
 }
 
+function normalizeParasitesCollected(value: unknown): number {
+  if (!Number.isFinite(value)) {
+    return 0;
+  }
+  return Math.max(0, Math.floor(Number(value)));
+}
+
 /**
  * Post-game overlay displayed after the player dies.
  *
@@ -46,6 +53,9 @@ export default function GameOver() {
   const [biomeVisitStats, setBiomeVisitStats] = useState<BiomeVisitStats>(
     () => gameBridge.getState().biomeVisitStats,
   );
+  const [parasitesCollected, setParasitesCollected] = useState<number>(
+    () => normalizeParasitesCollected(gameBridge.getState().parasitesCollected),
+  );
 
   const playAgainRef = useRef<HTMLButtonElement | null>(null);
 
@@ -56,12 +66,15 @@ export default function GameOver() {
     const onElapsedTime = (t: number) => setElapsedTime(t);
     const onBiomeVisitStats = (stats: BiomeVisitStats) =>
       setBiomeVisitStats(stats);
+    const onParasitesCollected = (count: number) =>
+      setParasitesCollected(normalizeParasitesCollected(count));
 
     gameBridge.on("phaseChange", onPhase);
     gameBridge.on("scoreChange", onScore);
     gameBridge.on("highScoreChange", onHighScore);
     gameBridge.on("elapsedTimeChange", onElapsedTime);
     gameBridge.on("biomeVisitStatsChange", onBiomeVisitStats);
+    gameBridge.on("parasitesCollectedChange", onParasitesCollected);
 
     return () => {
       gameBridge.off("phaseChange", onPhase);
@@ -69,6 +82,7 @@ export default function GameOver() {
       gameBridge.off("highScoreChange", onHighScore);
       gameBridge.off("elapsedTimeChange", onElapsedTime);
       gameBridge.off("biomeVisitStatsChange", onBiomeVisitStats);
+      gameBridge.off("parasitesCollectedChange", onParasitesCollected);
     };
   }, []);
 
@@ -193,6 +207,16 @@ export default function GameOver() {
             data-testid="biomes-visited-list"
           >
             {biomesVisitedText || "None"}
+          </p>
+        </div>
+
+        {/* Parasites collected */}
+        <div className="text-center" data-testid="parasites-collected">
+          <span className="font-mono text-xs tracking-wide text-foreground/50">
+            PARASITES COLLECTED
+          </span>
+          <p className="font-mono text-lg tabular-nums text-foreground/80">
+            {parasitesCollected}
           </p>
         </div>
       </div>

@@ -28,6 +28,7 @@ import {
   PARASITE_COLORS,
   ParasiteType,
   type ParasitePickup,
+  type ParasiteRuntimeState,
   type ParasiteSegment,
 } from "../entities/Parasite";
 import { emitFoodParticles, shakeCamera } from "../systems/effects";
@@ -452,6 +453,7 @@ export class MainScene extends Phaser.Scene {
     shakeCamera(this);
     this.biomeManager.stopRun();
     this.parasiteManager.onRunEnd();
+    this.syncParasiteBridgeState(this.parasiteManager.getState());
     this.resetMoltenCoreState();
     this.clearBiomeTransitionEffect();
     this.clearBiomeShiftCountdown();
@@ -1043,6 +1045,7 @@ export class MainScene extends Phaser.Scene {
     });
 
     const parasiteState = this.parasiteManager.getState();
+    this.syncParasiteBridgeState(parasiteState);
     this.syncParasitePickupSprite(
       parasiteState.pickup,
       parasiteState.timers.glowPulseElapsedMs,
@@ -1051,6 +1054,15 @@ export class MainScene extends Phaser.Scene {
       parasiteState.activeSegments,
       parasiteState.timers.glowPulseElapsedMs,
     );
+  }
+
+  private syncParasiteBridgeState(
+    parasiteState: ParasiteRuntimeState,
+  ): void {
+    gameBridge.setActiveParasites(
+      parasiteState.activeSegments.map((segment) => segment.type),
+    );
+    gameBridge.setParasitesCollected(parasiteState.counters.collected);
   }
 
   private getParasitePickupBlockedCells(): GridPos[] {

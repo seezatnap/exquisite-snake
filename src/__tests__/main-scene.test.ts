@@ -148,6 +148,8 @@ function resetBridge(): void {
   gameBridge.setScore(0);
   gameBridge.setHighScore(0);
   gameBridge.setElapsedTime(0);
+  gameBridge.setActiveParasites([]);
+  gameBridge.setParasitesCollected(0);
   gameBridge.setCurrentBiome(Biome.NeonCity);
   gameBridge.setBiomeVisitStats({
     [Biome.NeonCity]: 1,

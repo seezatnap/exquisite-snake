@@ -142,6 +142,8 @@ function resetBridge(): void {
   gameBridge.setScore(0);
   gameBridge.setHighScore(0);
   gameBridge.setElapsedTime(0);
+  gameBridge.setActiveParasites([]);
+  gameBridge.setParasitesCollected(0);
   gameBridge.setCurrentBiome(Biome.NeonCity);
   gameBridge.setBiomeVisitStats({
     [Biome.NeonCity]: 1,
@@ -243,6 +245,7 @@ describe("MainScene parasite hook wiring", () => {
       attachedAtMs: 0,
     });
     scene.getParasiteManager().restoreState(parasiteState);
+    scene.update(0, 0);
 
     const snake = scene.getSnake()!;
     snake.reset({ col: GRID_COLS - 1, row: 10 }, "right", 1);
@@ -253,6 +256,7 @@ describe("MainScene parasite hook wiring", () => {
     expect(endRunSpy).not.toHaveBeenCalled();
     expect(stateAfterCollision.activeSegments).toEqual([]);
     expect(stateAfterCollision.flags.blockNextFoodPickup).toBe(true);
+    expect(gameBridge.getState().activeParasites).toEqual([]);
   });
 
   it("kills the snake on splitter obstacle contact without consuming shield", () => {
@@ -490,6 +494,72 @@ describe("MainScene parasite hook wiring", () => {
     expect(parasiteState.activeSegments).toHaveLength(1);
     expect(parasiteState.activeSegments[0]?.type).toBe(spawnedPickup!.type);
     expect(parasiteState.counters.collected).toBe(1);
+    expect(gameBridge.getState().activeParasites).toEqual([spawnedPickup!.type]);
+    expect(gameBridge.getState().parasitesCollected).toBe(1);
+  });
+
+  it("updates bridge parasite inventory on FIFO shed when a 4th pickup is consumed", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.setRng(() => 0.99);
+    scene.enterPhase("playing");
+
+    const parasiteState = createParasiteRuntimeState();
+    parasiteState.activeSegments = [
+      { id: "segment-oldest", type: ParasiteType.Magnet, attachedAtMs: 10 },
+      { id: "segment-middle", type: ParasiteType.Shield, attachedAtMs: 20 },
+      { id: "segment-newest", type: ParasiteType.Splitter, attachedAtMs: 30 },
+    ];
+    parasiteState.pickup = {
+      id: "pickup-next",
+      type: ParasiteType.Magnet,
+      position: { col: 6, row: 6 },
+      spawnedAtMs: 40,
+    };
+    scene.getParasiteManager().restoreState(parasiteState);
+
+    scene.update(0, 0);
+    expect(gameBridge.getState().activeParasites).toEqual([
+      ParasiteType.Magnet,
+      ParasiteType.Shield,
+      ParasiteType.Splitter,
+    ]);
+
+    const snake = scene.getSnake()!;
+    const approach = getApproachVector({ col: 6, row: 6 });
+    snake.reset(approach.head, approach.direction, 1);
+    scene.update(0, snake.getTicker().interval);
+
+    expect(gameBridge.getState().activeParasites).toEqual([
+      ParasiteType.Shield,
+      ParasiteType.Splitter,
+      ParasiteType.Magnet,
+    ]);
+    expect(gameBridge.getState().parasitesCollected).toBe(1);
+  });
+
+  it("updates bridge parasite inventory when shield breaks on collision", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.enterPhase("playing");
+
+    const parasiteState = createParasiteRuntimeState();
+    parasiteState.activeSegments.push({
+      id: "segment-shield",
+      type: ParasiteType.Shield,
+      attachedAtMs: 0,
+    });
+    scene.getParasiteManager().restoreState(parasiteState);
+
+    scene.update(0, 0);
+    expect(gameBridge.getState().activeParasites).toEqual([ParasiteType.Shield]);
+
+    const snake = scene.getSnake()!;
+    snake.reset({ col: GRID_COLS - 1, row: 10 }, "right", 1);
+    scene.update(0, snake.getTicker().interval);
+
+    expect(scene.getPhase()).toBe("playing");
+    expect(gameBridge.getState().activeParasites).toEqual([]);
   });
 
   it("renders pulsing parasite glows and tiny type labels above snake depth", () => {
