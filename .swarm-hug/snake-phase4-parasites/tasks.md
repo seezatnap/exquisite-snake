@@ -2,7 +2,7 @@
 
 ## Foundations
 
-- [ ] (#1) Validate Phase 3 integration points (movement, collision, scoring, biome-change hooks, Echo Ghost behavior) and scaffold `src/game/entities/Parasite.ts` plus `src/game/systems/ParasiteManager.ts` with parasite types, shared state models, timers, and constants (max segments 3, magnet radius 2, magnet speed bonus 10%, splitter interval 10s) [5 pts]
+- [x] (#1) Validate Phase 3 integration points (movement, collision, scoring, biome-change hooks, Echo Ghost behavior) and scaffold `src/game/entities/Parasite.ts` plus `src/game/systems/ParasiteManager.ts` with parasite types, shared state models, timers, and constants (max segments 3, magnet radius 2, magnet speed bonus 10%, splitter interval 10s) [5 pts] (A)
 - [ ] (#2) Implement parasite pickup spawning so pickups appear occasionally on random empty cells only, never overlap snake/food/obstacles, and use a render identity visually distinct from normal food [5 pts] (blocked by #1)
 - [ ] (#3) Implement parasite pickup consumption to attach parasite segments to the snake, track active segments, enforce max-3 FIFO shedding when a 4th is eaten, and increment a run-level parasites-collected counter [5 pts] (blocked by #2)
 
