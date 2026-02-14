@@ -23,3 +23,6 @@
 ## Testing
 
 - [ ] (#9) Add automated tests for 5-second delay accuracy, ghost self-overlap kill behavior, fade-out and bounded buffer lifecycle, delayed food particle burst timing, and biome-tinted ghost rendering metadata. [5 pts] (blocked by #4, #5, #6, #7, #8)
+
+## Follow-up tasks (from sprint review)
+- [ ] (#10) Reconcile Phase 3 `BiomeTheme.ts` with Phase 2's existing `BiomeManager.ts` and `BiomeTheme.ts` to eliminate duplicate `Biome` enum, `BiomeManager` class, `BIOME_CYCLE`, and `BIOME_DURATION_MS` declarations — Phase 3 should import from Phase 2's modules and only add the `BiomeColorProvider` interface, `lerpColor`, and transition crossfade logic
