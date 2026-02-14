@@ -26,3 +26,6 @@
 
 ## Follow-up tasks (from sprint review)
 - [x] (#10) Reconcile Phase 3 `BiomeTheme.ts` with Phase 2's existing `BiomeManager.ts` and `BiomeTheme.ts` to eliminate duplicate `Biome` enum, `BiomeManager` class, `BIOME_CYCLE`, and `BIOME_DURATION_MS` declarations — Phase 3 should import from Phase 2's modules and only add the `BiomeColorProvider` interface, `lerpColor`, and transition crossfade logic (A)
+
+## Follow-up tasks (from sprint review)
+- [ ] (#11) Reconcile Phase 3's `BiomeManager.ts` with Phase 2's actual API: restore Phase 2's enum values (kebab-case), constant names (`BIOME_ROTATION_INTERVAL_MS`, `BIOME_CYCLE_ORDER`), `BIOME_CONFIG` shape (`id`/`label`/`icon`), `BiomeVisitStats` flat record type, `BiomeManager` method signatures (`startRun`/`stopRun`/`resetRun`, `update()` returning `BiomeTransition[]`), and helper functions (`normalizeBiomeCycleOrder`, `parseBiomeCycleOrder`) — then update `BiomeTheme.ts` re-exports and all Phase 3 consumers to use the Phase 2-compatible API (blocked by #10)
