@@ -4,6 +4,10 @@ import path from "path";
 import { gameBridge } from "@/game/bridge";
 import { GRID_COLS, GRID_ROWS, RENDER_DEPTH } from "@/game/config";
 import { Biome } from "@/game/systems/BiomeManager";
+import {
+  PARASITE_PICKUP_SPAWN_INTERVAL_MS,
+  ParasiteManager,
+} from "@/game/systems/ParasiteManager";
 import { gridToPixel } from "@/game/utils/grid";
 
 const ROOT = path.resolve(__dirname, "../..");
@@ -163,6 +167,22 @@ function injectMoltenLavaPool(
     }
   ).moltenLavaPools;
   pools.set(`${pos.col}:${pos.row}`, { ...pos });
+}
+
+function getParasiteManager(scene: MainScene): ParasiteManager {
+  return (
+    scene as unknown as {
+      parasiteManager: ParasiteManager;
+    }
+  ).parasiteManager;
+}
+
+function getParasitePickupSpriteMap(scene: MainScene): Map<string, unknown> {
+  return (
+    scene as unknown as {
+      parasitePickupSprites: Map<string, unknown>;
+    }
+  ).parasitePickupSprites;
 }
 
 beforeEach(() => {
@@ -368,6 +388,63 @@ describe("MainScene", () => {
     scene.update(500, 100);
     // elapsed time should not have changed after gameOver
     expect(spySetElapsedTime).not.toHaveBeenCalled();
+  });
+
+  it("spawns parasite pickups during gameplay using live snake/food/obstacle occupancy", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.setRng(() => 0);
+    scene.enterPhase("playing");
+    scene.getSnake()!.getTicker().setInterval(1_000_000);
+    injectMoltenLavaPool(scene, { col: 0, row: 1 });
+
+    const spriteFactory = (scene as unknown as {
+      add: { sprite: ReturnType<typeof vi.fn> };
+    }).add.sprite;
+    spriteFactory.mockClear();
+
+    scene.update(0, PARASITE_PICKUP_SPAWN_INTERVAL_MS);
+
+    const snakePositions = scene
+      .getSnake()!
+      .getSegments()
+      .map((segment) => `${segment.col}:${segment.row}`);
+    const food = scene.getFood()!.getPosition();
+    const blocked = new Set<string>([
+      ...snakePositions,
+      `${food.col}:${food.row}`,
+      "0:1",
+    ]);
+    const pickups = getParasiteManager(scene).getState().pickups;
+
+    expect(pickups).toHaveLength(1);
+    expect(blocked.has(`${pickups[0]!.position.col}:${pickups[0]!.position.row}`)).toBe(false);
+    expect(spriteFactory).toHaveBeenCalledWith(
+      expect.any(Number),
+      expect.any(Number),
+      "parasite-pickup",
+    );
+    expect(getParasitePickupSpriteMap(scene).size).toBe(1);
+  });
+
+  it("clears parasite pickup state when a new run starts", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.setRng(() => 0);
+    scene.enterPhase("playing");
+    scene.getSnake()!.getTicker().setInterval(1_000_000);
+    scene.update(0, PARASITE_PICKUP_SPAWN_INTERVAL_MS);
+
+    expect(getParasiteManager(scene).getState().pickups).toHaveLength(1);
+    expect(getParasitePickupSpriteMap(scene).size).toBe(1);
+
+    scene.endRun();
+    scene.enterPhase("playing");
+
+    const parasiteState = getParasiteManager(scene).getState();
+    expect(parasiteState.pickups).toEqual([]);
+    expect(parasiteState.timers.pickupSpawnElapsedMs).toBe(0);
+    expect(getParasitePickupSpriteMap(scene).size).toBe(0);
   });
 
   // ── Biome integration ──────────────────────────────────────
