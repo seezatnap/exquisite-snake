@@ -25,6 +25,7 @@ export const TEXTURE_KEYS = {
   SNAKE_HEAD: "snake-head",
   SNAKE_BODY: "snake-body",
   FOOD: "food",
+  PARASITE_PICKUP: "parasite-pickup",
   PARTICLE: "particle",
 } as const;
 
