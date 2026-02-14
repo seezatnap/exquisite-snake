@@ -3,6 +3,10 @@ import fs from "fs";
 import path from "path";
 import { gameBridge } from "@/game/bridge";
 import { GRID_COLS, GRID_ROWS, RENDER_DEPTH } from "@/game/config";
+import {
+  PARASITE_MAGNET_SPEED_BONUS_PER_SEGMENT,
+  ParasiteType,
+} from "@/game/entities/Parasite";
 import { Biome } from "@/game/systems/BiomeManager";
 import {
   PARASITE_PICKUP_SPAWN_INTERVAL_MS,
@@ -183,6 +187,21 @@ function getParasitePickupSpriteMap(scene: MainScene): Map<string, unknown> {
       parasitePickupSprites: Map<string, unknown>;
     }
   ).parasitePickupSprites;
+}
+
+function setActiveParasiteSegments(
+  scene: MainScene,
+  types: readonly ParasiteType[],
+): void {
+  const parasiteManager = getParasiteManager(scene);
+  const nextState = parasiteManager.getState();
+  nextState.inventory.segments = types.map((type, index) => ({
+    id: `seg-${index}-${type}`,
+    type,
+    attachedAtMs: index,
+    sourcePickupId: null,
+  }));
+  parasiteManager.replaceState(nextState);
 }
 
 beforeEach(() => {
@@ -440,6 +459,59 @@ describe("MainScene", () => {
       "parasite-pickup",
     );
     expect(getParasitePickupSpriteMap(scene).size).toBe(1);
+  });
+
+  it("pulls food one tile per stepped tick when a magnet segment is in range", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.enterPhase("playing");
+    setActiveParasiteSegments(scene, [ParasiteType.Magnet]);
+
+    const snake = scene.getSnake()!;
+    snake.reset({ col: 5, row: 5 }, "right", 3);
+    snake.getTicker().setInterval(100);
+    scene.getFood()!.setPosition({ col: 4, row: 7 });
+
+    scene.update(0, 100);
+
+    expect(scene.getFood()!.getPosition()).toEqual({ col: 4, row: 6 });
+  });
+
+  it("applies stacked magnet speed bonuses and restores base speed when magnets are gone", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.enterPhase("playing");
+
+    const snake = scene.getSnake()!;
+    snake.getTicker().setInterval(1_000);
+    scene.update(0, 0);
+
+    setActiveParasiteSegments(scene, [
+      ParasiteType.Magnet,
+      ParasiteType.Magnet,
+      ParasiteType.Shield,
+    ]);
+    scene.update(0, 0);
+
+    expect(snake.getTicker().interval).toBeCloseTo(
+      1_000 / (1 + PARASITE_MAGNET_SPEED_BONUS_PER_SEGMENT * 2),
+    );
+
+    setActiveParasiteSegments(scene, [
+      ParasiteType.Magnet,
+      ParasiteType.Magnet,
+      ParasiteType.Magnet,
+    ]);
+    scene.update(0, 0);
+
+    expect(snake.getTicker().interval).toBeCloseTo(
+      1_000 / (1 + PARASITE_MAGNET_SPEED_BONUS_PER_SEGMENT * 3),
+    );
+
+    setActiveParasiteSegments(scene, []);
+    scene.update(0, 0);
+
+    expect(snake.getTicker().interval).toBeCloseTo(1_000);
   });
 
   it("clears parasite pickup state when a new run starts", () => {

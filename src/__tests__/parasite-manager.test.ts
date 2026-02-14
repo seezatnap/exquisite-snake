@@ -197,6 +197,107 @@ describe("ParasiteManager scaffold", () => {
     expect(manager.isEchoGhostExcludedFromParasites()).toBe(true);
   });
 
+  it("pulls food one tile toward the nearest magnet segment within radius", () => {
+    const manager = new ParasiteManager();
+    const seeded = manager.getState();
+    seeded.inventory.segments = [
+      {
+        id: "seg-magnet",
+        type: ParasiteType.Magnet,
+        attachedAtMs: 1,
+        sourcePickupId: "pickup-magnet",
+      },
+      {
+        id: "seg-shield",
+        type: ParasiteType.Shield,
+        attachedAtMs: 2,
+        sourcePickupId: "pickup-shield",
+      },
+    ];
+    manager.replaceState(seeded);
+
+    const pulled = manager.resolveMagnetFoodPull({
+      snakeSegments: [
+        { col: 10, row: 10 },
+        { col: 9, row: 10 },
+        { col: 8, row: 10 },
+        { col: 7, row: 10 },
+      ],
+      foodPosition: { col: 7, row: 12 },
+      obstaclePositions: [],
+    });
+
+    expect(pulled).toEqual({ col: 7, row: 11 });
+  });
+
+  it("checks valid pull cells and falls back to an alternate axis when needed", () => {
+    const manager = new ParasiteManager();
+    const seeded = manager.getState();
+    seeded.inventory.segments = [
+      {
+        id: "seg-magnet",
+        type: ParasiteType.Magnet,
+        attachedAtMs: 1,
+        sourcePickupId: "pickup-magnet",
+      },
+    ];
+    manager.replaceState(seeded);
+
+    const pulled = manager.resolveMagnetFoodPull({
+      snakeSegments: [
+        { col: 2, row: 1 },
+        { col: 1, row: 1 },
+      ],
+      foodPosition: { col: 0, row: 0 },
+      obstaclePositions: [{ col: 1, row: 0 }],
+    });
+
+    expect(pulled).toEqual({ col: 0, row: 1 });
+  });
+
+  it("does not pull food when out of magnet range or when no valid cell exists", () => {
+    const manager = new ParasiteManager();
+    const seeded = manager.getState();
+    seeded.inventory.segments = [
+      {
+        id: "seg-magnet",
+        type: ParasiteType.Magnet,
+        attachedAtMs: 1,
+        sourcePickupId: "pickup-magnet",
+      },
+    ];
+    seeded.pickups = [
+      {
+        id: "pickup-blocker",
+        type: ParasiteType.Shield,
+        position: { col: 0, row: 1 },
+        spawnedAtMs: 0,
+      },
+    ];
+    manager.replaceState(seeded);
+
+    const outsideRadius = manager.resolveMagnetFoodPull({
+      snakeSegments: [
+        { col: 4, row: 4 },
+        { col: 3, row: 4 },
+      ],
+      foodPosition: { col: 0, row: 0 },
+    });
+    expect(outsideRadius).toBeNull();
+
+    const blocked = manager.resolveMagnetFoodPull({
+      snakeSegments: [
+        { col: 1, row: 2 },
+        { col: 1, row: 1 },
+      ],
+      foodPosition: { col: 0, row: 0 },
+      obstaclePositions: [{ col: 1, row: 0 }],
+    });
+
+    expect(PARASITE_MAGNET_RADIUS_TILES).toBe(2);
+    expect(blocked).toBeNull();
+  });
+
   it("returns defensive state snapshots", () => {
     const manager = new ParasiteManager();
     const state = manager.getState();
