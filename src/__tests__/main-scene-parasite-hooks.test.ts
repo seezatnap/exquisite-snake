@@ -234,6 +234,7 @@ describe("MainScene parasite hook wiring", () => {
     const scene = new MainScene();
     scene.create();
     scene.enterPhase("playing");
+    const endRunSpy = vi.spyOn(scene, "endRun");
 
     const parasiteState = createParasiteRuntimeState();
     parasiteState.activeSegments.push({
@@ -249,8 +250,93 @@ describe("MainScene parasite hook wiring", () => {
 
     const stateAfterCollision = scene.getParasiteManager().getState();
     expect(scene.getPhase()).toBe("playing");
+    expect(endRunSpy).not.toHaveBeenCalled();
     expect(stateAfterCollision.activeSegments).toEqual([]);
     expect(stateAfterCollision.flags.blockNextFoodPickup).toBe(true);
+  });
+
+  it("kills the snake on splitter obstacle contact without consuming shield", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.enterPhase("playing");
+
+    const parasiteState = createParasiteRuntimeState();
+    parasiteState.activeSegments.push({
+      id: "segment-shield",
+      type: ParasiteType.Shield,
+      attachedAtMs: 0,
+    });
+    parasiteState.splitterObstacles.push({
+      id: "obstacle-1",
+      position: { col: 6, row: 5 },
+      spawnedAtMs: 0,
+    });
+    scene.getParasiteManager().restoreState(parasiteState);
+
+    const snake = scene.getSnake()!;
+    snake.reset({ col: 5, row: 5 }, "right", 1);
+    const collisionSpy = vi.spyOn(
+      scene.getParasiteManager(),
+      "onCollisionCheck",
+    );
+
+    scene.update(0, snake.getTicker().interval);
+
+    expect(collisionSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        actor: "snake",
+        kind: "splitter-obstacle",
+      }),
+    );
+    expect(scene.getPhase()).toBe("gameOver");
+    expect(scene.getParasiteManager().getShieldSegmentCount()).toBe(1);
+    expect(scene.getParasiteManager().getState().flags.blockNextFoodPickup).toBe(
+      false,
+    );
+  });
+
+  it("keeps existing wall/self collision priority over splitter obstacles", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.enterPhase("playing");
+
+    const parasiteState = createParasiteRuntimeState();
+    parasiteState.splitterObstacles.push({
+      id: "obstacle-overlap",
+      position: { col: 5, row: 5 },
+      spawnedAtMs: 0,
+    });
+    scene.getParasiteManager().restoreState(parasiteState);
+
+    const snake = scene.getSnake()!;
+    snake.reset({ col: 5, row: 5 }, "right", 5);
+    const interval = snake.getTicker().interval;
+    const collisionSpy = vi.spyOn(
+      scene.getParasiteManager(),
+      "onCollisionCheck",
+    );
+
+    scene.update(0, interval);
+    snake.bufferDirection("down");
+    scene.update(0, interval);
+    snake.bufferDirection("left");
+    scene.update(0, interval);
+    snake.bufferDirection("up");
+    scene.update(0, interval);
+
+    expect(scene.getPhase()).toBe("gameOver");
+    expect(collisionSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        actor: "snake",
+        kind: "self",
+      }),
+    );
+    expect(collisionSpy).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        actor: "snake",
+        kind: "splitter-obstacle",
+      }),
+    );
   });
 
   it("blocks first food contact after shield absorb, then consumes on second contact", () => {
