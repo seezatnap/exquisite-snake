@@ -1,186 +1,251 @@
-// ── Biome Definitions ───────────────────────────────────────────
+// ── Biome definitions ───────────────────────────────────────────
 
-/** The four biomes in deterministic cycle order. */
+/** Arena biome IDs used across gameplay, HUD, and stats. */
 export enum Biome {
-  NeonCity = "NeonCity",
-  IceCavern = "IceCavern",
-  MoltenCore = "MoltenCore",
-  VoidRift = "VoidRift",
+  NeonCity = "neon-city",
+  IceCavern = "ice-cavern",
+  MoltenCore = "molten-core",
+  VoidRift = "void-rift",
 }
 
-/** Ordered cycle — the canonical rotation sequence. */
-export const BIOME_CYCLE: readonly Biome[] = [
+/** Fixed duration of each biome before rotating to the next one. */
+export const BIOME_ROTATION_INTERVAL_MS = 45_000;
+
+/** Deterministic biome cycle order for every run. */
+export const BIOME_CYCLE_ORDER: readonly Biome[] = [
   Biome.NeonCity,
   Biome.IceCavern,
   Biome.MoltenCore,
   Biome.VoidRift,
 ] as const;
 
-/** Duration each biome lasts before transitioning (ms). */
-export const BIOME_DURATION_MS = 45_000;
+const BIOME_ID_SET = new Set<Biome>(Object.values(Biome));
 
-// ── Per-biome visual / mechanic configuration ───────────────────
+function isValidCycleOrder(order: readonly Biome[]): boolean {
+  if (order.length !== BIOME_CYCLE_ORDER.length) {
+    return false;
+  }
+  const unique = new Set(order);
+  if (unique.size !== BIOME_CYCLE_ORDER.length) {
+    return false;
+  }
+  for (const biome of order) {
+    if (!BIOME_ID_SET.has(biome)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+export function normalizeBiomeCycleOrder(
+  order: readonly Biome[] | null | undefined,
+): readonly Biome[] {
+  if (!order || !isValidCycleOrder(order)) {
+    return [...BIOME_CYCLE_ORDER];
+  }
+  return [...order];
+}
+
+export function parseBiomeCycleOrder(
+  rawOrder: string | null | undefined,
+): readonly Biome[] | null {
+  if (typeof rawOrder !== "string" || rawOrder.trim().length === 0) {
+    return null;
+  }
+
+  const tokens = rawOrder
+    .split(",")
+    .map((token) => token.trim().toLowerCase())
+    .filter((token) => token.length > 0);
+  if (tokens.length !== BIOME_CYCLE_ORDER.length) {
+    return null;
+  }
+
+  const parsedOrder: Biome[] = [];
+  for (const token of tokens) {
+    if (!BIOME_ID_SET.has(token as Biome)) {
+      return null;
+    }
+    parsedOrder.push(token as Biome);
+  }
+
+  if (!isValidCycleOrder(parsedOrder)) {
+    return null;
+  }
+
+  return parsedOrder;
+}
 
 export interface BiomeConfig {
-  readonly name: string;
-  readonly icon: string;
-  readonly description: string;
+  id: Biome;
+  label: string;
+  icon: string;
 }
 
-export const BIOME_CONFIGS: Readonly<Record<Biome, BiomeConfig>> = {
+/** Static per-biome display metadata. */
+export const BIOME_CONFIG: Record<Biome, BiomeConfig> = {
   [Biome.NeonCity]: {
-    name: "Neon City",
-    icon: "\u{1F3D9}\uFE0F",
-    description: "Default \u2014 no modifier",
+    id: Biome.NeonCity,
+    label: "Neon City",
+    icon: "city",
   },
   [Biome.IceCavern]: {
-    name: "Ice Cavern",
-    icon: "\u2744\uFE0F",
-    description: "Snake slides 2 extra tiles before stopping when turning",
+    id: Biome.IceCavern,
+    label: "Ice Cavern",
+    icon: "snowflake",
   },
   [Biome.MoltenCore]: {
-    name: "Molten Core",
-    icon: "\u{1F30B}",
-    description: "Random lava pools spawn; touching one burns off 3 tail segments",
+    id: Biome.MoltenCore,
+    label: "Molten Core",
+    icon: "flame",
   },
   [Biome.VoidRift]: {
-    name: "Void Rift",
-    icon: "\u{1F300}",
-    description: "Gravity wells pull the snake toward the center of the arena",
+    id: Biome.VoidRift,
+    label: "Void Rift",
+    icon: "vortex",
   },
-} as const;
+};
 
-// ── Biome-visit stats ───────────────────────────────────────────
-
-export interface BiomeVisitStats {
-  /** Number of times each biome was entered during the run. */
-  readonly visits: Readonly<Record<Biome, number>>;
-  /** Set of unique biomes visited during the run. */
-  readonly uniqueCount: number;
+export interface BiomeTransition {
+  from: Biome;
+  to: Biome;
 }
 
-// ── Event types ─────────────────────────────────────────────────
+export interface BiomeVisitStats {
+  [Biome.NeonCity]: number;
+  [Biome.IceCavern]: number;
+  [Biome.MoltenCore]: number;
+  [Biome.VoidRift]: number;
+}
 
-export type BiomeChangeListener = (
-  newBiome: Biome,
-  previousBiome: Biome | null,
-) => void;
-
-// ── BiomeManager ────────────────────────────────────────────────
-
-/**
- * Manages timed biome rotation for a single game run.
- *
- * - Timer-based cycling every 45 seconds.
- * - Deterministic order: Neon City → Ice Cavern → Molten Core → Void Rift → repeat.
- * - Tracks per-run biome-visit stats for the Game Over screen.
- * - Clean start/reset behaviour: call `start()` to begin, `reset()` between runs.
- */
-export class BiomeManager {
-  private currentIndex = 0;
-  private elapsedMs = 0;
-  private running = false;
-  private visits: Record<Biome, number> = {
+function createEmptyVisitStats(): BiomeVisitStats {
+  return {
     [Biome.NeonCity]: 0,
     [Biome.IceCavern]: 0,
     [Biome.MoltenCore]: 0,
     [Biome.VoidRift]: 0,
   };
-  private listeners: Set<BiomeChangeListener> = new Set();
+}
 
-  /** The currently active biome. */
+/**
+ * Owns per-run biome timing and deterministic biome rotation.
+ *
+ * Lifecycle expectations:
+ * - Call `startRun()` at the beginning of each game run.
+ * - Call `update(deltaMs)` while the run is active.
+ * - Call `stopRun()` when gameplay pauses/ends.
+ * - Call `startRun()` again for a clean restart (it always resets state).
+ */
+export class BiomeManager {
+  private running = false;
+  private cycleIndex = 0;
+  private elapsedInBiomeMs = 0;
+  private visitStats: BiomeVisitStats = createEmptyVisitStats();
+  private cycleOrder: readonly Biome[];
+
+  constructor(
+    private readonly intervalMs: number = BIOME_ROTATION_INTERVAL_MS,
+    cycleOrder: readonly Biome[] = BIOME_CYCLE_ORDER,
+  ) {
+    this.cycleOrder = normalizeBiomeCycleOrder(cycleOrder);
+    this.resetRun();
+  }
+
+  /** Start a fresh run from the first configured biome with clean timer/stats. */
+  startRun(): void {
+    this.resetRun();
+    this.running = true;
+  }
+
+  /** Stop biome progression without mutating current biome/timer/stats. */
+  stopRun(): void {
+    this.running = false;
+  }
+
+  /**
+   * Reset to initial run state.
+   * The first configured biome counts as visited once at run start.
+   */
+  resetRun(): void {
+    this.running = false;
+    this.cycleIndex = 0;
+    this.elapsedInBiomeMs = 0;
+    this.visitStats = createEmptyVisitStats();
+    this.visitStats[this.getCurrentBiome()] = 1;
+  }
+
+  /**
+   * Configure biome cycle order for subsequent runs and reset run state.
+   * Invalid orders are ignored in favor of the canonical default order.
+   */
+  setCycleOrder(order: readonly Biome[]): void {
+    this.cycleOrder = normalizeBiomeCycleOrder(order);
+    this.resetRun();
+  }
+
+  /** Current active cycle order used by this manager instance. */
+  getCycleOrder(): readonly Biome[] {
+    return [...this.cycleOrder];
+  }
+
+  /**
+   * Advance the biome timer. Emits one transition record per biome shift.
+   * Large deltas are handled deterministically by applying all due shifts.
+   */
+  update(deltaMs: number): BiomeTransition[] {
+    if (!this.running || deltaMs <= 0) {
+      return [];
+    }
+
+    this.elapsedInBiomeMs += deltaMs;
+
+    const transitions: BiomeTransition[] = [];
+
+    while (this.elapsedInBiomeMs >= this.intervalMs) {
+      this.elapsedInBiomeMs -= this.intervalMs;
+      transitions.push(this.advanceBiome());
+    }
+
+    return transitions;
+  }
+
+  /** Current biome for the run. */
   getCurrentBiome(): Biome {
-    return BIOME_CYCLE[this.currentIndex];
+    return this.cycleOrder[this.cycleIndex];
   }
 
-  /** How many ms remain before the next biome transition. */
-  getTimeRemaining(): number {
-    return Math.max(0, BIOME_DURATION_MS - this.elapsedMs);
+  /** Next biome in the active cycle order (wrapping at the end). */
+  getNextBiome(): Biome {
+    const nextIndex = (this.cycleIndex + 1) % this.cycleOrder.length;
+    return this.cycleOrder[nextIndex];
   }
 
-  /** Whether the manager is actively running. */
+  /** Milliseconds elapsed in the active biome. */
+  getElapsedInBiomeMs(): number {
+    return this.elapsedInBiomeMs;
+  }
+
+  /** Milliseconds remaining until the next biome transition. */
+  getMsUntilNextBiome(): number {
+    return this.intervalMs - this.elapsedInBiomeMs;
+  }
+
+  /** Whether the manager is currently progressing the timer. */
   isRunning(): boolean {
     return this.running;
   }
 
-  /** Subscribe to biome-change events. */
-  onChange(listener: BiomeChangeListener): void {
-    this.listeners.add(listener);
-  }
-
-  /** Unsubscribe from biome-change events. */
-  offChange(listener: BiomeChangeListener): void {
-    this.listeners.delete(listener);
-  }
-
-  /**
-   * Start a new run. Resets state and marks the first biome as visited.
-   * Does nothing if already running — call `reset()` first.
-   */
-  start(): void {
-    if (this.running) return;
-    this.resetInternal();
-    this.running = true;
-    this.visits[this.getCurrentBiome()] = 1;
-  }
-
-  /**
-   * Advance the biome timer by `deltaMs` milliseconds.
-   * Call this every frame from the game loop while the game is playing.
-   *
-   * Returns the current biome after the update.
-   */
-  update(deltaMs: number): Biome {
-    if (!this.running) return this.getCurrentBiome();
-
-    this.elapsedMs += deltaMs;
-
-    while (this.elapsedMs >= BIOME_DURATION_MS) {
-      this.elapsedMs -= BIOME_DURATION_MS;
-      const previousBiome = this.getCurrentBiome();
-      this.currentIndex = (this.currentIndex + 1) % BIOME_CYCLE.length;
-      const newBiome = this.getCurrentBiome();
-      this.visits[newBiome] += 1;
-      this.emitChange(newBiome, previousBiome);
-    }
-
-    return this.getCurrentBiome();
-  }
-
-  /**
-   * Snapshot of biome-visit stats for the current (or last) run.
-   */
+  /** Copy of per-biome visit counts for the current run. */
   getVisitStats(): BiomeVisitStats {
-    const visits = { ...this.visits } as Readonly<Record<Biome, number>>;
-    const uniqueCount = Object.values(this.visits).filter((v) => v > 0).length;
-    return { visits, uniqueCount };
+    return { ...this.visitStats };
   }
 
-  /**
-   * Stop the timer and reset all state for a fresh run.
-   */
-  reset(): void {
-    this.running = false;
-    this.resetInternal();
-  }
+  private advanceBiome(): BiomeTransition {
+    const from = this.getCurrentBiome();
+    this.cycleIndex = (this.cycleIndex + 1) % this.cycleOrder.length;
+    const to = this.getCurrentBiome();
+    this.visitStats[to] += 1;
 
-  // ── Private helpers ─────────────────────────────────────────
-
-  private resetInternal(): void {
-    this.currentIndex = 0;
-    this.elapsedMs = 0;
-    this.visits = {
-      [Biome.NeonCity]: 0,
-      [Biome.IceCavern]: 0,
-      [Biome.MoltenCore]: 0,
-      [Biome.VoidRift]: 0,
-    };
-  }
-
-  private emitChange(
-    newBiome: Biome,
-    previousBiome: Biome | null,
-  ): void {
-    this.listeners.forEach((fn) => fn(newBiome, previousBiome));
+    return { from, to };
   }
 }

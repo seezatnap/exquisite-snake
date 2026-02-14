@@ -101,7 +101,7 @@ import {
   Biome,
   BiomeColorManager,
   BIOME_COLORS,
-  BIOME_DURATION_MS,
+  BIOME_ROTATION_INTERVAL_MS,
   BIOME_TRANSITION_DURATION_MS,
   lerpColor,
   type BiomeColorProvider,
@@ -795,7 +795,7 @@ describe("Biome-tinted ghost rendering metadata", () => {
     it("transitions to IceCavern colors after biome change", () => {
       const mgr = new BiomeColorManager();
       mgr.start();
-      mgr.update(BIOME_DURATION_MS);
+      mgr.update(BIOME_ROTATION_INTERVAL_MS);
       mgr.update(BIOME_TRANSITION_DURATION_MS);
       expect(mgr.getGhostBodyColor()).toBe(BIOME_COLORS[Biome.IceCavern].snakeBody);
       expect(mgr.getGhostParticleColor()).toBe(BIOME_COLORS[Biome.IceCavern].particle);
@@ -804,7 +804,7 @@ describe("Biome-tinted ghost rendering metadata", () => {
     it("interpolates colors smoothly during transition", () => {
       const mgr = new BiomeColorManager();
       mgr.start();
-      mgr.update(BIOME_DURATION_MS);
+      mgr.update(BIOME_ROTATION_INTERVAL_MS);
       mgr.update(BIOME_TRANSITION_DURATION_MS / 2);
 
       const bodyColor = mgr.getGhostBodyColor();
@@ -956,7 +956,7 @@ describe("Biome-tinted ghost rendering metadata", () => {
       mgr.start();
       renderer.setBiomeColorProvider(mgr);
 
-      mgr.update(BIOME_DURATION_MS);
+      mgr.update(BIOME_ROTATION_INTERVAL_MS);
       mgr.update(BIOME_TRANSITION_DURATION_MS);
 
       mockGraphicsFillStyle.mockClear();
@@ -976,7 +976,7 @@ describe("Biome-tinted ghost rendering metadata", () => {
       mgr.start();
       renderer.setBiomeColorProvider(mgr);
 
-      mgr.update(BIOME_DURATION_MS);
+      mgr.update(BIOME_ROTATION_INTERVAL_MS);
       mgr.update(BIOME_TRANSITION_DURATION_MS / 2);
 
       mockGraphicsFillStyle.mockClear();

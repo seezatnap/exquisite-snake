@@ -1,22 +1,25 @@
 // ── Re-export Phase 2 biome definitions ────────────────────────
 //
-// The canonical Biome enum, cycle, duration, and BiomeManager live
-// in BiomeManager.ts (Phase 2). Phase 3 re-exports them so that
-// downstream consumers can continue importing from BiomeTheme.ts.
+// The canonical Biome enum, cycle order, rotation interval, and
+// BiomeManager live in BiomeManager.ts (Phase 2). Phase 3 re-exports
+// them so that downstream consumers can continue importing from
+// BiomeTheme.ts.
 //
 
 export {
   Biome,
-  BIOME_CYCLE,
-  BIOME_DURATION_MS,
+  BIOME_ROTATION_INTERVAL_MS,
+  BIOME_CYCLE_ORDER,
+  BIOME_CONFIG,
   BiomeManager,
-  type BiomeChangeListener,
+  normalizeBiomeCycleOrder,
+  parseBiomeCycleOrder,
   type BiomeConfig,
-  BIOME_CONFIGS,
+  type BiomeTransition,
   type BiomeVisitStats,
 } from "./BiomeManager";
 
-import { Biome, BiomeManager } from "./BiomeManager";
+import { Biome, BiomeManager, type BiomeTransition } from "./BiomeManager";
 
 // ── Per-biome ghost visual palette (Phase 3) ───────────────────
 
@@ -104,7 +107,7 @@ export const BIOME_TRANSITION_DURATION_MS = 600;
  * transitions for ghost rendering via the BiomeColorProvider interface.
  *
  * Delegates all core biome-cycling behaviour (timer, rotation,
- * visit stats, event listeners) to the underlying BiomeManager.
+ * visit stats) to the underlying BiomeManager.
  *
  * - Smooth color crossfade over 600ms when biomes change.
  */
@@ -117,12 +120,6 @@ export class BiomeColorManager implements BiomeColorProvider {
 
   constructor(manager?: BiomeManager) {
     this.manager = manager ?? new BiomeManager();
-
-    // Listen for biome changes to trigger crossfade
-    this.manager.onChange((newBiome, prev) => {
-      this.previousBiome = prev;
-      this.transitionProgress = 0;
-    });
   }
 
   /** Access the underlying BiomeManager. */
@@ -150,23 +147,13 @@ export class BiomeColorManager implements BiomeColorProvider {
     return this.transitionProgress;
   }
 
-  /** Subscribe to biome-change events. */
-  onChange(listener: (newBiome: Biome, previousBiome: Biome | null) => void): void {
-    this.manager.onChange(listener);
-  }
-
-  /** Unsubscribe from biome-change events. */
-  offChange(listener: (newBiome: Biome, previousBiome: Biome | null) => void): void {
-    this.manager.offChange(listener);
-  }
-
   /**
    * Start a new run. Resets state and begins from the first biome.
    */
   start(): void {
     this.transitionProgress = 1;
     this.previousBiome = null;
-    this.manager.start();
+    this.manager.startRun();
   }
 
   /**
@@ -184,7 +171,15 @@ export class BiomeColorManager implements BiomeColorProvider {
       );
     }
 
-    return this.manager.update(deltaMs);
+    const transitions: BiomeTransition[] = this.manager.update(deltaMs);
+
+    // If there were transitions, start a new crossfade from the last "from" biome
+    if (transitions.length > 0) {
+      this.previousBiome = transitions[transitions.length - 1].from;
+      this.transitionProgress = 0;
+    }
+
+    return this.manager.getCurrentBiome();
   }
 
   /**
@@ -193,7 +188,7 @@ export class BiomeColorManager implements BiomeColorProvider {
   reset(): void {
     this.transitionProgress = 1;
     this.previousBiome = null;
-    this.manager.reset();
+    this.manager.resetRun();
   }
 
   // ── BiomeColorProvider implementation ──────────────────────────
