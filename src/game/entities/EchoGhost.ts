@@ -3,7 +3,26 @@ import { DEFAULT_MOVE_INTERVAL_MS, type GridPos } from "../utils/grid";
 export const DEFAULT_ECHO_DELAY_MS = 5000;
 export const DEFAULT_ECHO_FADE_MS = 1000;
 
-type ReplayState = "waiting" | "active" | "fading" | "exhausted";
+type SnapshotEntry = readonly GridPos[] | null;
+type SnapshotEntries = readonly SnapshotEntry[];
+
+export type EchoGhostReplayState = "waiting" | "active" | "fading" | "exhausted";
+
+export interface EchoGhostRewindState {
+  readonly tickIntervalMs: number;
+  readonly delayMs: number;
+  readonly delayTicks: number;
+  readonly fadeMs: number;
+  readonly fadeTicks: number;
+  readonly writeIndex: number;
+  readonly writeCount: number;
+  readonly replayState: EchoGhostReplayState;
+  readonly replayTicks: number;
+  readonly fadeTicksElapsed: number;
+  readonly buffer: SnapshotEntries;
+}
+
+export type EchoGhostRewindStateHook = (snapshot: EchoGhostRewindState) => void;
 
 type Snapshot = readonly GridPos[];
 
@@ -23,9 +42,10 @@ export class EchoGhost {
   private readonly fadeMs: number;
   private readonly fadeTicks: number;
   private readonly buffer: Array<Snapshot | null>;
+  private rewindStateHook: EchoGhostRewindStateHook | null = null;
   private writeIndex = 0;
   private writeCount = 0;
-  private replayState: ReplayState = "waiting";
+  private replayState: EchoGhostReplayState = "waiting";
   private replayTicks = 0;
   private fadeTicksElapsed = 0;
 
@@ -47,6 +67,8 @@ export class EchoGhost {
     this.buffer[this.writeIndex] = clonePath(positions);
     this.writeIndex = (this.writeIndex + 1) % this.buffer.length;
     this.writeCount += 1;
+
+    this.emitRewindState();
   }
 
   /** Read the delayed ghost trail if replay delay has elapsed; otherwise returns empty. */
@@ -83,6 +105,7 @@ export class EchoGhost {
           this.replayState = "exhausted";
         }
       }
+      this.emitRewindState();
       return;
     }
 
@@ -92,10 +115,12 @@ export class EchoGhost {
         this.replayState = "exhausted";
       }
     }
+
+    this.emitRewindState();
   }
 
   /** Get the current playback lifecycle state. */
-  getReplayState(): ReplayState {
+  getReplayState(): EchoGhostReplayState {
     return this.replayState;
   }
 
@@ -163,10 +188,60 @@ export class EchoGhost {
     this.replayState = "waiting";
     this.replayTicks = 0;
     this.fadeTicksElapsed = 0;
+
+    this.emitRewindState();
+  }
+
+  /** Register an optional hook that receives rewind snapshots after each ghost tick-state mutation. */
+  setRewindStateHook(hook: EchoGhostRewindStateHook | null): void {
+    this.rewindStateHook = hook;
+  }
+
+  /** Capture rewind-ready ghost state including the circular buffer snapshot. */
+  captureRewindState(): EchoGhostRewindState {
+    return {
+      tickIntervalMs: this.tickIntervalMs,
+      delayMs: this.delayMs,
+      delayTicks: this.delayTicks,
+      fadeMs: this.fadeMs,
+      fadeTicks: this.fadeTicks,
+      writeIndex: this.writeIndex,
+      writeCount: this.writeCount,
+      replayState: this.replayState,
+      replayTicks: this.replayTicks,
+      fadeTicksElapsed: this.fadeTicksElapsed,
+      buffer: this.buffer.map((snapshot) =>
+        snapshot ? snapshot.map((cell) => ({ ...cell })) : null,
+      ),
+    };
+  }
+
+  /** Restore rewind state into the ghost buffer and replay lifecycle without advancing gameplay. */
+  restoreRewindState(snapshot: EchoGhostRewindState): void {
+    this.writeIndex = ((snapshot.writeIndex % this.buffer.length) + this.buffer.length) % this.buffer.length;
+    this.writeCount = snapshot.writeCount;
+    this.replayState = snapshot.replayState;
+    this.replayTicks = snapshot.replayTicks;
+    this.fadeTicksElapsed = snapshot.fadeTicksElapsed;
+
+    for (let index = 0; index < this.buffer.length; index++) {
+      const snapshotEntry = snapshot.buffer[index] ?? null;
+      this.buffer[index] = snapshotEntry ? clonePath(snapshotEntry) : null;
+    }
+
+    this.emitRewindState();
   }
 
   private computeReadIndex(): number {
     const rawIndex = this.writeIndex - this.delayTicks;
     return ((rawIndex % this.buffer.length) + this.buffer.length) % this.buffer.length;
+  }
+
+  private emitRewindState(): void {
+    if (!this.rewindStateHook) {
+      return;
+    }
+
+    this.rewindStateHook(this.captureRewindState());
   }
 }

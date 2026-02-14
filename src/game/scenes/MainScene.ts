@@ -12,7 +12,11 @@ import { loadHighScore, saveHighScore } from "../utils/storage";
 import { isInBounds, type GridPos } from "../utils/grid";
 import { Snake } from "../entities/Snake";
 import { Food } from "../entities/Food";
-import { EchoGhost } from "../entities/EchoGhost";
+import {
+  EchoGhost,
+  type EchoGhostRewindState,
+  type EchoGhostRewindStateHook,
+} from "../entities/EchoGhost";
 import { emitFoodParticles, shakeCamera } from "../systems/effects";
 
 // ── Default spawn configuration ─────────────────────────────────
@@ -46,6 +50,9 @@ export class MainScene extends Phaser.Scene {
 
   /** The echo ghost replay entity for the current run (null when not playing). */
   private echoGhost: EchoGhost | null = null;
+
+  /** Optional observer for rewind snapshots emitted by the echo ghost. */
+  private echoGhostRewindStateHook: EchoGhostRewindStateHook | null = null;
 
   /** Number of recorded movement steps since run start. */
   private ghostProgressTicks = 0;
@@ -196,6 +203,7 @@ export class MainScene extends Phaser.Scene {
     this.snake.setupInput();
     this.snake.setupTouchInput();
     this.echoGhost = new EchoGhost(this.snake.getTicker().interval);
+    this.echoGhost.setRewindStateHook(this.echoGhostRewindStateHook);
     this.food = new Food(this, this.snake, this.rng);
   }
 
@@ -283,6 +291,24 @@ export class MainScene extends Phaser.Scene {
 
   getFood(): Food | null {
     return this.food;
+  }
+
+  /** Register a callback for per-tick echo ghost rewind snapshots; no gameplay impact until used. */
+  setEchoGhostRewindStateHook(
+    hook: EchoGhostRewindStateHook | null,
+  ): void {
+    this.echoGhostRewindStateHook = hook;
+    this.echoGhost?.setRewindStateHook(hook);
+  }
+
+  /** Expose the current echo ghost rewind state for future rewind actions. */
+  getEchoGhostRewindState(): EchoGhostRewindState | null {
+    return this.echoGhost?.captureRewindState() ?? null;
+  }
+
+  /** Restore the echo ghost replay state from a rewind snapshot. */
+  restoreEchoGhostRewindState(snapshot: EchoGhostRewindState): void {
+    this.echoGhost?.restoreRewindState(snapshot);
   }
 
   // ── Arena grid ──────────────────────────────────────────────
