@@ -71,9 +71,17 @@ export class EchoGhost {
     this.emitRewindState();
   }
 
-  /** Read the delayed ghost trail if replay delay has elapsed; otherwise returns empty. */
-  readDelayedTrail(): GridPos[] {
-    if (!this.isReplayActive()) {
+  /** Read the delayed ghost trail if replay delay has elapsed; otherwise returns empty.
+   * By default fading output is suppressed so callers can hide it unless explicitly requested.
+   */
+  readDelayedTrail(includeFadingOutput = false): GridPos[] {
+    if (!this.isReplayReady() || this.replayState === "waiting") {
+      return [];
+    }
+    if (!includeFadingOutput && this.replayState === "fading") {
+      return [];
+    }
+    if (this.replayState === "exhausted") {
       return [];
     }
 

@@ -153,6 +153,7 @@ export class MainScene extends Phaser.Scene {
 
     const stepped = this.snake.update(delta);
     this.advanceGhostTintTransition(delta);
+    let replayState = null;
 
     if (stepped) {
       this.echoGhost?.writePositions(this.snake.getSegments());
@@ -160,7 +161,7 @@ export class MainScene extends Phaser.Scene {
 
       this.echoGhost?.advanceReplayProgress();
 
-      const replayState = this.echoGhost?.getReplayState();
+      replayState = this.echoGhost?.getReplayState() ?? null;
       if (!this.isGhostReplayActive && replayState === "active") {
         this.isGhostReplayActive = true;
       }
@@ -172,7 +173,8 @@ export class MainScene extends Phaser.Scene {
       }
     }
 
-    const ghostTrail = this.echoGhost?.readDelayedTrail() ?? [];
+    const ghostTrail =
+      this.echoGhost?.readDelayedTrail(replayState === "fading") ?? [];
     const ghostOpacity = this.echoGhost?.getReplayOpacity() ?? 0;
     const ghostTint = this.getCurrentGhostTrailTint();
     this.renderEchoGhost(ghostTrail, ghostOpacity, ghostTint);
