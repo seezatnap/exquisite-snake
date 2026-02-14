@@ -14,7 +14,7 @@
 ## Rendering & Biome
 
 - [x] (#6) Render the ghost as a distinct translucent hazard (40% opacity, dashed outline) with trailing particles, using current renderer systems and matching existing segment geometry. [5 pts] (blocked by #2, #3) (B)
-- [ ] (#7) Apply biome-aware tinting to ghost visuals so trail and particles are colored by the current biome while preserving opacity and dashed styling, including smooth transitions if the biome changes during replay. [5 pts] (blocked by #6)
+- [x] (#7) Apply biome-aware tinting to ghost visuals so trail and particles are colored by the current biome while preserving opacity and dashed styling, including smooth transitions if the biome changes during replay. [5 pts] (blocked by #6) (A)
 
 ## Rewind Preparation
 
@@ -23,3 +23,6 @@
 ## Testing
 
 - [ ] (#9) Add automated tests for 5-second delay accuracy, ghost self-overlap kill behavior, fade-out and bounded buffer lifecycle, delayed food particle burst timing, and biome-tinted ghost rendering metadata. [5 pts] (blocked by #4, #5, #6, #7, #8)
+
+## Follow-up tasks (from sprint review)
+- [ ] (#10) Reconcile Phase 3 `BiomeTheme.ts` with Phase 2's existing `BiomeManager.ts` and `BiomeTheme.ts` to eliminate duplicate `Biome` enum, `BiomeManager` class, `BIOME_CYCLE`, and `BIOME_DURATION_MS` declarations — Phase 3 should import from Phase 2's modules and only add the `BiomeColorProvider` interface, `lerpColor`, and transition crossfade logic
