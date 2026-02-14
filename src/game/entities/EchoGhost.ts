@@ -7,10 +7,21 @@ const DEFAULT_REPLAY_DELAY_MS = 5_000;
 
 // ── Types ────────────────────────────────────────────────────────
 
+/** Ghost lifecycle states. */
+export type GhostLifecycleState = "inactive" | "active" | "fadingOut" | "expired";
+
 /** A snapshot of the snake's segment positions at a single tick. */
 export interface SnakeSnapshot {
   /** All segment positions at this tick (head first). */
   segments: readonly GridPos[];
+}
+
+/** A ghost trail entry with opacity metadata for rendering. */
+export interface GhostTrailEntry {
+  /** The snapshot of snake segments at this tick. */
+  snapshot: SnakeSnapshot;
+  /** Opacity value [0, 1] for rendering. Older entries fade toward 0. */
+  opacity: number;
 }
 
 /** Read-only interface for rewinding the ghost buffer (Phase 6 hook). */
@@ -28,6 +39,9 @@ export interface BufferSnapshot {
   readonly head: number;
   readonly count: number;
   readonly readIndex: number;
+  readonly lifecycleState: GhostLifecycleState;
+  readonly fadeOutTick: number;
+  readonly fadeOutDuration: number;
 }
 
 // ── CircularBuffer ───────────────────────────────────────────────
@@ -132,7 +146,25 @@ export class CircularBuffer<T> {
 export class EchoGhost implements RewindableBuffer {
   private readonly buffer: CircularBuffer<SnakeSnapshot>;
   private readonly delayTicks: number;
+  private readonly trailWindow: number;
   private ticksWritten = 0;
+
+  /** Lifecycle state tracks ghost visibility phases. */
+  private lifecycleState: GhostLifecycleState = "inactive";
+
+  /**
+   * Number of fade-out ticks elapsed since `stopRecording()` was called.
+   * During fade-out, the ghost drains its remaining trail over
+   * `trailWindow` ticks, reducing global opacity from 1 → 0.
+   */
+  private fadeOutTick = 0;
+
+  /**
+   * Total ticks allowed for the fade-out phase.
+   * Equals `trailWindow` so the ghost fades over the same duration as
+   * its visible trail length.
+   */
+  private fadeOutDuration = 0;
 
   /**
    * @param tickIntervalMs  How often the game ticks (ms). Defaults to
@@ -143,13 +175,18 @@ export class EchoGhost implements RewindableBuffer {
    *                        computed as `2 × delayTicks` to hold enough
    *                        history for the replay window plus a margin
    *                        for the active trail.
+   * @param trailWindowSize Override the rolling replay window size (max
+   *                        number of trail snapshots visible at once).
+   *                        Defaults to `delayTicks`.
    */
   constructor(
     tickIntervalMs: number = DEFAULT_MOVE_INTERVAL_MS,
     replayDelayMs: number = DEFAULT_REPLAY_DELAY_MS,
     bufferCapacity?: number,
+    trailWindowSize?: number,
   ) {
     this.delayTicks = Math.ceil(replayDelayMs / tickIntervalMs);
+    this.trailWindow = trailWindowSize ?? this.delayTicks;
     const capacity = bufferCapacity ?? this.delayTicks * 2;
     this.buffer = new CircularBuffer<SnakeSnapshot>(capacity);
   }
@@ -159,6 +196,11 @@ export class EchoGhost implements RewindableBuffer {
   /** Number of ticks the ghost trails behind the live snake. */
   getDelayTicks(): number {
     return this.delayTicks;
+  }
+
+  /** Maximum number of trail snapshots visible at once. */
+  getTrailWindow(): number {
+    return this.trailWindow;
   }
 
   /** Total number of ticks recorded so far. */
@@ -171,6 +213,11 @@ export class EchoGhost implements RewindableBuffer {
     return this.buffer.size;
   }
 
+  /** Current lifecycle state of the ghost. */
+  getLifecycleState(): GhostLifecycleState {
+    return this.lifecycleState;
+  }
+
   // ── Write API ───────────────────────────────────────────────────
 
   /**
@@ -178,40 +225,72 @@ export class EchoGhost implements RewindableBuffer {
    *
    * Segments are defensively copied so the caller can freely mutate
    * its array afterward.
+   *
+   * No-ops if the ghost is in `fadingOut` or `expired` state.
    */
   recordTick(segments: readonly GridPos[]): void {
+    if (this.lifecycleState === "fadingOut" || this.lifecycleState === "expired") {
+      return;
+    }
+
     const snapshot: SnakeSnapshot = {
       segments: segments.map((s) => ({ col: s.col, row: s.row })),
     };
     this.buffer.write(snapshot);
     this.ticksWritten++;
+
+    // Transition inactive → active once enough ticks have been recorded
+    if (this.lifecycleState === "inactive" && this.ticksWritten >= this.delayTicks) {
+      this.lifecycleState = "active";
+    }
   }
 
   // ── Read API ────────────────────────────────────────────────────
 
   /**
    * Whether the ghost has accumulated enough ticks to begin replaying.
+   * Returns false once the ghost has fully expired.
    */
   isActive(): boolean {
-    return this.ticksWritten >= this.delayTicks;
+    return this.lifecycleState === "active" || this.lifecycleState === "fadingOut";
+  }
+
+  /**
+   * Whether the ghost is currently fading out after recording stopped.
+   */
+  isFadingOut(): boolean {
+    return this.lifecycleState === "fadingOut";
+  }
+
+  /**
+   * Whether the ghost has fully faded out and is no longer visible.
+   */
+  isExpired(): boolean {
+    return this.lifecycleState === "expired";
   }
 
   /**
    * Retrieve the ghost trail — the sequence of snapshots that are at
-   * least `delayTicks` old.
+   * least `delayTicks` old, capped to the rolling replay window.
    *
-   * Returns an empty array if the ghost hasn't started yet (fewer than
-   * `delayTicks` ticks have been recorded).
+   * Returns an empty array if the ghost hasn't started yet or has
+   * expired.
    *
    * The returned array is ordered oldest-first. Each entry contains
    * the full set of snake segments at that historical tick.
    */
   getGhostTrail(): readonly SnakeSnapshot[] {
+    if (this.lifecycleState === "expired") return [];
+
     const readable = this.buffer.readableCount(this.delayTicks);
     if (readable <= 0) return [];
 
+    // Cap the trail to the rolling replay window
+    const windowSize = Math.min(readable, this.trailWindow);
+    const startIndex = readable - windowSize;
+
     const trail: SnakeSnapshot[] = [];
-    for (let i = 0; i < readable; i++) {
+    for (let i = startIndex; i < readable; i++) {
       const snap = this.buffer.read(this.delayTicks, i);
       if (snap) trail.push(snap);
     }
@@ -219,12 +298,49 @@ export class EchoGhost implements RewindableBuffer {
   }
 
   /**
+   * Retrieve the ghost trail with per-entry opacity metadata for
+   * rendering. Oldest entries in the trail fade toward 0; newest
+   * entries are near 1. During fade-out, a global multiplier
+   * progressively reduces all opacities to 0.
+   *
+   * Returns an empty array if the ghost is inactive or expired.
+   */
+  getGhostTrailWithOpacity(): readonly GhostTrailEntry[] {
+    if (this.lifecycleState === "expired") return [];
+
+    const trail = this.getGhostTrail();
+    if (trail.length === 0) return [];
+
+    // Positional fade: oldest = low opacity, newest = full opacity
+    const len = trail.length;
+
+    // During fade-out, apply a global multiplier that decreases to 0
+    const globalAlpha = this.lifecycleState === "fadingOut"
+      ? Math.max(0, 1 - this.fadeOutTick / this.fadeOutDuration)
+      : 1;
+
+    return trail.map((snapshot, index) => {
+      // Positional opacity: linearly interpolate from ~0.2 (oldest) to 1.0 (newest)
+      const positionalOpacity = len === 1
+        ? 1
+        : 0.2 + 0.8 * (index / (len - 1));
+      return {
+        snapshot,
+        opacity: positionalOpacity * globalAlpha,
+      };
+    });
+  }
+
+  /**
    * Get the single snapshot that represents the ghost's "current"
    * position — the most recent entry that is at least `delayTicks` old.
    *
-   * Returns `undefined` if the ghost hasn't started replaying yet.
+   * Returns `undefined` if the ghost hasn't started replaying yet
+   * or has expired.
    */
   getGhostHead(): SnakeSnapshot | undefined {
+    if (this.lifecycleState === "expired") return undefined;
+
     const readable = this.buffer.readableCount(this.delayTicks);
     if (readable <= 0) return undefined;
     return this.buffer.read(this.delayTicks, readable - 1);
@@ -241,18 +357,72 @@ export class EchoGhost implements RewindableBuffer {
   }
 
   /**
-   * Number of snapshots available for ghost rendering / collision.
+   * Number of snapshots available for ghost rendering / collision,
+   * capped to the rolling replay window.
    */
   getGhostLength(): number {
-    return this.buffer.readableCount(this.delayTicks);
+    if (this.lifecycleState === "expired") return 0;
+
+    const readable = this.buffer.readableCount(this.delayTicks);
+    return Math.min(readable, this.trailWindow);
+  }
+
+  /**
+   * Current fade-out opacity multiplier [0, 1].
+   * Returns 1 when not fading out, 0 when fully expired.
+   */
+  getFadeOpacity(): number {
+    if (this.lifecycleState === "fadingOut") {
+      return Math.max(0, 1 - this.fadeOutTick / this.fadeOutDuration);
+    }
+    if (this.lifecycleState === "expired") {
+      return 0;
+    }
+    return 1;
   }
 
   // ── Lifecycle ───────────────────────────────────────────────────
 
-  /** Reset all recorded history (e.g. on game restart). */
+  /**
+   * Signal that recording has stopped (e.g., the snake died).
+   * The ghost transitions to `fadingOut` and will drain its remaining
+   * visible trail over `trailWindow` ticks.
+   *
+   * No-op if the ghost is already fading out, expired, or inactive.
+   */
+  stopRecording(): void {
+    if (this.lifecycleState !== "active") return;
+
+    this.lifecycleState = "fadingOut";
+    this.fadeOutTick = 0;
+    this.fadeOutDuration = this.trailWindow;
+  }
+
+  /**
+   * Advance the fade-out by one tick. Call once per game tick while
+   * the ghost is fading out.
+   *
+   * Returns `true` if the ghost is still visible (fading), `false`
+   * once it has fully expired.
+   */
+  advanceFadeOut(): boolean {
+    if (this.lifecycleState !== "fadingOut") return false;
+
+    this.fadeOutTick++;
+    if (this.fadeOutTick >= this.fadeOutDuration) {
+      this.lifecycleState = "expired";
+      return false;
+    }
+    return true;
+  }
+
+  /** Reset all recorded history and lifecycle state (e.g. on game restart). */
   reset(): void {
     this.buffer.reset();
     this.ticksWritten = 0;
+    this.lifecycleState = "inactive";
+    this.fadeOutTick = 0;
+    this.fadeOutDuration = 0;
   }
 
   // ── Rewind support (Phase 6 hook) ──────────────────────────────
@@ -266,6 +436,9 @@ export class EchoGhost implements RewindableBuffer {
       head: bufSnap.head,
       count: bufSnap.count,
       readIndex: this.ticksWritten,
+      lifecycleState: this.lifecycleState,
+      fadeOutTick: this.fadeOutTick,
+      fadeOutDuration: this.fadeOutDuration,
     };
   }
 
@@ -277,5 +450,8 @@ export class EchoGhost implements RewindableBuffer {
       count: snap.count,
     });
     this.ticksWritten = snap.readIndex;
+    this.lifecycleState = snap.lifecycleState;
+    this.fadeOutTick = snap.fadeOutTick;
+    this.fadeOutDuration = snap.fadeOutDuration;
   }
 }

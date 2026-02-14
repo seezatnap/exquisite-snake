@@ -477,4 +477,442 @@ describe("EchoGhost", () => {
       }
     });
   });
+
+  // ── Lifecycle management tests ──────────────────────────────────
+
+  describe("lifecycle states", () => {
+    it("starts in 'inactive' state", () => {
+      expect(ghost.getLifecycleState()).toBe("inactive");
+      expect(ghost.isExpired()).toBe(false);
+      expect(ghost.isFadingOut()).toBe(false);
+    });
+
+    it("transitions to 'active' when delay ticks are reached", () => {
+      const delayTicks = ghost.getDelayTicks();
+      for (let i = 0; i < delayTicks - 1; i++) {
+        ghost.recordTick(snap([i, 0]));
+      }
+      expect(ghost.getLifecycleState()).toBe("inactive");
+
+      ghost.recordTick(snap([delayTicks - 1, 0]));
+      expect(ghost.getLifecycleState()).toBe("active");
+    });
+
+    it("transitions to 'fadingOut' when stopRecording is called", () => {
+      const g = new EchoGhost(100, 500, 20);
+      const delayTicks = g.getDelayTicks(); // 5
+      for (let i = 0; i < delayTicks + 3; i++) {
+        g.recordTick(snap([i, 0]));
+      }
+      expect(g.getLifecycleState()).toBe("active");
+
+      g.stopRecording();
+      expect(g.getLifecycleState()).toBe("fadingOut");
+      expect(g.isFadingOut()).toBe(true);
+    });
+
+    it("transitions to 'expired' after all fade-out ticks", () => {
+      const g = new EchoGhost(100, 500, 20);
+      const delayTicks = g.getDelayTicks(); // 5
+      for (let i = 0; i < delayTicks + 3; i++) {
+        g.recordTick(snap([i, 0]));
+      }
+
+      g.stopRecording();
+
+      const fadeOutDuration = g.getTrailWindow(); // 5
+      for (let i = 0; i < fadeOutDuration - 1; i++) {
+        expect(g.advanceFadeOut()).toBe(true);
+        expect(g.getLifecycleState()).toBe("fadingOut");
+      }
+
+      expect(g.advanceFadeOut()).toBe(false);
+      expect(g.getLifecycleState()).toBe("expired");
+      expect(g.isExpired()).toBe(true);
+    });
+
+    it("stopRecording is a no-op when inactive", () => {
+      ghost.stopRecording();
+      expect(ghost.getLifecycleState()).toBe("inactive");
+    });
+
+    it("stopRecording is a no-op when already fading out", () => {
+      const g = new EchoGhost(100, 500, 20);
+      for (let i = 0; i < g.getDelayTicks() + 3; i++) {
+        g.recordTick(snap([i, 0]));
+      }
+      g.stopRecording();
+      expect(g.getLifecycleState()).toBe("fadingOut");
+
+      // Advance a bit, then call stopRecording again
+      g.advanceFadeOut();
+      g.stopRecording();
+      expect(g.getLifecycleState()).toBe("fadingOut");
+    });
+
+    it("stopRecording is a no-op when expired", () => {
+      const g = new EchoGhost(100, 500, 20);
+      for (let i = 0; i < g.getDelayTicks() + 3; i++) {
+        g.recordTick(snap([i, 0]));
+      }
+      g.stopRecording();
+      for (let i = 0; i < g.getTrailWindow(); i++) {
+        g.advanceFadeOut();
+      }
+      expect(g.getLifecycleState()).toBe("expired");
+
+      g.stopRecording();
+      expect(g.getLifecycleState()).toBe("expired");
+    });
+
+    it("advanceFadeOut returns false when not fading out", () => {
+      expect(ghost.advanceFadeOut()).toBe(false);
+
+      const g = new EchoGhost(100, 500, 20);
+      for (let i = 0; i < g.getDelayTicks() + 3; i++) {
+        g.recordTick(snap([i, 0]));
+      }
+      // Still active, not fading
+      expect(g.advanceFadeOut()).toBe(false);
+    });
+  });
+
+  describe("recordTick during fadingOut/expired", () => {
+    it("recordTick is a no-op during fadingOut", () => {
+      const g = new EchoGhost(100, 500, 20);
+      for (let i = 0; i < g.getDelayTicks() + 3; i++) {
+        g.recordTick(snap([i, 0]));
+      }
+      const ticksBefore = g.getTotalTicksWritten();
+      g.stopRecording();
+
+      g.recordTick(snap([99, 99]));
+      expect(g.getTotalTicksWritten()).toBe(ticksBefore);
+    });
+
+    it("recordTick is a no-op after expired", () => {
+      const g = new EchoGhost(100, 500, 20);
+      for (let i = 0; i < g.getDelayTicks() + 3; i++) {
+        g.recordTick(snap([i, 0]));
+      }
+      g.stopRecording();
+      for (let i = 0; i < g.getTrailWindow(); i++) {
+        g.advanceFadeOut();
+      }
+      const ticksBefore = g.getTotalTicksWritten();
+
+      g.recordTick(snap([99, 99]));
+      expect(g.getTotalTicksWritten()).toBe(ticksBefore);
+    });
+  });
+
+  describe("rolling replay window (trailWindow)", () => {
+    it("defaults trailWindow to delayTicks", () => {
+      const g = new EchoGhost(100, 500, 20);
+      expect(g.getTrailWindow()).toBe(g.getDelayTicks()); // 5
+    });
+
+    it("accepts custom trail window size", () => {
+      const g = new EchoGhost(100, 500, 20, 8);
+      expect(g.getTrailWindow()).toBe(8);
+    });
+
+    it("caps ghost trail length to trailWindow", () => {
+      // delayTicks = 5, capacity = 30, trailWindow = 3
+      const g = new EchoGhost(100, 500, 30, 3);
+
+      // Record 15 entries; readable = 15 - 5 = 10, but window = 3
+      for (let i = 0; i < 15; i++) {
+        g.recordTick(snap([i, 0]));
+      }
+
+      expect(g.getGhostLength()).toBe(3);
+      const trail = g.getGhostTrail();
+      expect(trail.length).toBe(3);
+      // Trail should contain the 3 most recent readable entries
+      expect(trail[0].segments[0]).toEqual({ col: 7, row: 0 });
+      expect(trail[1].segments[0]).toEqual({ col: 8, row: 0 });
+      expect(trail[2].segments[0]).toEqual({ col: 9, row: 0 });
+    });
+
+    it("trail does not exceed trailWindow even with large buffer", () => {
+      // delayTicks = 5, capacity = 100, trailWindow = 5
+      const g = new EchoGhost(100, 500, 100);
+
+      // Record 60 entries; readable = 55, but window = 5
+      for (let i = 0; i < 60; i++) {
+        g.recordTick(snap([i, 0]));
+      }
+
+      expect(g.getGhostLength()).toBe(5);
+      const trail = g.getGhostTrail();
+      expect(trail.length).toBe(5);
+    });
+
+    it("trail is a sliding window showing most recent readable entries", () => {
+      // delayTicks = 3, capacity = 20, trailWindow = 4
+      const g = new EchoGhost(100, 300, 20, 4);
+
+      for (let i = 0; i < 10; i++) {
+        g.recordTick(snap([i, 0]));
+      }
+      // readable = 10 - 3 = 7, window = 4
+      const trail = g.getGhostTrail();
+      expect(trail.length).toBe(4);
+      // Should show entries [3, 4, 5, 6] (the most recent 4 readable)
+      expect(trail[0].segments[0]).toEqual({ col: 3, row: 0 });
+      expect(trail[3].segments[0]).toEqual({ col: 6, row: 0 });
+    });
+  });
+
+  describe("fade-out opacity", () => {
+    it("getFadeOpacity returns 1 when active", () => {
+      const g = new EchoGhost(100, 500, 20);
+      for (let i = 0; i < g.getDelayTicks() + 3; i++) {
+        g.recordTick(snap([i, 0]));
+      }
+      expect(g.getFadeOpacity()).toBe(1);
+    });
+
+    it("getFadeOpacity returns 1 when inactive", () => {
+      expect(ghost.getFadeOpacity()).toBe(1);
+    });
+
+    it("getFadeOpacity decreases during fade-out", () => {
+      const g = new EchoGhost(100, 500, 20);
+      for (let i = 0; i < g.getDelayTicks() + 3; i++) {
+        g.recordTick(snap([i, 0]));
+      }
+      g.stopRecording();
+
+      const fadeOutDuration = g.getTrailWindow();
+      const opacities: number[] = [];
+      for (let i = 0; i < fadeOutDuration; i++) {
+        opacities.push(g.getFadeOpacity());
+        g.advanceFadeOut();
+      }
+
+      // Each opacity should be less than or equal to the previous
+      for (let i = 1; i < opacities.length; i++) {
+        expect(opacities[i]).toBeLessThanOrEqual(opacities[i - 1]);
+      }
+      // First should be 1, last should be near 0
+      expect(opacities[0]).toBe(1);
+      expect(opacities[opacities.length - 1]).toBeGreaterThan(0);
+    });
+
+    it("getFadeOpacity returns 0 when expired", () => {
+      const g = new EchoGhost(100, 500, 20);
+      for (let i = 0; i < g.getDelayTicks() + 3; i++) {
+        g.recordTick(snap([i, 0]));
+      }
+      g.stopRecording();
+      for (let i = 0; i < g.getTrailWindow(); i++) {
+        g.advanceFadeOut();
+      }
+      expect(g.getFadeOpacity()).toBe(0);
+    });
+  });
+
+  describe("getGhostTrailWithOpacity", () => {
+    it("returns empty array when inactive", () => {
+      expect(ghost.getGhostTrailWithOpacity()).toEqual([]);
+    });
+
+    it("returns empty array when expired", () => {
+      const g = new EchoGhost(100, 500, 20);
+      for (let i = 0; i < g.getDelayTicks() + 3; i++) {
+        g.recordTick(snap([i, 0]));
+      }
+      g.stopRecording();
+      for (let i = 0; i < g.getTrailWindow(); i++) {
+        g.advanceFadeOut();
+      }
+      expect(g.getGhostTrailWithOpacity()).toEqual([]);
+    });
+
+    it("returns entries with positional opacity gradient", () => {
+      // delayTicks = 3, capacity = 20, trailWindow = 3
+      const g = new EchoGhost(100, 300, 20);
+
+      for (let i = 0; i < 7; i++) {
+        g.recordTick(snap([i, 0]));
+      }
+
+      const trailWithOpacity = g.getGhostTrailWithOpacity();
+      expect(trailWithOpacity.length).toBe(3);
+
+      // Oldest entry should have lower opacity than newest
+      expect(trailWithOpacity[0].opacity).toBeLessThan(
+        trailWithOpacity[trailWithOpacity.length - 1].opacity,
+      );
+
+      // Newest entry should be at full opacity (1.0)
+      expect(trailWithOpacity[trailWithOpacity.length - 1].opacity).toBe(1);
+
+      // Oldest entry should be at ~0.2
+      expect(trailWithOpacity[0].opacity).toBeCloseTo(0.2, 2);
+    });
+
+    it("single-entry trail has opacity 1", () => {
+      const g = new EchoGhost(100, 300, 20);
+
+      // Record exactly delayTicks + 1 entries
+      for (let i = 0; i < 4; i++) {
+        g.recordTick(snap([i, 0]));
+      }
+
+      const trailWithOpacity = g.getGhostTrailWithOpacity();
+      expect(trailWithOpacity.length).toBe(1);
+      expect(trailWithOpacity[0].opacity).toBe(1);
+    });
+
+    it("applies global fade multiplier during fade-out", () => {
+      const g = new EchoGhost(100, 500, 20);
+      for (let i = 0; i < g.getDelayTicks() + 3; i++) {
+        g.recordTick(snap([i, 0]));
+      }
+
+      // Get opacities before fade-out
+      const beforeFade = g.getGhostTrailWithOpacity();
+      const maxOpacityBefore = beforeFade[beforeFade.length - 1].opacity;
+
+      g.stopRecording();
+      // Advance fade-out halfway
+      const halfDuration = Math.floor(g.getTrailWindow() / 2);
+      for (let i = 0; i < halfDuration; i++) {
+        g.advanceFadeOut();
+      }
+
+      const duringFade = g.getGhostTrailWithOpacity();
+      const maxOpacityDuring = duringFade[duringFade.length - 1].opacity;
+
+      // All opacities should be reduced during fade-out
+      expect(maxOpacityDuring).toBeLessThan(maxOpacityBefore);
+    });
+
+    it("snapshots in trail match getGhostTrail", () => {
+      const g = new EchoGhost(100, 300, 20);
+
+      for (let i = 0; i < 8; i++) {
+        g.recordTick(snap([i, 0]));
+      }
+
+      const trail = g.getGhostTrail();
+      const trailWithOpacity = g.getGhostTrailWithOpacity();
+
+      expect(trailWithOpacity.length).toBe(trail.length);
+      for (let i = 0; i < trail.length; i++) {
+        expect(trailWithOpacity[i].snapshot).toEqual(trail[i]);
+      }
+    });
+  });
+
+  describe("expired ghost behavior", () => {
+    it("getGhostTrail returns empty after expiry", () => {
+      const g = new EchoGhost(100, 500, 20);
+      for (let i = 0; i < g.getDelayTicks() + 3; i++) {
+        g.recordTick(snap([i, 0]));
+      }
+      g.stopRecording();
+      for (let i = 0; i < g.getTrailWindow(); i++) {
+        g.advanceFadeOut();
+      }
+
+      expect(g.getGhostTrail()).toEqual([]);
+      expect(g.getGhostHead()).toBeUndefined();
+      expect(g.getGhostLength()).toBe(0);
+      expect(g.isActive()).toBe(false);
+      expect(g.isOnGhost({ col: 0, row: 0 })).toBe(false);
+    });
+  });
+
+  describe("reset clears lifecycle state", () => {
+    it("resets from fadingOut to inactive", () => {
+      const g = new EchoGhost(100, 500, 20);
+      for (let i = 0; i < g.getDelayTicks() + 3; i++) {
+        g.recordTick(snap([i, 0]));
+      }
+      g.stopRecording();
+      g.advanceFadeOut();
+
+      g.reset();
+      expect(g.getLifecycleState()).toBe("inactive");
+      expect(g.isFadingOut()).toBe(false);
+      expect(g.getFadeOpacity()).toBe(1);
+    });
+
+    it("resets from expired to inactive", () => {
+      const g = new EchoGhost(100, 500, 20);
+      for (let i = 0; i < g.getDelayTicks() + 3; i++) {
+        g.recordTick(snap([i, 0]));
+      }
+      g.stopRecording();
+      for (let i = 0; i < g.getTrailWindow(); i++) {
+        g.advanceFadeOut();
+      }
+      expect(g.isExpired()).toBe(true);
+
+      g.reset();
+      expect(g.getLifecycleState()).toBe("inactive");
+      expect(g.isExpired()).toBe(false);
+      expect(g.getFadeOpacity()).toBe(1);
+    });
+
+    it("can record and activate again after reset", () => {
+      const g = new EchoGhost(100, 500, 20);
+      for (let i = 0; i < g.getDelayTicks() + 3; i++) {
+        g.recordTick(snap([i, 0]));
+      }
+      g.stopRecording();
+      for (let i = 0; i < g.getTrailWindow(); i++) {
+        g.advanceFadeOut();
+      }
+
+      g.reset();
+
+      // Should be able to start a fresh lifecycle
+      for (let i = 0; i < g.getDelayTicks() + 2; i++) {
+        g.recordTick(snap([100 + i, 0]));
+      }
+      expect(g.isActive()).toBe(true);
+      expect(g.getLifecycleState()).toBe("active");
+      expect(g.getGhostTrail().length).toBe(2);
+    });
+  });
+
+  describe("rewind support preserves lifecycle state", () => {
+    it("snapshot/restore round-trip preserves fadingOut state", () => {
+      const g = new EchoGhost(100, 500, 20);
+      for (let i = 0; i < g.getDelayTicks() + 3; i++) {
+        g.recordTick(snap([i, 0]));
+      }
+      g.stopRecording();
+      g.advanceFadeOut();
+      g.advanceFadeOut();
+
+      const snap1 = g.snapshot();
+
+      // Mutate further
+      g.advanceFadeOut();
+      g.advanceFadeOut();
+
+      g.restore(snap1);
+      expect(g.getLifecycleState()).toBe("fadingOut");
+      expect(g.getFadeOpacity()).toBeGreaterThan(0);
+    });
+
+    it("snapshot includes lifecycle fields", () => {
+      const g = new EchoGhost(100, 500, 20);
+      for (let i = 0; i < g.getDelayTicks() + 3; i++) {
+        g.recordTick(snap([i, 0]));
+      }
+      g.stopRecording();
+
+      const snap1 = g.snapshot();
+      expect(snap1.lifecycleState).toBe("fadingOut");
+      expect(snap1.fadeOutTick).toBe(0);
+      expect(snap1.fadeOutDuration).toBe(g.getTrailWindow());
+    });
+  });
 });
