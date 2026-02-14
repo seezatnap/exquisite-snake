@@ -152,6 +152,10 @@ export class MainScene extends Phaser.Scene {
     if (this.snake?.isAlive()) {
       this.snake.kill();
     }
+    // Stop recording so the ghost can drain remaining frames and fade out
+    if (this.echoGhost) {
+      this.echoGhost.stopRecording();
+    }
     const { score, highScore } = gameBridge.getState();
     if (score > highScore) {
       gameBridge.setHighScore(score);

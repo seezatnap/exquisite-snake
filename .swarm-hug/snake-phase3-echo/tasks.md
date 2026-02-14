@@ -4,7 +4,7 @@
 
 - [x] (#1) Create `src/game/entities/EchoGhost.ts` with an `EchoGhost` entity that records the snake path each tick into a fixed-size circular buffer, supports 5-second replay delay derived from tick rate, and exposes deterministic APIs for writing positions and reading the delayed ghost trail. [5 pts] (A)
 - [x] (#2) Integrate the new ghost entity into game initialization and update lifecycle so each game tick appends the current snake state, tracks progression vs. replay, and starts ghost output after exactly 5 seconds without affecting existing movement/food logic. [5 pts] (blocked by #1) (A)
-- [ ] (#3) Implement ghost lifecycle management for bounded playback: when buffered history is exhausted, fade the ghost out cleanly and prevent indefinite extension/growth while still maintaining a rolling replay window. [5 pts] (blocked by #1, #2)
+- [x] (#3) Implement ghost lifecycle management for bounded playback: when buffered history is exhausted, fade the ghost out cleanly and prevent indefinite extension/growth while still maintaining a rolling replay window. [5 pts] (blocked by #1, #2) (A)
 
 ## Gameplay & Collision
 
@@ -26,3 +26,6 @@
 
 ## Follow-up tasks (from sprint review)
 - [x] (#10) Add unit tests for `EchoGhost.reset()` and constructor edge cases (zero/negative tick interval and delay) in `echo-ghost.test.ts` (blocked by #1) (A)
+
+## Follow-up tasks (from sprint review)
+- [ ] (#11) Wire `advancePlayhead()` into the game loop so the ghost actually drains and fades after `stopRecording()` is called during game-over (the update loop currently exits early when phase is not `"playing"`, so the fade-out never runs) (blocked by #3)
