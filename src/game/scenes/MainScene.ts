@@ -16,6 +16,7 @@ import { EchoGhost } from "../entities/EchoGhost";
 import { emitFoodParticles, shakeCamera } from "../systems/effects";
 import { RewindManager } from "../systems/RewindManager";
 import { GhostFoodScheduler } from "../systems/ghostFoodBurst";
+import { EchoGhostRenderer } from "../systems/echoGhostRenderer";
 
 // ── Default spawn configuration ─────────────────────────────────
 
@@ -54,6 +55,9 @@ export class MainScene extends Phaser.Scene {
 
   /** Scheduler for delayed ghost-food particle bursts. */
   private ghostFoodScheduler: GhostFoodScheduler | null = null;
+
+  /** Visual renderer for the echo ghost trail. */
+  private echoGhostRenderer: EchoGhostRenderer | null = null;
 
   /**
    * Injectable RNG function for deterministic replay sessions.
@@ -138,6 +142,11 @@ export class MainScene extends Phaser.Scene {
         }
       }
     }
+
+    // Update ghost renderer every frame for smooth opacity transitions
+    if (this.echoGhost && this.echoGhostRenderer) {
+      this.echoGhostRenderer.update(this.echoGhost);
+    }
   }
 
   // ── Phase management ────────────────────────────────────────
@@ -198,6 +207,7 @@ export class MainScene extends Phaser.Scene {
     this.snake.setupTouchInput();
     this.food = new Food(this, this.snake, this.rng);
     this.echoGhost = new EchoGhost();
+    this.echoGhostRenderer = new EchoGhostRenderer(this);
     this.rewindManager.register("echoGhost", this.echoGhost);
     this.ghostFoodScheduler = new GhostFoodScheduler();
   }
@@ -211,6 +221,10 @@ export class MainScene extends Phaser.Scene {
     if (this.food) {
       this.food.destroy();
       this.food = null;
+    }
+    if (this.echoGhostRenderer) {
+      this.echoGhostRenderer.destroy();
+      this.echoGhostRenderer = null;
     }
     if (this.echoGhost) {
       this.echoGhost.reset();
@@ -316,6 +330,10 @@ export class MainScene extends Phaser.Scene {
 
   getGhostFoodScheduler(): GhostFoodScheduler | null {
     return this.ghostFoodScheduler;
+  }
+
+  getEchoGhostRenderer(): EchoGhostRenderer | null {
+    return this.echoGhostRenderer;
   }
 
   // ── Arena grid ──────────────────────────────────────────────

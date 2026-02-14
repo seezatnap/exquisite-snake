@@ -70,5 +70,73 @@ export class Boot extends Phaser.Scene {
       );
       particleGfx.destroy();
     }
+
+    // ── Ghost body: dashed outline rect (cyan) ────────────────────
+    if (!this.textures.exists(TEXTURE_KEYS.GHOST_BODY)) {
+      const ghostGfx = this.make.graphics({ x: 0, y: 0 }, false);
+      const inset = 2;
+      const w = size - inset * 2;
+      const dashLen = 3;
+      const gapLen = 3;
+      ghostGfx.lineStyle(1, COLORS.GHOST_BODY, 1);
+
+      // Draw dashed rectangle: top, right, bottom, left edges
+      this.drawDashedLine(ghostGfx, inset, inset, inset + w, inset, dashLen, gapLen);
+      this.drawDashedLine(ghostGfx, inset + w, inset, inset + w, inset + w, dashLen, gapLen);
+      this.drawDashedLine(ghostGfx, inset + w, inset + w, inset, inset + w, dashLen, gapLen);
+      this.drawDashedLine(ghostGfx, inset, inset + w, inset, inset, dashLen, gapLen);
+
+      ghostGfx.generateTexture(TEXTURE_KEYS.GHOST_BODY, size, size);
+      ghostGfx.destroy();
+    }
+
+    // ── Ghost particle: small cyan dot for trailing particles ─────
+    if (!this.textures.exists(TEXTURE_KEYS.GHOST_PARTICLE)) {
+      const gpSize = 4;
+      const gpGfx = this.make.graphics({ x: 0, y: 0 }, false);
+      gpGfx.fillStyle(COLORS.GHOST_PARTICLE, 1);
+      gpGfx.fillCircle(gpSize / 2, gpSize / 2, gpSize / 2);
+      gpGfx.generateTexture(TEXTURE_KEYS.GHOST_PARTICLE, gpSize, gpSize);
+      gpGfx.destroy();
+    }
+  }
+
+  /** Draw a dashed line between two points on a Graphics object. */
+  private drawDashedLine(
+    gfx: Phaser.GameObjects.Graphics,
+    x1: number,
+    y1: number,
+    x2: number,
+    y2: number,
+    dashLength: number,
+    gapLength: number,
+  ): void {
+    const dx = x2 - x1;
+    const dy = y2 - y1;
+    const totalLength = Math.sqrt(dx * dx + dy * dy);
+    const ux = dx / totalLength;
+    const uy = dy / totalLength;
+
+    let drawn = 0;
+    let drawing = true; // true = dash, false = gap
+
+    while (drawn < totalLength) {
+      const segLen = Math.min(
+        drawing ? dashLength : gapLength,
+        totalLength - drawn,
+      );
+      const startX = x1 + ux * drawn;
+      const startY = y1 + uy * drawn;
+
+      if (drawing) {
+        gfx.beginPath();
+        gfx.moveTo(startX, startY);
+        gfx.lineTo(startX + ux * segLen, startY + uy * segLen);
+        gfx.strokePath();
+      }
+
+      drawn += segLen;
+      drawing = !drawing;
+    }
   }
 }
