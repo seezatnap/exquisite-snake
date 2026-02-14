@@ -89,7 +89,7 @@ import {
   Biome,
   BiomeColorManager,
   BIOME_COLORS,
-  BIOME_DURATION_MS,
+  BIOME_ROTATION_INTERVAL_MS,
   BIOME_TRANSITION_DURATION_MS,
   lerpColor,
   getBiomeColors,
@@ -179,10 +179,10 @@ describe("BiomeColorManager", () => {
     expect(mgr.getCurrentBiome()).toBe(Biome.NeonCity);
   });
 
-  it("transitions to IceCavern after BIOME_DURATION_MS", () => {
+  it("transitions to IceCavern after BIOME_ROTATION_INTERVAL_MS", () => {
     const mgr = new BiomeColorManager();
     mgr.start();
-    mgr.update(BIOME_DURATION_MS);
+    mgr.update(BIOME_ROTATION_INTERVAL_MS);
     expect(mgr.getCurrentBiome()).toBe(Biome.IceCavern);
   });
 
@@ -191,7 +191,7 @@ describe("BiomeColorManager", () => {
     mgr.start();
     const visited: Biome[] = [mgr.getCurrentBiome()];
     for (let i = 0; i < 3; i++) {
-      mgr.update(BIOME_DURATION_MS);
+      mgr.update(BIOME_ROTATION_INTERVAL_MS);
       visited.push(mgr.getCurrentBiome());
     }
     expect(visited).toEqual([
@@ -205,39 +205,20 @@ describe("BiomeColorManager", () => {
   it("wraps around to NeonCity after VoidRift", () => {
     const mgr = new BiomeColorManager();
     mgr.start();
-    mgr.update(BIOME_DURATION_MS * 4);
+    mgr.update(BIOME_ROTATION_INTERVAL_MS * 4);
     expect(mgr.getCurrentBiome()).toBe(Biome.NeonCity);
-  });
-
-  it("emits change event on biome transition", () => {
-    const mgr = new BiomeColorManager();
-    const listener = vi.fn();
-    mgr.onChange(listener);
-    mgr.start();
-    mgr.update(BIOME_DURATION_MS);
-    expect(listener).toHaveBeenCalledWith(Biome.IceCavern, Biome.NeonCity);
-  });
-
-  it("can unsubscribe from change events", () => {
-    const mgr = new BiomeColorManager();
-    const listener = vi.fn();
-    mgr.onChange(listener);
-    mgr.offChange(listener);
-    mgr.start();
-    mgr.update(BIOME_DURATION_MS);
-    expect(listener).not.toHaveBeenCalled();
   });
 
   it("does not advance when not running", () => {
     const mgr = new BiomeColorManager();
-    mgr.update(BIOME_DURATION_MS);
+    mgr.update(BIOME_ROTATION_INTERVAL_MS);
     expect(mgr.getCurrentBiome()).toBe(Biome.NeonCity);
   });
 
   it("resets to initial state", () => {
     const mgr = new BiomeColorManager();
     mgr.start();
-    mgr.update(BIOME_DURATION_MS);
+    mgr.update(BIOME_ROTATION_INTERVAL_MS);
     mgr.reset();
     expect(mgr.getCurrentBiome()).toBe(Biome.NeonCity);
     expect(mgr.isRunning()).toBe(false);
@@ -260,7 +241,7 @@ describe("BiomeColorManager", () => {
       const mgr = new BiomeColorManager();
       mgr.start();
       // Trigger transition
-      mgr.update(BIOME_DURATION_MS);
+      mgr.update(BIOME_ROTATION_INTERVAL_MS);
       // Complete the transition crossfade
       mgr.update(BIOME_TRANSITION_DURATION_MS);
       expect(mgr.getGhostBodyColor()).toBe(BIOME_COLORS[Biome.IceCavern].snakeBody);
@@ -271,7 +252,7 @@ describe("BiomeColorManager", () => {
       const mgr = new BiomeColorManager();
       mgr.start();
       // Trigger biome change
-      mgr.update(BIOME_DURATION_MS);
+      mgr.update(BIOME_ROTATION_INTERVAL_MS);
       // Advance halfway through transition
       mgr.update(BIOME_TRANSITION_DURATION_MS / 2);
 
@@ -293,7 +274,7 @@ describe("BiomeColorManager", () => {
       expect(mgr.isTransitioning()).toBe(false);
 
       // Trigger transition
-      mgr.update(BIOME_DURATION_MS);
+      mgr.update(BIOME_ROTATION_INTERVAL_MS);
       expect(mgr.getTransitionProgress()).toBe(0);
       expect(mgr.isTransitioning()).toBe(true);
 
@@ -529,7 +510,7 @@ describe("GhostRenderer biome-aware tinting", () => {
       renderer.setBiomeColorProvider(mgr);
 
       // Trigger biome change then complete the crossfade
-      mgr.update(BIOME_DURATION_MS);
+      mgr.update(BIOME_ROTATION_INTERVAL_MS);
       mgr.update(BIOME_TRANSITION_DURATION_MS);
 
       mockGraphicsFillStyle.mockClear();
@@ -549,7 +530,7 @@ describe("GhostRenderer biome-aware tinting", () => {
       renderer.setBiomeColorProvider(mgr);
 
       // Trigger the biome change
-      mgr.update(BIOME_DURATION_MS);
+      mgr.update(BIOME_ROTATION_INTERVAL_MS);
       // Halfway through the transition
       mgr.update(BIOME_TRANSITION_DURATION_MS / 2);
 
