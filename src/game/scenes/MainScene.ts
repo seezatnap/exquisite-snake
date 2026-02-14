@@ -20,6 +20,7 @@ import {
 } from "../utils/grid";
 import { Snake } from "../entities/Snake";
 import { Food } from "../entities/Food";
+import { EchoGhost } from "../entities/EchoGhost";
 import { emitFoodParticles, shakeCamera } from "../systems/effects";
 import {
   Biome,
@@ -178,6 +179,9 @@ export class MainScene extends Phaser.Scene {
   /** The food entity for the current run (null when not playing). */
   private food: Food | null = null;
 
+  /** Delayed playback of historical snake path for Echo Ghost mechanics. */
+  private echoGhost: EchoGhost | null = null;
+
   /** Biome rotation/timing owner for the current run. */
   private readonly biomeManager = new BiomeManager();
 
@@ -289,7 +293,8 @@ export class MainScene extends Phaser.Scene {
     gameBridge.setElapsedTime(gameBridge.getState().elapsedTime + delta);
     this.updateBiomeState(delta);
 
-    if (!this.snake || !this.food) return;
+    if (!this.snake || !this.food || !this.echoGhost) return;
+    this.echoGhost.advance(delta);
     this.updateMoltenCoreMechanics(delta);
     this.updateBiomeMechanicVisuals(delta);
 
@@ -305,10 +310,13 @@ export class MainScene extends Phaser.Scene {
       const gravityApplied = this.applyVoidRiftGravityNudgeIfDue();
       if (gravityApplied) {
         if (this.checkCollisions()) {
+          this.echoGhost.recordPath(this.snake.getSegments());
           return;
         }
         this.resolveFoodConsumption();
       }
+
+      this.echoGhost.recordPath(this.snake.getSegments());
     }
   }
 
@@ -382,6 +390,8 @@ export class MainScene extends Phaser.Scene {
     this.snake.setupInput();
     this.snake.setupTouchInput();
     this.food = new Food(this, this.snake, this.rng);
+    this.echoGhost = new EchoGhost();
+    this.echoGhost.recordPath(this.snake.getSegments());
   }
 
   /** Destroy existing snake and food entities. */
@@ -393,6 +403,10 @@ export class MainScene extends Phaser.Scene {
     if (this.food) {
       this.food.destroy();
       this.food = null;
+    }
+    if (this.echoGhost) {
+      this.echoGhost.reset();
+      this.echoGhost = null;
     }
   }
 
@@ -522,6 +536,10 @@ export class MainScene extends Phaser.Scene {
 
   getFood(): Food | null {
     return this.food;
+  }
+
+  getEchoGhost(): EchoGhost | null {
+    return this.echoGhost;
   }
 
   // ── Arena grid ──────────────────────────────────────────────
