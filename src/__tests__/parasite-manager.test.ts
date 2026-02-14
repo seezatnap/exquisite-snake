@@ -283,6 +283,107 @@ describe("ParasiteManager scaffold", () => {
     expect(manager.isEchoGhostExcludedFromParasites()).toBe(true);
   });
 
+  it("keeps echo ghost excluded from parasite collisions and effects", () => {
+    const manager = new ParasiteManager();
+    const seeded = manager.getState();
+    seeded.pickups = [
+      {
+        id: "pickup-ghost",
+        type: ParasiteType.Shield,
+        position: { col: 3, row: 3 },
+        spawnedAtMs: 100,
+      },
+    ];
+    seeded.splitterObstacles = [
+      {
+        id: "splitter-ghost",
+        position: { col: 6, row: 6 },
+        spawnedAtMs: 200,
+        sourceSegmentId: "seg-splitter",
+      },
+    ];
+    seeded.inventory.segments = [
+      {
+        id: "seg-magnet",
+        type: ParasiteType.Magnet,
+        attachedAtMs: 1,
+        sourcePickupId: "pickup-magnet",
+      },
+      {
+        id: "seg-shield",
+        type: ParasiteType.Shield,
+        attachedAtMs: 2,
+        sourcePickupId: "pickup-shield",
+      },
+      {
+        id: "seg-splitter",
+        type: ParasiteType.Splitter,
+        attachedAtMs: 3,
+        sourcePickupId: "pickup-splitter",
+      },
+    ];
+    manager.replaceState(seeded);
+
+    expect(manager.canTargetCollideWithPickups("snake")).toBe(true);
+    expect(manager.canTargetCollideWithObstacles("snake")).toBe(true);
+    expect(manager.canTargetReceiveEffects("snake")).toBe(true);
+
+    expect(manager.canTargetCollideWithPickups("echoGhost")).toBe(false);
+    expect(manager.canTargetCollideWithObstacles("echoGhost")).toBe(false);
+    expect(manager.canTargetReceiveEffects("echoGhost")).toBe(false);
+
+    expect(manager.hasSplitterObstacleAt({ col: 6, row: 6 })).toBe(true);
+    expect(manager.hasSplitterObstacleAt({ col: 6, row: 6 }, "echoGhost")).toBe(
+      false,
+    );
+
+    expect(manager.getMagnetSpeedMultiplier("echoGhost")).toBe(1);
+    expect(manager.getSplitterScoreMultiplier("echoGhost")).toBe(1);
+    expect(
+      manager.applyScoreModifiers({
+        basePoints: 4,
+        source: "food",
+        target: "echoGhost",
+      }),
+    ).toBe(4);
+
+    const shieldCollision = manager.resolveShieldCollision({
+      target: "echoGhost",
+      head: { col: GRID_COLS, row: 6 },
+      wallCollision: true,
+      selfCollision: false,
+    });
+    expect(shieldCollision.absorbed).toBe(false);
+    expect(shieldCollision.consumedSegment).toBeNull();
+    expect(shieldCollision.blockedFoodCharges).toBe(0);
+    expect(shieldCollision.activeSegments).toHaveLength(3);
+
+    const pulledFood = manager.resolveMagnetFoodPull({
+      target: "echoGhost",
+      snakeSegments: [
+        { col: 7, row: 7 },
+        { col: 6, row: 7 },
+        { col: 5, row: 7 },
+      ],
+      foodPosition: { col: 5, row: 9 },
+      obstaclePositions: [],
+    });
+    expect(pulledFood).toBeNull();
+
+    const consumed = manager.consumePickupAt(
+      { col: 3, row: 3 },
+      999,
+      "echoGhost",
+    );
+    expect(consumed).toBeNull();
+
+    const after = manager.getState();
+    expect(after.pickups).toHaveLength(1);
+    expect(after.inventory.segments).toHaveLength(3);
+    expect(after.parasitesCollected).toBe(0);
+    expect(after.blockedFoodCharges).toBe(0);
+  });
+
   it("applies the splitter score multiplier while splitter is attached", () => {
     const manager = new ParasiteManager();
 
@@ -794,5 +895,236 @@ describe("ParasiteManager scaffold", () => {
     ]);
     expect(manager.getActiveSegments()).toHaveLength(PARASITE_MAX_SEGMENTS);
     expect(manager.getParasitesCollectedCount()).toBe(4);
+  });
+});
+
+describe("ParasiteManager ability-rule regressions", () => {
+  it("validates spawn candidates are empty cells only", () => {
+    const manager = new ParasiteManager();
+    const seeded = manager.getState();
+    seeded.pickups = [
+      {
+        id: "existing-pickup",
+        type: ParasiteType.Magnet,
+        position: { col: 1, row: 1 },
+        spawnedAtMs: 1_000,
+      },
+    ];
+    seeded.splitterObstacles = [
+      {
+        id: "existing-splitter",
+        position: { col: 2, row: 2 },
+        spawnedAtMs: 2_000,
+        sourceSegmentId: null,
+      },
+    ];
+    manager.replaceState(seeded);
+
+    const candidates = manager.getPickupSpawnCandidates({
+      snakeSegments: [
+        { col: 0, row: 0 },
+        { col: 0, row: 1 },
+      ],
+      foodPosition: { col: 0, row: 2 },
+      obstaclePositions: [{ col: 0, row: 3 }],
+    });
+
+    const blocked = new Set<string>(["0:0", "0:1", "0:2", "0:3", "1:1", "2:2"]);
+    expect(candidates).toHaveLength(GRID_COLS * GRID_ROWS - blocked.size);
+    for (const position of candidates) {
+      expect(blocked.has(toGridKey(position))).toBe(false);
+    }
+  });
+
+  it("maintains FIFO cap order across repeated over-cap pickup consumption", () => {
+    const manager = new ParasiteManager();
+    const seeded = manager.getState();
+    seeded.inventory.segments = [
+      {
+        id: "seg-1",
+        type: ParasiteType.Magnet,
+        attachedAtMs: 10,
+        sourcePickupId: "pickup-1",
+      },
+      {
+        id: "seg-2",
+        type: ParasiteType.Shield,
+        attachedAtMs: 20,
+        sourcePickupId: "pickup-2",
+      },
+      {
+        id: "seg-3",
+        type: ParasiteType.Splitter,
+        attachedAtMs: 30,
+        sourcePickupId: "pickup-3",
+      },
+    ];
+    seeded.pickups = [
+      {
+        id: "pickup-4",
+        type: ParasiteType.Magnet,
+        position: { col: 4, row: 4 },
+        spawnedAtMs: 4_000,
+      },
+      {
+        id: "pickup-5",
+        type: ParasiteType.Shield,
+        position: { col: 5, row: 5 },
+        spawnedAtMs: 5_000,
+      },
+    ];
+    manager.replaceState(seeded);
+
+    const first = manager.consumePickupAt({ col: 4, row: 4 }, 40);
+    const second = manager.consumePickupAt({ col: 5, row: 5 }, 50);
+
+    expect(first?.shedSegment?.id).toBe("seg-1");
+    expect(second?.shedSegment?.id).toBe("seg-2");
+    expect(manager.getActiveSegments().map((segment) => segment.id)).toEqual([
+      "seg-3",
+      "segment-pickup-4",
+      "segment-pickup-5",
+    ]);
+    expect(manager.getActiveSegments()).toHaveLength(PARASITE_MAX_SEGMENTS);
+  });
+
+  it("stacks magnet speed bonuses per segment and still pulls food one tile", () => {
+    const manager = new ParasiteManager();
+    const seeded = manager.getState();
+    seeded.inventory.segments = [
+      {
+        id: "seg-shield",
+        type: ParasiteType.Shield,
+        attachedAtMs: 1,
+        sourcePickupId: "pickup-shield",
+      },
+      {
+        id: "seg-magnet-a",
+        type: ParasiteType.Magnet,
+        attachedAtMs: 2,
+        sourcePickupId: "pickup-magnet-a",
+      },
+      {
+        id: "seg-magnet-b",
+        type: ParasiteType.Magnet,
+        attachedAtMs: 3,
+        sourcePickupId: "pickup-magnet-b",
+      },
+    ];
+    seeded.pickups = [
+      {
+        id: "pickup-magnet-c",
+        type: ParasiteType.Magnet,
+        position: { col: 10, row: 10 },
+        spawnedAtMs: 5_000,
+      },
+    ];
+    manager.replaceState(seeded);
+
+    expect(manager.getMagnetSpeedMultiplier()).toBeCloseTo(1.2);
+    const consumed = manager.consumePickupAt({ col: 10, row: 10 }, 6_000);
+    expect(consumed?.shedSegment?.id).toBe("seg-shield");
+    expect(manager.getMagnetSpeedMultiplier()).toBeCloseTo(1.3);
+
+    const pulled = manager.resolveMagnetFoodPull({
+      snakeSegments: [
+        { col: 5, row: 5 },
+        { col: 4, row: 5 },
+        { col: 3, row: 5 },
+        { col: 2, row: 5 },
+        { col: 1, row: 5 },
+      ],
+      foodPosition: { col: 3, row: 7 },
+      obstaclePositions: [],
+    });
+
+    expect(pulled).toEqual({ col: 3, row: 6 });
+  });
+
+  it("consumes shield absorbs into blocked-food charges and resolves contacts in order", () => {
+    const manager = new ParasiteManager();
+    const seeded = manager.getState();
+    seeded.inventory.segments = [
+      {
+        id: "seg-shield-1",
+        type: ParasiteType.Shield,
+        attachedAtMs: 10,
+        sourcePickupId: "pickup-shield-1",
+      },
+      {
+        id: "seg-shield-2",
+        type: ParasiteType.Shield,
+        attachedAtMs: 20,
+        sourcePickupId: "pickup-shield-2",
+      },
+    ];
+    manager.replaceState(seeded);
+
+    const absorbedWall = manager.resolveShieldCollision({
+      head: { col: GRID_COLS, row: 8 },
+      wallCollision: true,
+      selfCollision: false,
+    });
+    const absorbedSelf = manager.resolveShieldCollision({
+      head: { col: 8, row: 8 },
+      wallCollision: false,
+      selfCollision: true,
+    });
+
+    expect(absorbedWall.absorbed).toBe(true);
+    expect(absorbedSelf.absorbed).toBe(true);
+    expect(manager.getBlockedFoodCharges()).toBe(2);
+
+    const nonContact = manager.resolveFoodContact({
+      head: { col: 4, row: 4 },
+      foodPosition: { col: 6, row: 6 },
+    });
+    expect(nonContact).toEqual({ blocked: false, blockedFoodCharges: 2 });
+
+    const firstBlocked = manager.resolveFoodContact({
+      head: { col: 6, row: 6 },
+      foodPosition: { col: 6, row: 6 },
+    });
+    const secondBlocked = manager.resolveFoodContact({
+      head: { col: 6, row: 6 },
+      foodPosition: { col: 6, row: 6 },
+    });
+    const thirdAllowed = manager.resolveFoodContact({
+      head: { col: 6, row: 6 },
+      foodPosition: { col: 6, row: 6 },
+    });
+
+    expect(firstBlocked).toEqual({ blocked: true, blockedFoodCharges: 1 });
+    expect(secondBlocked).toEqual({ blocked: true, blockedFoodCharges: 0 });
+    expect(thirdAllowed).toEqual({ blocked: false, blockedFoodCharges: 0 });
+  });
+
+  it("applies splitter multiplier before scoring hooks when splitter is attached", () => {
+    const manager = new ParasiteManager();
+    const scoringInputs: number[] = [];
+    manager.setPhase3Hooks({
+      scoring: (context) => {
+        scoringInputs.push(context.basePoints);
+        return context.basePoints;
+      },
+    });
+
+    expect(
+      manager.applyScoreModifiers({ basePoints: 4, source: "food" }),
+    ).toBe(4);
+
+    const seeded = manager.getState();
+    seeded.inventory.segments.push({
+      id: "seg-splitter",
+      type: ParasiteType.Splitter,
+      attachedAtMs: 0,
+      sourcePickupId: "pickup-splitter",
+    });
+    manager.replaceState(seeded);
+
+    expect(
+      manager.applyScoreModifiers({ basePoints: 4, source: "food" }),
+    ).toBe(6);
+    expect(scoringInputs).toEqual([4, 6]);
   });
 });

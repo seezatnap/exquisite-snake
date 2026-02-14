@@ -322,6 +322,7 @@ export class MainScene extends Phaser.Scene {
   create(): void {
     this.applyBiomeCycleOrderOverrideFromUrl();
     this.syncBiomeRuntimeToBridge();
+    this.syncParasiteRuntimeToBridge();
     this.applyBiomeVisualTheme(this.biomeManager.getCurrentBiome());
     gameBridge.setHighScore(loadHighScore());
 
@@ -434,6 +435,7 @@ export class MainScene extends Phaser.Scene {
       biomeVisitStats: this.biomeManager.getVisitStats(),
     });
     this.parasiteManager.resetRun();
+    this.syncParasiteRuntimeToBridge();
     this.destroyParasitePickupSprites();
     this.resetMoltenCoreState();
     this.clearBiomeTransitionEffect();
@@ -458,6 +460,7 @@ export class MainScene extends Phaser.Scene {
     if (this.snake?.isAlive()) {
       this.snake.kill();
     }
+    this.syncParasiteRuntimeToBridge();
     const { score, highScore } = gameBridge.getState();
     if (score > highScore) {
       gameBridge.setHighScore(score);
@@ -742,6 +745,11 @@ export class MainScene extends Phaser.Scene {
       return true;
     }
 
+    if (this.hasSplitterObstacleCollision(head)) {
+      this.endRun();
+      return true;
+    }
+
     if (this.hasEchoGhostCollision(head)) {
       this.endRun();
       return true;
@@ -768,13 +776,21 @@ export class MainScene extends Phaser.Scene {
       return false;
     }
 
-    const shieldCollision = this.parasiteManager.resolveShieldCollision(context);
+    const shieldCollision = this.parasiteManager.resolveShieldCollision({
+      ...context,
+      target: "snake",
+    });
     if (!shieldCollision.absorbed) {
       return false;
     }
 
     this.snake.rewindLastStep();
+    this.syncParasiteInventoryToBridge(shieldCollision.activeSegments);
     return true;
+  }
+
+  private hasSplitterObstacleCollision(head: GridPos): boolean {
+    return this.parasiteManager.hasSplitterObstacleAt(head, "snake");
   }
 
   private hasEchoGhostCollision(head: GridPos): boolean {
@@ -797,6 +813,7 @@ export class MainScene extends Phaser.Scene {
     const adjustedPoints = this.parasiteManager.applyScoreModifiers({
       basePoints: points,
       source,
+      target: "snake",
     });
     gameBridge.setScore(gameBridge.getState().score + adjustedPoints);
   }
@@ -1004,6 +1021,14 @@ export class MainScene extends Phaser.Scene {
     }
 
     const foodPos = this.food.getPosition();
+    const parasiteState = this.parasiteManager.getState();
+    const parasiteBlockedCells = new Set<string>();
+    for (const pickup of parasiteState.pickups) {
+      parasiteBlockedCells.add(this.gridPosKey(pickup.position));
+    }
+    for (const obstacle of parasiteState.splitterObstacles) {
+      parasiteBlockedCells.add(this.gridPosKey(obstacle.position));
+    }
     const candidates: GridPos[] = [];
 
     for (let col = 0; col < GRID_COLS; col++) {
@@ -1015,7 +1040,11 @@ export class MainScene extends Phaser.Scene {
         if (foodPos.col === col && foodPos.row === row) {
           continue;
         }
-        if (this.moltenLavaPools.has(this.gridPosKey(pos))) {
+        const posKey = this.gridPosKey(pos);
+        if (this.moltenLavaPools.has(posKey)) {
+          continue;
+        }
+        if (parasiteBlockedCells.has(posKey)) {
           continue;
         }
         candidates.push(pos);
@@ -1084,6 +1113,17 @@ export class MainScene extends Phaser.Scene {
     gameBridge.setBiomeVisitStats(this.biomeManager.getVisitStats());
   }
 
+  private syncParasiteRuntimeToBridge(): void {
+    this.syncParasiteInventoryToBridge(this.parasiteManager.getActiveSegments());
+    gameBridge.setParasitesCollected(this.parasiteManager.getParasitesCollectedCount());
+  }
+
+  private syncParasiteInventoryToBridge(
+    activeSegments: readonly ParasiteSegmentState[],
+  ): void {
+    gameBridge.setActiveParasites(activeSegments.map((segment) => segment.type));
+  }
+
   private applyBiomeMovementMechanics(biome: Biome): void {
     if (!this.snake) {
       return;
@@ -1141,8 +1181,13 @@ export class MainScene extends Phaser.Scene {
     const ghostSampleTimestampMs = this.echoGhost.getElapsedMs();
     const ghostDelayMs = this.echoGhost.getDelayMs();
     const runIdAtEat = this.activeRunId;
+    const blockedRespawnCells = this.parasiteManager
+      .getState()
+      .pickups
+      .map((pickup) => pickup.position);
     const eaten = this.food.checkEat(this.snake, (points) =>
       this.addScore(points),
+      blockedRespawnCells,
     );
     if (eaten) {
       emitFoodParticles(this, fx, fy);
@@ -1163,12 +1208,15 @@ export class MainScene extends Phaser.Scene {
     const consumed = this.parasiteManager.consumePickupAt(
       this.snake.getHeadPosition(),
       gameBridge.getState().elapsedTime,
+      "snake",
     );
     if (!consumed) {
       return;
     }
 
     this.destroyParasitePickupSprite(consumed.consumedPickup.id);
+    this.syncParasiteInventoryToBridge(consumed.activeSegments);
+    gameBridge.setParasitesCollected(consumed.parasitesCollected);
   }
 
   private destroyParasitePickupSprite(pickupId: string): void {
@@ -1187,6 +1235,7 @@ export class MainScene extends Phaser.Scene {
     }
 
     const pulledFoodPosition = this.parasiteManager.resolveMagnetFoodPull({
+      target: "snake",
       snakeSegments: this.snake.getSegments(),
       foodPosition: this.food.getPosition(),
       obstaclePositions: this.getLiveObstaclePositions(),
@@ -1212,7 +1261,9 @@ export class MainScene extends Phaser.Scene {
 
     const ticker = this.snake.getTicker();
     const currentInterval = ticker.interval;
-    const magnetSpeedMultiplier = this.parasiteManager.getMagnetSpeedMultiplier();
+    const magnetSpeedMultiplier = this.parasiteManager.getMagnetSpeedMultiplier(
+      "snake",
+    );
     const hasMagnetBoost = magnetSpeedMultiplier > 1;
 
     if (!hasMagnetBoost) {

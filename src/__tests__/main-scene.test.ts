@@ -160,6 +160,8 @@ function resetBridge(): void {
     [Biome.MoltenCore]: 0,
     [Biome.VoidRift]: 0,
   });
+  gameBridge.setActiveParasites([]);
+  gameBridge.setParasitesCollected(0);
 }
 
 function injectMoltenLavaPool(
@@ -211,6 +213,21 @@ function getParasiteSegmentIconMap(scene: MainScene): Map<string, unknown> {
       parasiteSegmentIconOverlays: Map<string, unknown>;
     }
   ).parasiteSegmentIconOverlays;
+}
+
+function injectSplitterObstacle(
+  scene: MainScene,
+  pos: { col: number; row: number },
+): void {
+  const parasiteManager = getParasiteManager(scene);
+  const nextState = parasiteManager.getState();
+  nextState.splitterObstacles.push({
+    id: `test-splitter-${nextState.splitterObstacles.length + 1}`,
+    position: { ...pos },
+    spawnedAtMs: 0,
+    sourceSegmentId: "test-segment",
+  });
+  parasiteManager.replaceState(nextState);
 }
 
 beforeEach(() => {
@@ -604,6 +621,8 @@ describe("MainScene", () => {
     expect(after.parasitesCollected).toBe(1);
     expect(getParasitePickupSpriteMap(scene).has("pickup-1")).toBe(false);
     expect(pickupSpriteDestroy).toHaveBeenCalledTimes(1);
+    expect(gameBridge.getState().activeParasites).toEqual([ParasiteType.Shield]);
+    expect(gameBridge.getState().parasitesCollected).toBe(1);
   });
 
   it("applies runtime FIFO shedding and parasites-collected updates when consuming a fourth pickup", () => {
@@ -681,6 +700,50 @@ describe("MainScene", () => {
     expect(after.parasitesCollected).toBe(4);
     expect(getParasitePickupSpriteMap(scene).has("pickup-4")).toBe(false);
     expect(pickupSpriteDestroy).toHaveBeenCalledTimes(1);
+    expect(gameBridge.getState().activeParasites).toEqual([
+      ParasiteType.Shield,
+      ParasiteType.Splitter,
+      ParasiteType.Magnet,
+    ]);
+    expect(gameBridge.getState().parasitesCollected).toBe(4);
+  });
+
+  it("keeps respawned food off active parasite pickup cells after food is eaten", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.setRng(() => 0);
+    scene.enterPhase("playing");
+
+    const snake = scene.getSnake()!;
+    snake.reset({ col: 5, row: 5 }, "right", 4);
+    snake.getTicker().setInterval(100);
+    scene.getFood()!.setPosition({ col: 6, row: 5 });
+
+    const parasiteManager = getParasiteManager(scene);
+    const seeded = parasiteManager.getState();
+    seeded.pickups = [
+      {
+        id: "pickup-a",
+        type: ParasiteType.Magnet,
+        position: { col: 0, row: 0 },
+        spawnedAtMs: 1,
+      },
+      {
+        id: "pickup-b",
+        type: ParasiteType.Shield,
+        position: { col: 0, row: 1 },
+        spawnedAtMs: 2,
+      },
+    ];
+    parasiteManager.replaceState(seeded);
+
+    scene.update(0, 100);
+
+    const respawnedFood = scene.getFood()!.getPosition();
+    const activePickups = parasiteManager.getState().pickups;
+    for (const pickup of activePickups) {
+      expect(respawnedFood).not.toEqual(pickup.position);
+    }
   });
 
   it("pulls food one tile per stepped tick when a magnet segment is in range", () => {
@@ -754,6 +817,8 @@ describe("MainScene", () => {
     expect(parasiteState.pickups).toEqual([]);
     expect(parasiteState.timers.pickupSpawnElapsedMs).toBe(0);
     expect(getParasitePickupSpriteMap(scene).size).toBe(0);
+    expect(gameBridge.getState().activeParasites).toEqual([]);
+    expect(gameBridge.getState().parasitesCollected).toBe(0);
   });
 
   it("renders parasite segment glows/icons on snake body with dedicated type markers", () => {
@@ -1353,6 +1418,73 @@ describe("MainScene", () => {
     for (const pool of pools) {
       expect(snake.isOnSnake(pool)).toBe(false);
       expect(pool).not.toEqual(foodPos);
+    }
+  });
+
+  it("Molten Core lava spawns avoid active parasite pickup and splitter-obstacle cells", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.enterPhase("playing");
+    scene.setRng(() => 0);
+    scene.setMoltenLavaConfig({
+      spawnIntervalMs: 1,
+      spawnChancePerInterval: 0,
+      maxPools: 2,
+    });
+
+    const snake = scene.getSnake()!;
+    snake.reset({ col: GRID_COLS - 2, row: GRID_ROWS - 2 }, "right", 4);
+    snake.getTicker().setInterval(60_000);
+    scene.getFood()!.setPosition({ col: GRID_COLS - 5, row: GRID_ROWS - 5 });
+
+    scene.update(0, 45_000); // Neon -> Ice
+    scene.update(45_000, 45_000); // Ice -> Molten
+    expect(scene.getCurrentBiome()).toBe(Biome.MoltenCore);
+    expect(scene.getMoltenLavaPools()).toHaveLength(0);
+
+    const parasiteManager = getParasiteManager(scene);
+    const seeded = parasiteManager.getState();
+    seeded.pickups = [
+      {
+        id: "pickup-blocked",
+        type: ParasiteType.Magnet,
+        position: { col: 0, row: 0 },
+        spawnedAtMs: 1,
+      },
+    ];
+    seeded.splitterObstacles = [
+      {
+        id: "splitter-blocked",
+        position: { col: 0, row: 1 },
+        spawnedAtMs: 2,
+        sourceSegmentId: "segment-splitter",
+      },
+    ];
+    parasiteManager.replaceState(seeded);
+
+    scene.setMoltenLavaConfig({
+      spawnIntervalMs: 1,
+      spawnChancePerInterval: 1,
+      maxPools: 2,
+    });
+
+    scene.update(90_000, 2);
+
+    const blocked = new Set<string>([
+      ...parasiteManager
+        .getState()
+        .pickups
+        .map((pickup) => `${pickup.position.col}:${pickup.position.row}`),
+      ...parasiteManager
+        .getState()
+        .splitterObstacles
+        .map((obstacle) => `${obstacle.position.col}:${obstacle.position.row}`),
+    ]);
+    const pools = scene.getMoltenLavaPools();
+
+    expect(pools).toHaveLength(2);
+    for (const pool of pools) {
+      expect(blocked.has(`${pool.col}:${pool.row}`)).toBe(false);
     }
   });
 
@@ -2385,6 +2517,8 @@ describe("MainScene – wall collision", () => {
     expect(snake.getHeadPosition()).toEqual({ col: GRID_COLS - 1, row: 15 });
     expect(parasiteState.inventory.segments).toEqual([]);
     expect(parasiteState.blockedFoodCharges).toBe(1);
+    expect(gameBridge.getState().activeParasites).toEqual([]);
+    expect(gameBridge.getState().parasitesCollected).toBe(0);
 
     scene.update(interval, interval);
     expect(scene.getPhase()).toBe("gameOver");
@@ -2466,6 +2600,75 @@ describe("MainScene – wall collision", () => {
   });
 });
 
+describe("MainScene – splitter obstacle collision", () => {
+  it("ends the run when snake head touches a splitter obstacle", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.enterPhase("playing");
+
+    const snake = scene.getSnake()!;
+    snake.reset({ col: 10, row: 10 }, "right", 1);
+    injectSplitterObstacle(scene, { col: 11, row: 10 });
+
+    const interval = snake.getTicker().interval;
+    scene.update(0, interval);
+
+    expect(scene.getPhase()).toBe("gameOver");
+    expect(snake.isAlive()).toBe(false);
+  });
+
+  it("does not let shield absorb splitter obstacle collisions", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.enterPhase("playing");
+    setActiveParasiteSegments(scene, [ParasiteType.Shield]);
+
+    const snake = scene.getSnake()!;
+    snake.reset({ col: 12, row: 12 }, "right", 1);
+    injectSplitterObstacle(scene, { col: 13, row: 12 });
+
+    const interval = snake.getTicker().interval;
+    scene.update(0, interval);
+
+    const parasiteState = getParasiteManager(scene).getState();
+    expect(scene.getPhase()).toBe("gameOver");
+    expect(snake.isAlive()).toBe(false);
+    expect(parasiteState.inventory.segments).toHaveLength(1);
+    expect(parasiteState.inventory.segments[0]?.type).toBe(ParasiteType.Shield);
+    expect(parasiteState.blockedFoodCharges).toBe(0);
+  });
+
+  it("keeps wall/self collision precedence deterministic over splitter overlap edge cases", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.enterPhase("playing");
+    setActiveParasiteSegments(scene, [ParasiteType.Shield]);
+
+    const snake = scene.getSnake()!;
+    snake.reset({ col: 5, row: 5 }, "right", 5);
+    const interval = snake.getTicker().interval;
+
+    scene.update(0, interval);
+    snake.bufferDirection("down");
+    scene.update(0, interval);
+    snake.bufferDirection("left");
+    scene.update(0, interval);
+
+    const preCollisionHead = snake.getHeadPosition();
+    injectSplitterObstacle(scene, { col: 5, row: 5 });
+
+    snake.bufferDirection("up");
+    scene.update(0, interval);
+
+    const parasiteState = getParasiteManager(scene).getState();
+    expect(scene.getPhase()).toBe("playing");
+    expect(snake.isAlive()).toBe(true);
+    expect(snake.getHeadPosition()).toEqual(preCollisionHead);
+    expect(parasiteState.inventory.segments).toEqual([]);
+    expect(parasiteState.blockedFoodCharges).toBe(1);
+  });
+});
+
 // ── Self-collision ────────────────────────────────────────────
 
 describe("MainScene – self collision", () => {
@@ -2495,6 +2698,8 @@ describe("MainScene – self collision", () => {
     expect(snake.getHeadPosition()).toEqual(preCollisionHead);
     expect(parasiteState.inventory.segments).toEqual([]);
     expect(parasiteState.blockedFoodCharges).toBe(1);
+    expect(gameBridge.getState().activeParasites).toEqual([]);
+    expect(gameBridge.getState().parasitesCollected).toBe(0);
   });
 
   it("ends the run when snake collides with itself", () => {
@@ -2560,6 +2765,32 @@ describe("MainScene – echo ghost collision", () => {
     expect(scene.getPhase()).toBe("gameOver");
     expect(snake.isAlive()).toBe(false);
     expect(mockCameraShake).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not allow shield absorption on echo ghost collisions", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.enterPhase("playing");
+    setActiveParasiteSegments(scene, [ParasiteType.Shield]);
+
+    const snake = scene.getSnake()!;
+    const echoGhost = scene.getEchoGhost()!;
+    snake.reset({ col: 10, row: 10 }, "right", 1);
+
+    vi.spyOn(echoGhost, "isActive").mockReturnValue(true);
+    vi.spyOn(echoGhost, "getPlaybackSegments").mockReturnValue([
+      { col: 11, row: 10 },
+    ]);
+
+    const interval = snake.getTicker().interval;
+    scene.update(0, interval);
+
+    const parasiteState = getParasiteManager(scene).getState();
+    expect(scene.getPhase()).toBe("gameOver");
+    expect(snake.isAlive()).toBe(false);
+    expect(parasiteState.inventory.segments).toHaveLength(1);
+    expect(parasiteState.inventory.segments[0]?.type).toBe(ParasiteType.Shield);
+    expect(parasiteState.blockedFoodCharges).toBe(0);
   });
 
   it("matches self-collision fatality side effects (parity with echo-collision)", () => {

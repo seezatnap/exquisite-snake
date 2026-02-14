@@ -24,7 +24,10 @@ export interface ParasiteMovementContext {
   segments: readonly GridPos[];
 }
 
+export type ParasiteEffectTarget = "snake" | "echoGhost";
+
 export interface ParasiteCollisionContext {
+  target?: ParasiteEffectTarget;
   head: GridPos;
   wallCollision: boolean;
   selfCollision: boolean;
@@ -52,6 +55,7 @@ export type ParasiteScoreSource = "food" | "bonus" | "biome" | "other";
 export interface ParasiteScoringContext {
   basePoints: number;
   source: ParasiteScoreSource;
+  target?: ParasiteEffectTarget;
 }
 
 export interface ParasiteBiomeChangeContext {
@@ -142,6 +146,7 @@ export interface ParasiteSpawnedPickup {
 }
 
 export interface ParasiteMagnetFoodPullContext {
+  target?: ParasiteEffectTarget;
   snakeSegments: readonly GridPos[];
   foodPosition: GridPos;
   obstaclePositions?: readonly GridPos[];
@@ -156,6 +161,8 @@ export interface ParasitePickupConsumptionResult {
   activeSegments: ParasiteSegmentState[];
   parasitesCollected: number;
 }
+
+const DEFAULT_PARASITE_EFFECT_TARGET: ParasiteEffectTarget = "snake";
 
 export function createInitialParasiteTimerState(): ParasiteTimerState {
   return {
@@ -308,6 +315,12 @@ function normalizeBlockedFoodCharges(charges: number): number {
   return Math.max(0, Math.floor(charges));
 }
 
+function normalizeEffectTarget(
+  target: ParasiteEffectTarget | undefined,
+): ParasiteEffectTarget {
+  return target === "echoGhost" ? "echoGhost" : DEFAULT_PARASITE_EFFECT_TARGET;
+}
+
 function normalizeRandomSample(rng: () => number): number {
   const sample = rng();
   if (!Number.isFinite(sample)) {
@@ -375,11 +388,41 @@ export class ParasiteManager {
     return validatePhase3IntegrationPoints(this.phase3Hooks);
   }
 
+  canTargetCollideWithPickups(
+    target: ParasiteEffectTarget = DEFAULT_PARASITE_EFFECT_TARGET,
+  ): boolean {
+    const safeTarget = normalizeEffectTarget(target);
+    if (safeTarget !== "echoGhost") {
+      return true;
+    }
+    return !PARASITE_ECHO_GHOST_POLICY.ignoresPickups;
+  }
+
+  canTargetCollideWithObstacles(
+    target: ParasiteEffectTarget = DEFAULT_PARASITE_EFFECT_TARGET,
+  ): boolean {
+    const safeTarget = normalizeEffectTarget(target);
+    if (safeTarget !== "echoGhost") {
+      return true;
+    }
+    return !PARASITE_ECHO_GHOST_POLICY.ignoresObstacles;
+  }
+
+  canTargetReceiveEffects(
+    target: ParasiteEffectTarget = DEFAULT_PARASITE_EFFECT_TARGET,
+  ): boolean {
+    const safeTarget = normalizeEffectTarget(target);
+    if (safeTarget !== "echoGhost") {
+      return true;
+    }
+    return !PARASITE_ECHO_GHOST_POLICY.ignoresParasiteEffects;
+  }
+
   isEchoGhostExcludedFromParasites(): boolean {
     return (
-      PARASITE_ECHO_GHOST_POLICY.ignoresPickups &&
-      PARASITE_ECHO_GHOST_POLICY.ignoresObstacles &&
-      PARASITE_ECHO_GHOST_POLICY.ignoresParasiteEffects
+      !this.canTargetCollideWithPickups("echoGhost") &&
+      !this.canTargetCollideWithObstacles("echoGhost") &&
+      !this.canTargetReceiveEffects("echoGhost")
     );
   }
 
@@ -391,7 +434,13 @@ export class ParasiteManager {
     this.state = cloneParasiteSharedState(nextState);
   }
 
-  getMagnetSpeedMultiplier(): number {
+  getMagnetSpeedMultiplier(
+    target: ParasiteEffectTarget = DEFAULT_PARASITE_EFFECT_TARGET,
+  ): number {
+    if (!this.canTargetReceiveEffects(target)) {
+      return 1;
+    }
+
     const magnetSegments = countParasiteSegmentsByType(
       this.state.inventory.segments,
       ParasiteType.Magnet,
@@ -399,7 +448,13 @@ export class ParasiteManager {
     return calculateMagnetSpeedMultiplier(magnetSegments);
   }
 
-  getSplitterScoreMultiplier(): number {
+  getSplitterScoreMultiplier(
+    target: ParasiteEffectTarget = DEFAULT_PARASITE_EFFECT_TARGET,
+  ): number {
+    if (!this.canTargetReceiveEffects(target)) {
+      return 1;
+    }
+
     if (!this.hasActiveSegmentType(ParasiteType.Splitter)) {
       return 1;
     }
@@ -407,9 +462,10 @@ export class ParasiteManager {
   }
 
   applyScoreModifiers(context: ParasiteScoringContext): number {
+    const target = normalizeEffectTarget(context.target);
     const safeBasePoints = normalizeScorePoints(context.basePoints);
     const splitterAdjustedBasePoints = safeBasePoints > 0
-      ? safeBasePoints * this.getSplitterScoreMultiplier()
+      ? safeBasePoints * this.getSplitterScoreMultiplier(target)
       : safeBasePoints;
 
     const scoringHook = this.phase3Hooks.scoring;
@@ -419,6 +475,7 @@ export class ParasiteManager {
 
     const scoreWithHook = scoringHook({
       ...context,
+      target,
       basePoints: splitterAdjustedBasePoints,
     });
     if (!Number.isFinite(scoreWithHook)) {
@@ -444,9 +501,22 @@ export class ParasiteManager {
   resolveShieldCollision(
     context: ParasiteCollisionContext,
   ): ParasiteShieldCollisionResolution {
+    const target = normalizeEffectTarget(context.target);
     const collisionHook = this.phase3Hooks.collision;
     if (typeof collisionHook === "function") {
-      collisionHook(context);
+      collisionHook({
+        ...context,
+        target,
+      });
+    }
+
+    if (!this.canTargetReceiveEffects(target)) {
+      return {
+        absorbed: false,
+        consumedSegment: null,
+        blockedFoodCharges: this.getBlockedFoodCharges(),
+        activeSegments: this.getActiveSegments(),
+      };
     }
 
     const isShieldableCollision = context.wallCollision || context.selfCollision;
@@ -510,6 +580,11 @@ export class ParasiteManager {
   }
 
   resolveMagnetFoodPull(context: ParasiteMagnetFoodPullContext): GridPos | null {
+    const target = normalizeEffectTarget(context.target);
+    if (!this.canTargetReceiveEffects(target)) {
+      return null;
+    }
+
     const magnetAnchors = this.getSegmentAnchorsByType(
       context.snakeSegments,
       ParasiteType.Magnet,
@@ -630,7 +705,12 @@ export class ParasiteManager {
   consumePickupAt(
     pickupPosition: GridPos,
     nowMs: number = this.state.timers.elapsedRunMs,
+    target: ParasiteEffectTarget = DEFAULT_PARASITE_EFFECT_TARGET,
   ): ParasitePickupConsumptionResult | null {
+    if (!this.canTargetCollideWithPickups(target)) {
+      return null;
+    }
+
     const pickupKey = gridPosKey(pickupPosition);
     const pickupIndex = this.state.pickups.findIndex((pickup) =>
       gridPosKey(pickup.position) === pickupKey
@@ -665,6 +745,20 @@ export class ParasiteManager {
       activeSegments: this.getActiveSegments(),
       parasitesCollected: this.state.parasitesCollected,
     };
+  }
+
+  hasSplitterObstacleAt(
+    position: GridPos,
+    target: ParasiteEffectTarget = DEFAULT_PARASITE_EFFECT_TARGET,
+  ): boolean {
+    if (!this.canTargetCollideWithObstacles(target)) {
+      return false;
+    }
+
+    const cellKey = gridPosKey(position);
+    return this.state.splitterObstacles.some((obstacle) =>
+      gridPosKey(obstacle.position) === cellKey
+    );
   }
 
   spawnSplitterObstaclesForDueTicks(

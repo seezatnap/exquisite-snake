@@ -10,9 +10,10 @@ const POINTS_PER_FOOD = 1;
 const GROWTH_PER_FOOD = 1;
 
 /**
- * Food entity — spawns on the arena grid in a cell not occupied by the snake,
- * detects when the snake head reaches it, triggers score increment and snake
- * growth, then respawns at a new safe position.
+ * Food entity — spawns on the arena grid in a cell not occupied by the snake
+ * (or any extra blocked runtime cells), detects when the snake head reaches
+ * it, triggers score increment and snake growth, then respawns at a new safe
+ * position.
  */
 export class Food {
   /** Current grid position of the food. */
@@ -48,21 +49,32 @@ export class Food {
   // ── Spawn logic ─────────────────────────────────────────────────
 
   /**
-   * Find a random grid position that does not overlap any snake segment.
+   * Find a random grid position that does not overlap any snake segment or
+   * any explicitly blocked cell.
    *
    * Strategy: collect all free cells and pick one at random.
    * If the grid is completely full (snake fills every cell), falls back to
    * (0, 0) — in practice this should never happen in normal gameplay.
    */
-  findSafePosition(snake: Snake): GridPos {
+  findSafePosition(
+    snake: Snake,
+    blockedPositions: readonly GridPos[] = [],
+  ): GridPos {
     const freeCells: GridPos[] = [];
+    const blockedCellKeys = new Set<string>(
+      blockedPositions.map((pos) => `${pos.col}:${pos.row}`),
+    );
 
     for (let col = 0; col < GRID_COLS; col++) {
       for (let row = 0; row < GRID_ROWS; row++) {
         const pos: GridPos = { col, row };
-        if (!snake.isOnSnake(pos)) {
-          freeCells.push(pos);
+        if (snake.isOnSnake(pos)) {
+          continue;
         }
+        if (blockedCellKeys.has(`${col}:${row}`)) {
+          continue;
+        }
+        freeCells.push(pos);
       }
     }
 
@@ -78,8 +90,11 @@ export class Food {
   /**
    * Respawn the food at a new safe position and update the sprite.
    */
-  respawn(snake: Snake): void {
-    this.position = this.findSafePosition(snake);
+  respawn(
+    snake: Snake,
+    blockedPositions: readonly GridPos[] = [],
+  ): void {
+    this.position = this.findSafePosition(snake, blockedPositions);
     this.syncSpriteToGrid();
   }
 
@@ -111,6 +126,7 @@ export class Food {
   checkEat(
     snake: Snake,
     onScore: (points: number) => void,
+    blockedRespawnPositions: readonly GridPos[] = [],
   ): boolean {
     if (!gridEquals(snake.getHeadPosition(), this.position)) {
       return false;
@@ -123,7 +139,7 @@ export class Food {
     onScore(POINTS_PER_FOOD);
 
     // Respawn at a new safe location
-    this.respawn(snake);
+    this.respawn(snake, blockedRespawnPositions);
 
     return true;
   }
