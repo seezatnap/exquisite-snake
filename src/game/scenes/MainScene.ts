@@ -125,6 +125,10 @@ export class MainScene extends Phaser.Scene {
         if (this.ghostDrainTicker.advance(delta)) {
           this.echoGhost.advancePlayhead();
         }
+        // Update the renderer each frame so the fade-out animation is visible
+        if (this.echoGhostRenderer) {
+          this.echoGhostRenderer.update(this.echoGhost);
+        }
       }
       return;
     }
