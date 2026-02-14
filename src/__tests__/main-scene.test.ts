@@ -30,6 +30,7 @@ function createMockSprite() {
     setPosition: mockSetPosition,
     setAlpha: vi.fn(),
     setVisible: vi.fn(),
+    setTint: vi.fn(),
     visible: true,
     x: 0,
     y: 0,
@@ -50,6 +51,7 @@ vi.mock("phaser", () => {
         setPosition: vi.fn(),
         emitting: true,
         particleAlpha: 1,
+        particleTint: 0xffffff,
       })),
     };
     input = {
@@ -1493,6 +1495,109 @@ describe("MainScene – ghost drain during game-over", () => {
   });
 });
 
+// ── Ghost renderer update during game-over (#12) ────────────────
+
+describe("MainScene – ghost renderer update during game-over", () => {
+  it("calls echoGhostRenderer.update() during gameOver phase", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.enterPhase("playing");
+
+    const snake = scene.getSnake()!;
+    const ghost = scene.getEchoGhost()!;
+    const renderer = scene.getEchoGhostRenderer()!;
+    const interval = snake.getTicker().interval;
+
+    // Record a few ticks of play
+    snake.reset({ col: 10, row: 15 }, "right", 1);
+    for (let i = 0; i < 5; i++) {
+      scene.update(0, interval);
+    }
+
+    scene.endRun();
+    expect(scene.getPhase()).toBe("gameOver");
+
+    // Spy on the renderer's update method
+    const rendererUpdateSpy = vi.spyOn(renderer, "update");
+
+    // Advance time during game-over — renderer should be called
+    scene.update(0, interval);
+    expect(rendererUpdateSpy).toHaveBeenCalledWith(ghost);
+  });
+
+  it("does not call echoGhostRenderer.update() once ghost is inactive", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.enterPhase("playing");
+
+    const snake = scene.getSnake()!;
+    const ghost = scene.getEchoGhost()!;
+    const renderer = scene.getEchoGhostRenderer()!;
+    const interval = snake.getTicker().interval;
+
+    // Short recording
+    snake.reset({ col: 10, row: 15 }, "right", 1);
+    for (let i = 0; i < 3; i++) {
+      scene.update(0, interval);
+    }
+
+    scene.endRun();
+
+    // Advance until ghost is fully inactive
+    for (let i = 0; i < 200; i++) {
+      if (ghost.getLifecycleState() === "inactive") break;
+      scene.update(0, interval);
+    }
+    expect(ghost.getLifecycleState()).toBe("inactive");
+
+    // Now spy on renderer — no more calls should happen
+    const rendererUpdateSpy = vi.spyOn(renderer, "update");
+    scene.update(0, interval);
+    scene.update(0, interval);
+    expect(rendererUpdateSpy).not.toHaveBeenCalled();
+  });
+
+  it("renderer receives decreasing opacity during fade-out in gameOver", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.enterPhase("playing");
+
+    const snake = scene.getSnake()!;
+    const ghost = scene.getEchoGhost()!;
+    const interval = snake.getTicker().interval;
+
+    // Build up ghost to active state (40 ticks)
+    snake.reset({ col: 1, row: 1 }, "right", 1);
+    for (let i = 0; i < 37; i++) {
+      scene.update(0, interval);
+    }
+    snake.bufferDirection("down");
+    for (let i = 0; i < 3; i++) {
+      scene.update(0, interval);
+    }
+    expect(ghost.getLifecycleState()).toBe("active");
+
+    scene.endRun();
+
+    // Advance until fading, collecting opacities
+    const opacities: number[] = [];
+    for (let i = 0; i < 100; i++) {
+      const state = ghost.getLifecycleState();
+      if (state === "inactive") break;
+      if (state === "fading") {
+        opacities.push(ghost.getOpacity());
+      }
+      scene.update(0, interval);
+    }
+
+    // We should have observed fading opacities that decrease
+    expect(opacities.length).toBeGreaterThan(0);
+    for (let i = 1; i < opacities.length; i++) {
+      expect(opacities[i]).toBeLessThanOrEqual(opacities[i - 1]);
+    }
+  });
+});
+
 // ── Source-level checks for echo ghost integration ──────────────
 
 describe("MainScene source – echo ghost integration", () => {
@@ -1533,5 +1638,11 @@ describe("MainScene source – echo ghost integration", () => {
 
   it("has a ghostDrainTicker field for post-game-over drain timing", () => {
     expect(source).toMatch(/ghostDrainTicker/);
+  });
+
+  it("calls echoGhostRenderer.update inside the gameOver block", () => {
+    // The gameOver block should contain a renderer update call
+    // so the fade-out animation is actually rendered (#12)
+    expect(source).toMatch(/gameOver[\s\S]*echoGhostRenderer\.update/);
   });
 });

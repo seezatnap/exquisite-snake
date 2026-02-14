@@ -20,6 +20,7 @@ function createMockEmitter() {
     setPosition: mockEmitterSetPosition,
     emitting: true,
     particleAlpha: 1,
+    particleTint: 0xffffff,
   };
 }
 
@@ -29,6 +30,7 @@ const mockSpriteDestroy = vi.fn();
 const mockSpriteSetPosition = vi.fn();
 const mockSpriteSetAlpha = vi.fn();
 const mockSpriteSetVisible = vi.fn();
+const mockSpriteSetTint = vi.fn();
 
 function createMockSprite() {
   return {
@@ -36,6 +38,7 @@ function createMockSprite() {
     setPosition: mockSpriteSetPosition,
     setAlpha: mockSpriteSetAlpha,
     setVisible: mockSpriteSetVisible,
+    setTint: mockSpriteSetTint,
     visible: true,
     x: 0,
     y: 0,
@@ -329,6 +332,138 @@ describe("ghost renderer constants", () => {
   });
 });
 
+// ── Biome-aware tinting ──────────────────────────────────────
+
+import {
+  BiomeManager,
+  BIOME_CONFIGS,
+  BIOME_SHIFT_INTERVAL_MS,
+  BIOME_TRANSITION_MS,
+} from "@/game/systems/BiomeManager";
+
+describe("biome-aware ghost tinting", () => {
+  describe("without biome manager", () => {
+    it("applies white tint (no tinting) when no biome manager is set", () => {
+      const { renderer } = createRenderer();
+      const ghost = createGhostWithTrail(3);
+
+      renderer.update(ghost);
+
+      expect(mockSpriteSetTint).toHaveBeenCalledWith(0xffffff);
+    });
+  });
+
+  describe("with biome manager", () => {
+    it("applies neon biome ghost tint to sprites", () => {
+      const { renderer } = createRenderer();
+      const biome = new BiomeManager();
+      renderer.setBiomeManager(biome);
+      const ghost = createGhostWithTrail(3);
+
+      renderer.update(ghost);
+
+      expect(mockSpriteSetTint).toHaveBeenCalledWith(BIOME_CONFIGS.neon.ghostTint);
+    });
+
+    it("applies updated biome tint after biome shift", () => {
+      const { renderer } = createRenderer();
+      const biome = new BiomeManager();
+      renderer.setBiomeManager(biome);
+      const ghost = createGhostWithTrail(3);
+
+      // Advance past transition so we get the clean new color
+      biome.update(BIOME_SHIFT_INTERVAL_MS);
+      biome.update(BIOME_TRANSITION_MS);
+
+      renderer.update(ghost);
+
+      expect(mockSpriteSetTint).toHaveBeenCalledWith(BIOME_CONFIGS.toxic.ghostTint);
+    });
+
+    it("applies interpolated tint during biome transition", () => {
+      const { renderer } = createRenderer();
+      const biome = new BiomeManager();
+      renderer.setBiomeManager(biome);
+      const ghost = createGhostWithTrail(3);
+
+      // Trigger transition
+      biome.update(BIOME_SHIFT_INTERVAL_MS);
+      biome.update(BIOME_TRANSITION_MS / 2);
+
+      renderer.update(ghost);
+
+      const calledTint = mockSpriteSetTint.mock.calls[0][0];
+      // Should be neither pure neon nor pure toxic
+      expect(calledTint).not.toBe(BIOME_CONFIGS.neon.ghostTint);
+      expect(calledTint).not.toBe(BIOME_CONFIGS.toxic.ghostTint);
+    });
+
+    it("preserves opacity when biome tinting is applied", () => {
+      const { renderer } = createRenderer();
+      const biome = new BiomeManager();
+      renderer.setBiomeManager(biome);
+      const ghost = createGhostWithTrail(3);
+
+      renderer.update(ghost);
+
+      // Both setAlpha and setTint should be called for each sprite
+      expect(mockSpriteSetAlpha).toHaveBeenCalledWith(GHOST_BASE_ALPHA);
+      expect(mockSpriteSetTint).toHaveBeenCalled();
+    });
+
+    it("includes particle tint in emitter config", () => {
+      const { renderer } = createRenderer();
+      const biome = new BiomeManager();
+      renderer.setBiomeManager(biome);
+      const ghost = createGhostWithTrail(3);
+
+      renderer.update(ghost);
+
+      expect(mockAddParticles).toHaveBeenCalledWith(
+        expect.any(Number),
+        expect.any(Number),
+        "ghost-particle",
+        expect.objectContaining({
+          tint: BIOME_CONFIGS.neon.particleTint,
+        }),
+      );
+    });
+
+    it("updates particle tint on subsequent frames", () => {
+      const { renderer } = createRenderer();
+      const biome = new BiomeManager();
+      renderer.setBiomeManager(biome);
+      const ghost = createGhostWithTrail(3);
+
+      // First update creates emitter
+      renderer.update(ghost);
+
+      // Shift to next biome and complete transition
+      biome.update(BIOME_SHIFT_INTERVAL_MS);
+      biome.update(BIOME_TRANSITION_MS);
+
+      // Record another tick to keep ghost active
+      ghost.record([{ col: 99, row: 5 }, { col: 98, row: 5 }, { col: 97, row: 5 }]);
+
+      // Second update should update emitter's particleTint
+      renderer.update(ghost);
+
+      const emitter = renderer.getTrailEmitter();
+      expect(emitter).not.toBeNull();
+      expect(emitter!.particleTint).toBe(BIOME_CONFIGS.toxic.particleTint);
+    });
+
+    it("getBiomeManager returns the attached manager", () => {
+      const { renderer } = createRenderer();
+      expect(renderer.getBiomeManager()).toBeNull();
+
+      const biome = new BiomeManager();
+      renderer.setBiomeManager(biome);
+      expect(renderer.getBiomeManager()).toBe(biome);
+    });
+  });
+});
+
 // ── Source file checks ────────────────────────────────────────
 
 describe("echoGhostRenderer.ts source", () => {
@@ -360,6 +495,18 @@ describe("echoGhostRenderer.ts source", () => {
 
   it("guards against missing textures", () => {
     expect(source).toContain("textures.exists");
+  });
+
+  it("imports BiomeManager type", () => {
+    expect(source).toContain("BiomeManager");
+  });
+
+  it("uses setTint for biome-aware tinting", () => {
+    expect(source).toContain("setTint");
+  });
+
+  it("exposes setBiomeManager method", () => {
+    expect(source).toContain("setBiomeManager");
   });
 });
 
@@ -407,6 +554,18 @@ describe("MainScene integrates EchoGhostRenderer", () => {
 
   it("destroys renderer in destroyEntities", () => {
     expect(source).toContain("echoGhostRenderer.destroy()");
+  });
+
+  it("imports BiomeManager", () => {
+    expect(source).toContain("BiomeManager");
+  });
+
+  it("creates biome manager and wires it to renderer", () => {
+    expect(source).toContain("setBiomeManager");
+  });
+
+  it("updates biome manager in the game loop", () => {
+    expect(source).toContain("biomeManager.update");
   });
 });
 

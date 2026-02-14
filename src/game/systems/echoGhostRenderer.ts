@@ -2,6 +2,7 @@ import Phaser from "phaser";
 import { TEXTURE_KEYS } from "../config";
 import { gridToPixel, type GridPos } from "../utils/grid";
 import type { EchoGhost } from "../entities/EchoGhost";
+import type { BiomeManager } from "./BiomeManager";
 
 // ── Constants ────────────────────────────────────────────────────
 
@@ -37,9 +38,20 @@ export class EchoGhostRenderer {
   private scene: Phaser.Scene;
   private sprites: Phaser.GameObjects.Sprite[] = [];
   private trailEmitter: Phaser.GameObjects.Particles.ParticleEmitter | null = null;
+  private biomeManager: BiomeManager | null = null;
 
   constructor(scene: Phaser.Scene) {
     this.scene = scene;
+  }
+
+  /** Attach a biome manager for biome-aware tinting. */
+  setBiomeManager(manager: BiomeManager): void {
+    this.biomeManager = manager;
+  }
+
+  /** Get the currently attached biome manager (for testing). */
+  getBiomeManager(): BiomeManager | null {
+    return this.biomeManager;
   }
 
   /**
@@ -65,12 +77,16 @@ export class EchoGhostRenderer {
     // Reconcile sprite pool with trail length
     this.ensureSpriteCount(trail.length);
 
+    // Resolve biome tint (defaults to white = no tint when no biome manager)
+    const ghostTint = this.biomeManager ? this.biomeManager.getGhostTint() : 0xffffff;
+
     // Position and show sprites (bounded by available sprites)
     const visibleCount = Math.min(trail.length, this.sprites.length);
     for (let i = 0; i < visibleCount; i++) {
       const pos = gridToPixel(trail[i]);
       this.sprites[i].setPosition(pos.x, pos.y);
       this.sprites[i].setAlpha(effectiveAlpha);
+      this.sprites[i].setTint(ghostTint);
       this.sprites[i].setVisible(true);
     }
 
@@ -113,6 +129,9 @@ export class EchoGhostRenderer {
 
     const tail = trail[trail.length - 1];
     const tailPos = gridToPixel(tail);
+    const particleTint = this.biomeManager
+      ? this.biomeManager.getParticleTint()
+      : undefined;
 
     if (!this.trailEmitter) {
       this.trailEmitter = this.scene.add.particles(
@@ -130,11 +149,15 @@ export class EchoGhostRenderer {
           scale: { start: 1, end: 0 },
           alpha: { start: alpha, end: 0 },
           frequency: 50,
+          ...(particleTint !== undefined ? { tint: particleTint } : {}),
         },
       );
     } else {
       this.trailEmitter.setPosition(tailPos.x, tailPos.y);
       this.trailEmitter.particleAlpha = alpha;
+      if (particleTint !== undefined) {
+        this.trailEmitter.particleTint = particleTint;
+      }
       if (!this.trailEmitter.emitting) {
         this.trailEmitter.start();
       }
