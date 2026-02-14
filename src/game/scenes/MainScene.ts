@@ -776,7 +776,10 @@ export class MainScene extends Phaser.Scene {
       return false;
     }
 
-    const shieldCollision = this.parasiteManager.resolveShieldCollision(context);
+    const shieldCollision = this.parasiteManager.resolveShieldCollision({
+      ...context,
+      target: "snake",
+    });
     if (!shieldCollision.absorbed) {
       return false;
     }
@@ -787,12 +790,7 @@ export class MainScene extends Phaser.Scene {
   }
 
   private hasSplitterObstacleCollision(head: GridPos): boolean {
-    for (const obstacle of this.parasiteManager.getState().splitterObstacles) {
-      if (gridEquals(obstacle.position, head)) {
-        return true;
-      }
-    }
-    return false;
+    return this.parasiteManager.hasSplitterObstacleAt(head, "snake");
   }
 
   private hasEchoGhostCollision(head: GridPos): boolean {
@@ -815,6 +813,7 @@ export class MainScene extends Phaser.Scene {
     const adjustedPoints = this.parasiteManager.applyScoreModifiers({
       basePoints: points,
       source,
+      target: "snake",
     });
     gameBridge.setScore(gameBridge.getState().score + adjustedPoints);
   }
@@ -1209,6 +1208,7 @@ export class MainScene extends Phaser.Scene {
     const consumed = this.parasiteManager.consumePickupAt(
       this.snake.getHeadPosition(),
       gameBridge.getState().elapsedTime,
+      "snake",
     );
     if (!consumed) {
       return;
@@ -1235,6 +1235,7 @@ export class MainScene extends Phaser.Scene {
     }
 
     const pulledFoodPosition = this.parasiteManager.resolveMagnetFoodPull({
+      target: "snake",
       snakeSegments: this.snake.getSegments(),
       foodPosition: this.food.getPosition(),
       obstaclePositions: this.getLiveObstaclePositions(),
@@ -1260,7 +1261,9 @@ export class MainScene extends Phaser.Scene {
 
     const ticker = this.snake.getTicker();
     const currentInterval = ticker.interval;
-    const magnetSpeedMultiplier = this.parasiteManager.getMagnetSpeedMultiplier();
+    const magnetSpeedMultiplier = this.parasiteManager.getMagnetSpeedMultiplier(
+      "snake",
+    );
     const hasMagnetBoost = magnetSpeedMultiplier > 1;
 
     if (!hasMagnetBoost) {
