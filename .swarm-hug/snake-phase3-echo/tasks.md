@@ -14,7 +14,7 @@
 ## Rendering & Biome
 
 - [x] (#6) Render the ghost as a distinct translucent hazard (40% opacity, dashed outline) with trailing particles, using current renderer systems and matching existing segment geometry. [5 pts] (blocked by #2, #3) (B)
-- [ ] (#7) Apply biome-aware tinting to ghost visuals so trail and particles are colored by the current biome while preserving opacity and dashed styling, including smooth transitions if the biome changes during replay. [5 pts] (blocked by #6)
+- [A] (#7) Apply biome-aware tinting to ghost visuals so trail and particles are colored by the current biome while preserving opacity and dashed styling, including smooth transitions if the biome changes during replay. [5 pts] (blocked by #6)
 
 ## Rewind Preparation
 
