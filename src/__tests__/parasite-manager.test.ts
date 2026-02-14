@@ -7,6 +7,7 @@ import {
   PARASITE_PICKUP_SPAWN_INTERVAL_MS,
   PARASITE_TYPES,
   ParasiteType,
+  SPLITTER_SCORE_MULTIPLIER,
   SPLITTER_OBSTACLE_INTERVAL_MS,
   createParasiteRuntimeState,
   cloneParasiteRuntimeState,
@@ -24,6 +25,7 @@ describe("Parasite scaffolding constants", () => {
     expect(PARASITE_PICKUP_SPAWN_INTERVAL_MS).toBe(3_000);
     expect(PARASITE_PICKUP_SPAWN_CHANCE_PER_INTERVAL).toBe(0.3);
     expect(SPLITTER_OBSTACLE_INTERVAL_MS).toBe(10_000);
+    expect(SPLITTER_SCORE_MULTIPLIER).toBe(1.5);
     expect(PARASITE_TYPES).toEqual(["magnet", "shield", "splitter"]);
   });
 });
@@ -305,6 +307,64 @@ describe("ParasiteManager integration hooks", () => {
     });
     expect(score).toEqual({
       awardedPoints: 3,
+      multiplier: 1,
+    });
+  });
+
+  it("applies Splitter score multiplier across all score sources while attached", () => {
+    const manager = new ParasiteManager();
+    const snapshot = createParasiteRuntimeState();
+    snapshot.activeSegments.push({
+      id: "segment-splitter",
+      type: ParasiteType.Splitter,
+      attachedAtMs: 12,
+    });
+    manager.restoreState(snapshot);
+
+    const sources = ["food", "system", "bonus"] as const;
+    for (const source of sources) {
+      expect(
+        manager.onScoreEvent({
+          actor: "snake",
+          source,
+          basePoints: 1,
+        }),
+      ).toEqual({
+        awardedPoints: 1.5,
+        multiplier: 1.5,
+      });
+    }
+  });
+
+  it("only multiplies positive score gains while Splitter is attached", () => {
+    const manager = new ParasiteManager();
+    const snapshot = createParasiteRuntimeState();
+    snapshot.activeSegments.push({
+      id: "segment-splitter",
+      type: ParasiteType.Splitter,
+      attachedAtMs: 90,
+    });
+    manager.restoreState(snapshot);
+
+    expect(
+      manager.onScoreEvent({
+        actor: "snake",
+        source: "system",
+        basePoints: 0,
+      }),
+    ).toEqual({
+      awardedPoints: 0,
+      multiplier: 1,
+    });
+
+    expect(
+      manager.onScoreEvent({
+        actor: "snake",
+        source: "bonus",
+        basePoints: -4,
+      }),
+    ).toEqual({
+      awardedPoints: -4,
       multiplier: 1,
     });
   });

@@ -8,6 +8,7 @@ import {
   PARASITE_PICKUP_SPAWN_CHANCE_PER_INTERVAL,
   PARASITE_PICKUP_SPAWN_INTERVAL_MS,
   PARASITE_TYPES,
+  SPLITTER_SCORE_MULTIPLIER,
   SPLITTER_OBSTACLE_INTERVAL_MS,
   createParasiteRuntimeState,
   cloneParasiteRuntimeState,
@@ -298,10 +299,17 @@ export class ParasiteManager {
       };
     }
 
+    const basePoints = Number.isFinite(context.basePoints)
+      ? context.basePoints
+      : 0;
+    const hasSplitter = this.getSplitterSegmentCount() > 0;
+    const multiplier = hasSplitter && basePoints > 0
+      ? SPLITTER_SCORE_MULTIPLIER
+      : 1;
+
     return {
-      // Task #6 will apply Splitter multiplier here.
-      awardedPoints: context.basePoints,
-      multiplier: 1,
+      awardedPoints: basePoints * multiplier,
+      multiplier,
     };
   }
 
