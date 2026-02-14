@@ -1,8 +1,9 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import {
   EchoGhost,
   CircularBuffer,
 } from "../game/entities/EchoGhost";
+import type { RewindEvent, RewindStateProvider } from "../game/entities/EchoGhost";
 import { DEFAULT_MOVE_INTERVAL_MS } from "../game/utils/grid";
 import type { GridPos } from "../game/utils/grid";
 
@@ -913,6 +914,250 @@ describe("EchoGhost", () => {
       expect(snap1.lifecycleState).toBe("fadingOut");
       expect(snap1.fadeOutTick).toBe(0);
       expect(snap1.fadeOutDuration).toBe(g.getTrailWindow());
+    });
+  });
+
+  // ── RewindStateProvider interface tests ──────────────────────────
+
+  describe("RewindStateProvider interface", () => {
+    it("EchoGhost satisfies RewindStateProvider", () => {
+      const provider: RewindStateProvider = new EchoGhost(100, 500, 20);
+      expect(typeof provider.snapshot).toBe("function");
+      expect(typeof provider.restore).toBe("function");
+      expect(typeof provider.onRewindEvent).toBe("function");
+      expect(typeof provider.canRewind).toBe("function");
+      expect(typeof provider.getTickIndex).toBe("function");
+      expect(typeof provider.getLifecycleState).toBe("function");
+    });
+  });
+
+  describe("canRewind", () => {
+    it("returns false when no ticks recorded", () => {
+      expect(ghost.canRewind()).toBe(false);
+    });
+
+    it("returns true after recording a tick", () => {
+      ghost.recordTick(snap([0, 0]));
+      expect(ghost.canRewind()).toBe(true);
+    });
+
+    it("returns true even during fadingOut", () => {
+      const g = new EchoGhost(100, 500, 20);
+      for (let i = 0; i < g.getDelayTicks() + 3; i++) {
+        g.recordTick(snap([i, 0]));
+      }
+      g.stopRecording();
+      expect(g.canRewind()).toBe(true);
+    });
+
+    it("returns false after reset", () => {
+      ghost.recordTick(snap([0, 0]));
+      ghost.reset();
+      expect(ghost.canRewind()).toBe(false);
+    });
+  });
+
+  describe("getTickIndex", () => {
+    it("returns 0 initially", () => {
+      expect(ghost.getTickIndex()).toBe(0);
+    });
+
+    it("matches getTotalTicksWritten", () => {
+      ghost.recordTick(snap([0, 0]));
+      ghost.recordTick(snap([1, 0]));
+      ghost.recordTick(snap([2, 0]));
+      expect(ghost.getTickIndex()).toBe(ghost.getTotalTicksWritten());
+      expect(ghost.getTickIndex()).toBe(3);
+    });
+
+    it("is restored by snapshot/restore", () => {
+      const g = new EchoGhost(100, 500, 20);
+      for (let i = 0; i < 7; i++) {
+        g.recordTick(snap([i, 0]));
+      }
+      const s = g.snapshot();
+      for (let i = 0; i < 5; i++) {
+        g.recordTick(snap([100 + i, 0]));
+      }
+      g.restore(s);
+      expect(g.getTickIndex()).toBe(7);
+    });
+  });
+
+  // ── Rewind hook listener tests ──────────────────────────────────
+
+  describe("onRewindEvent", () => {
+    it("returns an unsubscribe function", () => {
+      const listener = vi.fn();
+      const unsub = ghost.onRewindEvent(listener);
+      expect(typeof unsub).toBe("function");
+      unsub();
+    });
+
+    it("emits tick events on each recordTick", () => {
+      const events: RewindEvent[] = [];
+      ghost.onRewindEvent((e) => events.push(e));
+
+      ghost.recordTick(snap([0, 0]));
+      ghost.recordTick(snap([1, 0]));
+
+      const tickEvents = events.filter((e) => e.type === "tick");
+      expect(tickEvents.length).toBe(2);
+      expect(tickEvents[0]).toEqual({ type: "tick", tickIndex: 1 });
+      expect(tickEvents[1]).toEqual({ type: "tick", tickIndex: 2 });
+    });
+
+    it("emits lifecycleChange when transitioning inactive → active", () => {
+      const events: RewindEvent[] = [];
+      const g = new EchoGhost(100, 500, 20);
+      g.onRewindEvent((e) => events.push(e));
+
+      const delayTicks = g.getDelayTicks(); // 5
+      for (let i = 0; i < delayTicks; i++) {
+        g.recordTick(snap([i, 0]));
+      }
+
+      const lifecycleEvents = events.filter((e) => e.type === "lifecycleChange");
+      expect(lifecycleEvents.length).toBe(1);
+      expect(lifecycleEvents[0]).toEqual({
+        type: "lifecycleChange",
+        from: "inactive",
+        to: "active",
+      });
+    });
+
+    it("emits lifecycleChange when transitioning active → fadingOut", () => {
+      const events: RewindEvent[] = [];
+      const g = new EchoGhost(100, 500, 20);
+      for (let i = 0; i < g.getDelayTicks() + 3; i++) {
+        g.recordTick(snap([i, 0]));
+      }
+
+      g.onRewindEvent((e) => events.push(e));
+      g.stopRecording();
+
+      const lifecycleEvents = events.filter((e) => e.type === "lifecycleChange");
+      expect(lifecycleEvents.length).toBe(1);
+      expect(lifecycleEvents[0]).toEqual({
+        type: "lifecycleChange",
+        from: "active",
+        to: "fadingOut",
+      });
+    });
+
+    it("emits lifecycleChange when transitioning fadingOut → expired", () => {
+      const events: RewindEvent[] = [];
+      const g = new EchoGhost(100, 500, 20);
+      for (let i = 0; i < g.getDelayTicks() + 3; i++) {
+        g.recordTick(snap([i, 0]));
+      }
+      g.stopRecording();
+
+      g.onRewindEvent((e) => events.push(e));
+
+      for (let i = 0; i < g.getTrailWindow(); i++) {
+        g.advanceFadeOut();
+      }
+
+      const lifecycleEvents = events.filter((e) => e.type === "lifecycleChange");
+      expect(lifecycleEvents.length).toBe(1);
+      expect(lifecycleEvents[0]).toEqual({
+        type: "lifecycleChange",
+        from: "fadingOut",
+        to: "expired",
+      });
+    });
+
+    it("emits restore event when snapshot is restored", () => {
+      const events: RewindEvent[] = [];
+      const g = new EchoGhost(100, 500, 20);
+      for (let i = 0; i < 5; i++) {
+        g.recordTick(snap([i, 0]));
+      }
+      const s = g.snapshot();
+
+      g.onRewindEvent((e) => events.push(e));
+      g.restore(s);
+
+      const restoreEvents = events.filter((e) => e.type === "restore");
+      expect(restoreEvents.length).toBe(1);
+      expect(restoreEvents[0].type).toBe("restore");
+      if (restoreEvents[0].type === "restore") {
+        expect(restoreEvents[0].snapshot).toBe(s);
+      }
+    });
+
+    it("unsubscribed listener does not receive events", () => {
+      const listener = vi.fn();
+      const unsub = ghost.onRewindEvent(listener);
+      unsub();
+
+      ghost.recordTick(snap([0, 0]));
+      expect(listener).not.toHaveBeenCalled();
+    });
+
+    it("supports multiple listeners", () => {
+      const listener1 = vi.fn();
+      const listener2 = vi.fn();
+      ghost.onRewindEvent(listener1);
+      ghost.onRewindEvent(listener2);
+
+      ghost.recordTick(snap([0, 0]));
+
+      expect(listener1).toHaveBeenCalledTimes(1);
+      expect(listener2).toHaveBeenCalledTimes(1);
+    });
+
+    it("unsubscribing one listener does not affect others", () => {
+      const listener1 = vi.fn();
+      const listener2 = vi.fn();
+      const unsub1 = ghost.onRewindEvent(listener1);
+      ghost.onRewindEvent(listener2);
+
+      unsub1();
+      ghost.recordTick(snap([0, 0]));
+
+      expect(listener1).not.toHaveBeenCalled();
+      expect(listener2).toHaveBeenCalledTimes(1);
+    });
+
+    it("does not emit tick events during fadingOut/expired", () => {
+      const g = new EchoGhost(100, 500, 20);
+      for (let i = 0; i < g.getDelayTicks() + 3; i++) {
+        g.recordTick(snap([i, 0]));
+      }
+      g.stopRecording();
+
+      const events: RewindEvent[] = [];
+      g.onRewindEvent((e) => events.push(e));
+
+      // recordTick should no-op during fadingOut
+      g.recordTick(snap([99, 99]));
+      const tickEvents = events.filter((e) => e.type === "tick");
+      expect(tickEvents.length).toBe(0);
+    });
+
+    it("lifecycleChange event fires before tick event on activation", () => {
+      const events: RewindEvent[] = [];
+      const g = new EchoGhost(100, 500, 20);
+      g.onRewindEvent((e) => events.push(e));
+
+      const delayTicks = g.getDelayTicks();
+      for (let i = 0; i < delayTicks; i++) {
+        g.recordTick(snap([i, 0]));
+      }
+
+      // On the activation tick, lifecycleChange should fire before tick
+      const activationTick = delayTicks; // this is the tick that triggers activation
+      const lcIndex = events.findIndex(
+        (e) => e.type === "lifecycleChange" && "to" in e && e.to === "active"
+      );
+      const tickIndex = events.findIndex(
+        (e) => e.type === "tick" && "tickIndex" in e && e.tickIndex === activationTick
+      );
+      expect(lcIndex).toBeGreaterThanOrEqual(0);
+      expect(tickIndex).toBeGreaterThanOrEqual(0);
+      expect(lcIndex).toBeLessThan(tickIndex);
     });
   });
 });
