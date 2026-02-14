@@ -3,6 +3,8 @@ import fs from "fs";
 import path from "path";
 import { gameBridge } from "@/game/bridge";
 import { GRID_COLS, GRID_ROWS } from "@/game/config";
+import { EchoGhost } from "@/game/entities/EchoGhost";
+import type { GridPos } from "@/game/utils/grid";
 
 const ROOT = path.resolve(__dirname, "../..");
 
@@ -822,5 +824,85 @@ describe("MainScene – update integration", () => {
       const newHead = snake.getHeadPosition();
       expect(newHead.col).not.toBe(initialHead.col);
     }
+  });
+
+  const getEchoGhost = (scene: MainScene): EchoGhost | null => {
+    return (scene as unknown as { echoGhost: EchoGhost | null }).echoGhost;
+  };
+
+  const getGhostProgressTicks = (scene: MainScene): number => {
+    return (scene as unknown as { ghostProgressTicks: number }).ghostProgressTicks;
+  };
+
+  const getGhostReplayTicks = (scene: MainScene): number => {
+    return (scene as unknown as { ghostReplayTicks: number }).ghostReplayTicks;
+  };
+
+  const isGhostReplayActive = (scene: MainScene): boolean => {
+    return (scene as unknown as { isGhostReplayActive: boolean })
+      .isGhostReplayActive;
+  };
+
+  const cloneSegments = (segments: readonly GridPos[]): GridPos[] =>
+    segments.map((segment) => ({ ...segment }));
+
+  it("initializes echo ghost state for each run and tracks progression separately", () => {
+    const scene = new MainScene();
+    scene.create();
+
+    scene.enterPhase("playing");
+    const ghost = getEchoGhost(scene);
+
+    expect(ghost).toBeInstanceOf(EchoGhost);
+    expect(getGhostProgressTicks(scene)).toBe(0);
+    expect(getGhostReplayTicks(scene)).toBe(0);
+    expect(isGhostReplayActive(scene)).toBe(false);
+
+    // Restarting should create a fresh ghost instance with clean lifecycle counters.
+    scene.endRun();
+    scene.enterPhase("playing");
+
+    const restartedGhost = getEchoGhost(scene);
+    expect(restartedGhost).toBeInstanceOf(EchoGhost);
+    expect(restartedGhost).not.toBe(ghost);
+  });
+
+  it("writes snake snapshots each step and starts ghost replay after delay window", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.enterPhase("playing");
+
+    const snake = scene.getSnake()!;
+    const ghost = getEchoGhost(scene)!;
+
+    snake.reset({ col: 20, row: 15 }, "right", 3);
+    const firstRecordedTrail: GridPos[] = [];
+    const delayTicks = ghost.getDelayTicks();
+
+    for (let step = 1; step <= delayTicks; step++) {
+      if (step === 11) snake.bufferDirection("down");
+      if (step === 21) snake.bufferDirection("left");
+      if (step === 31) snake.bufferDirection("up");
+
+      scene.update(0, snake.getTicker().interval);
+      if (step === 1) {
+        firstRecordedTrail.push(...cloneSegments(snake.getSegments()));
+      }
+
+      expect(scene.getPhase()).toBe("playing");
+      expect(getGhostProgressTicks(scene)).toBe(step);
+
+      const delayed = ghost.readDelayedTrail();
+      if (step < delayTicks) {
+        expect(isGhostReplayActive(scene)).toBe(false);
+        expect(delayed).toEqual([]);
+        expect(getGhostReplayTicks(scene)).toBe(0);
+      } else {
+        expect(isGhostReplayActive(scene)).toBe(true);
+        expect(delayed).toEqual(firstRecordedTrail);
+      }
+    }
+
+    expect(getGhostReplayTicks(scene)).toBe(1);
   });
 });
