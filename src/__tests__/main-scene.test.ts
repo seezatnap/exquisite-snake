@@ -708,19 +708,30 @@ describe("MainScene", () => {
     expect(gameBridge.getState().parasitesCollected).toBe(4);
   });
 
-  it("keeps respawned food off active parasite pickup cells after food is eaten", () => {
+  it("keeps post-eat food respawns off active pickup, splitter-obstacle, and lava cells", () => {
     const scene = new MainScene();
     scene.create();
     scene.setRng(() => 0);
     scene.enterPhase("playing");
+    scene.setMoltenLavaConfig({
+      spawnIntervalMs: 1,
+      spawnChancePerInterval: 0,
+      maxPools: 3,
+    });
 
     const snake = scene.getSnake()!;
+    snake.getTicker().setInterval(60_000);
+    scene.update(0, 45_000); // Neon -> Ice
+    scene.update(45_000, 45_000); // Ice -> Molten
+    expect(scene.getCurrentBiome()).toBe(Biome.MoltenCore);
+
     snake.reset({ col: 5, row: 5 }, "right", 4);
     snake.getTicker().setInterval(100);
     scene.getFood()!.setPosition({ col: 6, row: 5 });
 
     const parasiteManager = getParasiteManager(scene);
     const seeded = parasiteManager.getState();
+    seeded.timers.pickupSpawnElapsedMs = 0;
     seeded.pickups = [
       {
         id: "pickup-a",
@@ -735,15 +746,33 @@ describe("MainScene", () => {
         spawnedAtMs: 2,
       },
     ];
+    seeded.splitterObstacles = [
+      {
+        id: "splitter-a",
+        position: { col: 0, row: 2 },
+        spawnedAtMs: 3,
+        sourceSegmentId: "segment-splitter",
+      },
+    ];
     parasiteManager.replaceState(seeded);
+    injectMoltenLavaPool(scene, { col: 0, row: 3 });
 
-    scene.update(0, 100);
+    scene.update(90_000, 100);
 
     const respawnedFood = scene.getFood()!.getPosition();
-    const activePickups = parasiteManager.getState().pickups;
-    for (const pickup of activePickups) {
-      expect(respawnedFood).not.toEqual(pickup.position);
-    }
+    const blocked = new Set<string>([
+      ...parasiteManager
+        .getState()
+        .pickups
+        .map((pickup) => `${pickup.position.col}:${pickup.position.row}`),
+      ...parasiteManager
+        .getState()
+        .splitterObstacles
+        .map((obstacle) => `${obstacle.position.col}:${obstacle.position.row}`),
+      ...scene.getMoltenLavaPools().map((pool) => `${pool.col}:${pool.row}`),
+    ]);
+
+    expect(blocked.has(`${respawnedFood.col}:${respawnedFood.row}`)).toBe(false);
   });
 
   it("pulls food one tile per stepped tick when a magnet segment is in range", () => {
