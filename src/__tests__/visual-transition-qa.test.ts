@@ -179,6 +179,8 @@ function advanceOneBiomeCycle(scene: MainScene): void {
     if (snake && snake.isAlive()) {
       snake.reset(center, "right", 3);
     }
+    // Reset echo ghost to prevent ghost-trail collision from ending the run
+    scene.getEchoGhost()?.reset();
     scene.update(0, dt);
     remaining -= dt;
     if (scene.getPhase() !== "playing") break;
