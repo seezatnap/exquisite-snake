@@ -17,6 +17,11 @@ const mockGraphics = {
   moveTo: mockMoveTo,
   lineTo: mockLineTo,
   strokePath: mockStrokePath,
+  clear: vi.fn(),
+  fillStyle: vi.fn(),
+  fillRoundedRect: vi.fn(),
+  beginPath: vi.fn(),
+  destroy: vi.fn(),
 };
 
 const mockSceneStart = vi.fn();
@@ -1086,5 +1091,153 @@ describe("MainScene – EchoGhost integration", () => {
     // Now exceed the interval
     scene.update(0, 50); // 150ms total ≥ 125ms → one step
     expect(ghost.getTotalTicksWritten()).toBe(1);
+  });
+});
+
+// ── Echo-ghost collision ──────────────────────────────────────
+
+describe("MainScene – echo-ghost collision", () => {
+  it("ends the run when snake head overlaps an active ghost segment", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.enterPhase("playing");
+
+    const ghost = scene.getGhost()!;
+    const snake = scene.getSnake()!;
+
+    // Place the snake far enough right to avoid wall collisions during recording
+    snake.reset({ col: 1, row: 15 }, "right", 1);
+
+    const interval = snake.getTicker().interval;
+    const delayTicks = ghost.getDelayTicks();
+
+    // Record delayTicks ticks to make the ghost active.
+    // The snake moves right, recording positions (2,15), (3,15), etc.
+    for (let i = 0; i < delayTicks; i++) {
+      scene.update(0, interval);
+      if (scene.getPhase() !== "playing") return;
+    }
+
+    expect(ghost.isActive()).toBe(true);
+
+    // The ghost head snapshot is the first recorded tick: snake at (2,15).
+    // Now reset the snake to land exactly on that ghost position.
+    const ghostHead = ghost.getGhostHead();
+    expect(ghostHead).toBeDefined();
+    const ghostPos = ghostHead!.segments[0];
+
+    // Place snake one cell to the left of the ghost position, heading right
+    snake.reset({ col: ghostPos.col - 1, row: ghostPos.row }, "right", 1);
+
+    // Step once — snake head lands on the ghost segment
+    scene.update(0, interval);
+
+    expect(scene.getPhase()).toBe("gameOver");
+    expect(snake.isAlive()).toBe(false);
+  });
+
+  it("does not end the run when ghost is inactive (before 5s delay)", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.enterPhase("playing");
+
+    const ghost = scene.getGhost()!;
+    const snake = scene.getSnake()!;
+    snake.reset({ col: 5, row: 15 }, "right", 1);
+
+    const interval = snake.getTicker().interval;
+    const delayTicks = ghost.getDelayTicks();
+
+    // Record delayTicks - 1 ticks (ghost stays inactive)
+    for (let i = 0; i < delayTicks - 1; i++) {
+      scene.update(0, interval);
+      if (scene.getPhase() !== "playing") return;
+    }
+
+    expect(ghost.isActive()).toBe(false);
+    expect(scene.getPhase()).toBe("playing");
+  });
+
+  it("does not end the run when snake head does not overlap ghost", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.enterPhase("playing");
+
+    const ghost = scene.getGhost()!;
+    const snake = scene.getSnake()!;
+
+    // Place the snake at row 10, moving right
+    snake.reset({ col: 1, row: 10 }, "right", 1);
+
+    const interval = snake.getTicker().interval;
+    const delayTicks = ghost.getDelayTicks();
+
+    // Record enough ticks to make ghost active
+    for (let i = 0; i < delayTicks; i++) {
+      scene.update(0, interval);
+      if (scene.getPhase() !== "playing") return;
+    }
+
+    expect(ghost.isActive()).toBe(true);
+
+    // Ghost head is replaying an old position at row 10.
+    // Move the snake to a different row so it won't overlap
+    snake.reset({ col: 1, row: 5 }, "right", 1);
+
+    // Step once — snake head is at (2,5), ghost is at row 10
+    scene.update(0, interval);
+
+    expect(scene.getPhase()).toBe("playing");
+    expect(snake.isAlive()).toBe(true);
+  });
+
+  it("ghost collision triggers the same endRun flow as self-collision", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.enterPhase("playing");
+    scene.addScore(25);
+
+    const ghost = scene.getGhost()!;
+    const snake = scene.getSnake()!;
+    snake.reset({ col: 1, row: 15 }, "right", 1);
+
+    const interval = snake.getTicker().interval;
+    const delayTicks = ghost.getDelayTicks();
+
+    // Make ghost active
+    for (let i = 0; i < delayTicks; i++) {
+      scene.update(0, interval);
+      if (scene.getPhase() !== "playing") return;
+    }
+
+    expect(ghost.isActive()).toBe(true);
+
+    // Land on ghost
+    const ghostPos = ghost.getGhostHead()!.segments[0];
+    snake.reset({ col: ghostPos.col - 1, row: ghostPos.row }, "right", 1);
+    scene.update(0, interval);
+
+    // Verify full game-over outcome handling
+    expect(scene.getPhase()).toBe("gameOver");
+    expect(snake.isAlive()).toBe(false);
+    // High score should have been updated (score was 25, highScore was 0)
+    expect(scene.getHighScore()).toBe(25);
+  });
+
+  it("ghost collision is checked after self-collision (wall and self take priority)", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.enterPhase("playing");
+
+    const snake = scene.getSnake()!;
+
+    // Place snake at right wall edge — wall collision takes priority
+    snake.reset({ col: GRID_COLS - 1, row: 15 }, "right", 1);
+
+    const interval = snake.getTicker().interval;
+    scene.update(0, interval);
+
+    // Wall collision should have ended the run (ghost wasn't even active)
+    expect(scene.getPhase()).toBe("gameOver");
   });
 });

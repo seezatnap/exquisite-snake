@@ -9,11 +9,12 @@ import {
 } from "../config";
 import { gameBridge, type GamePhase } from "../bridge";
 import { loadHighScore, saveHighScore } from "../utils/storage";
-import { isInBounds, type GridPos } from "../utils/grid";
+import { isInBounds, gridToPixel, type GridPos } from "../utils/grid";
 import { Snake } from "../entities/Snake";
 import { Food } from "../entities/Food";
 import { EchoGhost, type RewindStateProvider } from "../entities/EchoGhost";
-import { emitFoodParticles, shakeCamera } from "../systems/effects";
+import { emitFoodParticles, emitGhostFoodParticles, shakeCamera } from "../systems/effects";
+import { GhostRenderer } from "../systems/GhostRenderer";
 
 // ── Default spawn configuration ─────────────────────────────────
 
@@ -46,6 +47,9 @@ export class MainScene extends Phaser.Scene {
 
   /** The echo ghost entity for the current run (null when not playing). */
   private ghost: EchoGhost | null = null;
+
+  /** Renderer for the echo ghost's translucent visuals (null when not playing). */
+  private ghostRenderer: GhostRenderer | null = null;
 
   /**
    * Injectable RNG function for deterministic replay sessions.
@@ -94,12 +98,24 @@ export class MainScene extends Phaser.Scene {
 
     if (!this.snake || !this.food) return;
 
+    // Render ghost every frame for smooth visuals
+    if (this.ghost && this.ghostRenderer) {
+      this.ghostRenderer.render(this.ghost, delta);
+    }
+
     const stepped = this.snake.update(delta);
 
     if (stepped) {
       // Record the snake's current position into the ghost buffer
       if (this.ghost) {
         this.ghost.recordTick(this.snake.getSegments());
+
+        // Emit any ghost-food bursts that became ready this tick
+        const bursts = this.ghost.consumePendingBursts();
+        for (const pos of bursts) {
+          const px = gridToPixel(pos);
+          emitGhostFoodParticles(this, px.x, px.y);
+        }
       }
 
       // Check collisions after the snake moved to its new grid position
@@ -116,6 +132,10 @@ export class MainScene extends Phaser.Scene {
       );
       if (eaten) {
         emitFoodParticles(this, fx, fy);
+        // Schedule a ghost-food burst at the ghost's position in 5 seconds
+        if (this.ghost) {
+          this.ghost.scheduleFoodBurst();
+        }
       }
     }
   }
@@ -174,6 +194,7 @@ export class MainScene extends Phaser.Scene {
     this.snake.setupTouchInput();
     this.food = new Food(this, this.snake, this.rng);
     this.ghost = new EchoGhost();
+    this.ghostRenderer = new GhostRenderer(this);
   }
 
   /** Destroy existing snake, food, and ghost entities. */
@@ -186,6 +207,10 @@ export class MainScene extends Phaser.Scene {
       this.food.destroy();
       this.food = null;
     }
+    if (this.ghostRenderer) {
+      this.ghostRenderer.destroy();
+      this.ghostRenderer = null;
+    }
     if (this.ghost) {
       this.ghost.reset();
       this.ghost = null;
@@ -195,7 +220,7 @@ export class MainScene extends Phaser.Scene {
   // ── Collision detection ───────────────────────────────────────
 
   /**
-   * Check wall-collision and self-collision.
+   * Check wall-collision, self-collision, and echo-ghost collision.
    * If a collision is detected, ends the run and returns true.
    */
   private checkCollisions(): boolean {
@@ -211,6 +236,12 @@ export class MainScene extends Phaser.Scene {
 
     // Self-collision: head occupies a body segment
     if (this.snake.hasSelfCollision()) {
+      this.endRun();
+      return true;
+    }
+
+    // Echo-ghost collision: head overlaps the ghost's delayed replay position
+    if (this.ghost && this.ghost.isActive() && this.ghost.isOnGhost(head)) {
       this.endRun();
       return true;
     }
@@ -264,6 +295,10 @@ export class MainScene extends Phaser.Scene {
 
   getGhost(): EchoGhost | null {
     return this.ghost;
+  }
+
+  getGhostRenderer(): GhostRenderer | null {
+    return this.ghostRenderer;
   }
 
   /**
