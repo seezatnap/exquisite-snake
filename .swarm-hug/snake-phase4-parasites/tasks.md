@@ -26,7 +26,7 @@
 ## Testing and QA
 
 - [x] (#12) Add automated tests for ParasiteManager and ability rules: spawn-on-empty validation, FIFO cap behavior, magnet pull and speed stacking, shield absorb plus blocked-food state transitions, and splitter score multiplier [5 pts] (blocked by #4, #5, #6) (B)
-- [ ] (#13) Add integration/regression tests and QA checklist for splitter obstacle lifecycle and lethal collisions, Echo Ghost exclusion rules, HUD inventory updates, and Game Over parasites-collected display [5 pts] (blocked by #8, #10, #11)
+- [x] (#13) Add integration/regression tests and QA checklist for splitter obstacle lifecycle and lethal collisions, Echo Ghost exclusion rules, HUD inventory updates, and Game Over parasites-collected display [5 pts] (blocked by #8, #10, #11) (A)
 
 ## Follow-up tasks (from sprint review)
 - [x] (#14) Integrate `ParasiteManager.spawnPickupIfDue` into `MainScene` so parasite pickups actually appear during active gameplay, using live snake/food/obstacle occupancy and clearing pickup state on run reset. (B)
@@ -37,5 +37,5 @@
 - [x] (#17) Update food respawn placement to exclude active parasite pickup cells (not just snake cells), and add regression coverage that food and parasite pickups never overlap after food is eaten. (C)
 
 ## Follow-up tasks (from sprint review)
-- [ ] (#18) Extend food respawn placement to exclude active splitter-obstacle and Molten Core lava cells (not just snake), and add a regression test that post-eat food respawns never land on hazard/obstacle tiles. (blocked by #17)
+- [x] (#18) Extend food respawn placement to exclude active splitter-obstacle and Molten Core lava cells (not just snake), and add a regression test that post-eat food respawns never land on hazard/obstacle tiles. (blocked by #17) (A)
 - [x] (#19) Update Molten Core lava spawn candidate filtering to exclude active parasite pickup and splitter-obstacle cells, and add integration coverage that lava and parasite entities never overlap. (C)

@@ -254,6 +254,47 @@ describe("HUD component", () => {
     expect(container.querySelector('[data-testid="hud-parasite-slot-0"]')?.textContent).toBe("");
   });
 
+  it("reflects attach, FIFO shed, and break/removal inventory updates in slot order", () => {
+    bridge.setPhase("playing");
+    const { container } = render(<HUD />);
+
+    act(() => {
+      bridge.setActiveParasites([ParasiteType.Magnet]);
+    });
+    expect(container.querySelector('[data-testid="hud-parasite-slot-0"]')?.textContent).toBe("MG");
+    expect(container.querySelector('[data-testid="hud-parasite-slot-1"]')?.textContent).toBe("");
+    expect(container.querySelector('[data-testid="hud-parasite-slot-2"]')?.textContent).toBe("");
+
+    act(() => {
+      bridge.setActiveParasites([
+        ParasiteType.Magnet,
+        ParasiteType.Shield,
+        ParasiteType.Splitter,
+      ]);
+    });
+    expect(container.querySelector('[data-testid="hud-parasite-slot-0"]')?.textContent).toBe("MG");
+    expect(container.querySelector('[data-testid="hud-parasite-slot-1"]')?.textContent).toBe("SH");
+    expect(container.querySelector('[data-testid="hud-parasite-slot-2"]')?.textContent).toBe("SP");
+
+    act(() => {
+      bridge.setActiveParasites([
+        ParasiteType.Shield,
+        ParasiteType.Splitter,
+        ParasiteType.Magnet,
+      ]);
+    });
+    expect(container.querySelector('[data-testid="hud-parasite-slot-0"]')?.textContent).toBe("SH");
+    expect(container.querySelector('[data-testid="hud-parasite-slot-1"]')?.textContent).toBe("SP");
+    expect(container.querySelector('[data-testid="hud-parasite-slot-2"]')?.textContent).toBe("MG");
+
+    act(() => {
+      bridge.setActiveParasites([ParasiteType.Splitter, ParasiteType.Magnet]);
+    });
+    expect(container.querySelector('[data-testid="hud-parasite-slot-0"]')?.textContent).toBe("SP");
+    expect(container.querySelector('[data-testid="hud-parasite-slot-1"]')?.textContent).toBe("MG");
+    expect(container.querySelector('[data-testid="hud-parasite-slot-2"]')?.textContent).toBe("");
+  });
+
   it("rewind placeholder is aria-hidden", () => {
     bridge.setPhase("playing");
     const { container } = render(<HUD />);

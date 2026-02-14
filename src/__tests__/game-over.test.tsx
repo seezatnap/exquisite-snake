@@ -382,6 +382,17 @@ describe("GameOver component", () => {
     expect(getByTestId("parasites-collected").textContent).toContain("8");
   });
 
+  it("resets parasites-collected display when a new run reset emits zero", () => {
+    bridge.setParasitesCollected(6);
+    bridge.setPhase("gameOver");
+    const { getByTestId } = render(<GameOver />);
+
+    expect(getByTestId("parasites-collected").textContent).toContain("6");
+
+    act(() => bridge.resetRun());
+    expect(getByTestId("parasites-collected").textContent).toContain("0");
+  });
+
   // ── Phase transitions ─────────────────────────────────────
 
   it("shows content when transitioning from playing to gameOver", () => {

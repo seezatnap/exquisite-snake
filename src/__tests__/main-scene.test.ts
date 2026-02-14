@@ -708,19 +708,30 @@ describe("MainScene", () => {
     expect(gameBridge.getState().parasitesCollected).toBe(4);
   });
 
-  it("keeps respawned food off active parasite pickup cells after food is eaten", () => {
+  it("keeps post-eat food respawns off active pickup, splitter-obstacle, and lava cells", () => {
     const scene = new MainScene();
     scene.create();
     scene.setRng(() => 0);
     scene.enterPhase("playing");
+    scene.setMoltenLavaConfig({
+      spawnIntervalMs: 1,
+      spawnChancePerInterval: 0,
+      maxPools: 3,
+    });
 
     const snake = scene.getSnake()!;
+    snake.getTicker().setInterval(60_000);
+    scene.update(0, 45_000); // Neon -> Ice
+    scene.update(45_000, 45_000); // Ice -> Molten
+    expect(scene.getCurrentBiome()).toBe(Biome.MoltenCore);
+
     snake.reset({ col: 5, row: 5 }, "right", 4);
     snake.getTicker().setInterval(100);
     scene.getFood()!.setPosition({ col: 6, row: 5 });
 
     const parasiteManager = getParasiteManager(scene);
     const seeded = parasiteManager.getState();
+    seeded.timers.pickupSpawnElapsedMs = 0;
     seeded.pickups = [
       {
         id: "pickup-a",
@@ -735,15 +746,33 @@ describe("MainScene", () => {
         spawnedAtMs: 2,
       },
     ];
+    seeded.splitterObstacles = [
+      {
+        id: "splitter-a",
+        position: { col: 0, row: 2 },
+        spawnedAtMs: 3,
+        sourceSegmentId: "segment-splitter",
+      },
+    ];
     parasiteManager.replaceState(seeded);
+    injectMoltenLavaPool(scene, { col: 0, row: 3 });
 
-    scene.update(0, 100);
+    scene.update(90_000, 100);
 
     const respawnedFood = scene.getFood()!.getPosition();
-    const activePickups = parasiteManager.getState().pickups;
-    for (const pickup of activePickups) {
-      expect(respawnedFood).not.toEqual(pickup.position);
-    }
+    const blocked = new Set<string>([
+      ...parasiteManager
+        .getState()
+        .pickups
+        .map((pickup) => `${pickup.position.col}:${pickup.position.row}`),
+      ...parasiteManager
+        .getState()
+        .splitterObstacles
+        .map((obstacle) => `${obstacle.position.col}:${obstacle.position.row}`),
+      ...scene.getMoltenLavaPools().map((pool) => `${pool.col}:${pool.row}`),
+    ]);
+
+    expect(blocked.has(`${respawnedFood.col}:${respawnedFood.row}`)).toBe(false);
   });
 
   it("pulls food one tile per stepped tick when a magnet segment is in range", () => {
@@ -2617,6 +2646,28 @@ describe("MainScene – splitter obstacle collision", () => {
     expect(snake.isAlive()).toBe(false);
   });
 
+  it("keeps splitter obstacles alive across safe ticks and still kills on later contact", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.enterPhase("playing");
+
+    const snake = scene.getSnake()!;
+    snake.reset({ col: 10, row: 10 }, "right", 1);
+    injectSplitterObstacle(scene, { col: 12, row: 10 });
+
+    const interval = snake.getTicker().interval;
+    scene.update(0, interval);
+
+    expect(scene.getPhase()).toBe("playing");
+    expect(snake.isAlive()).toBe(true);
+    expect(getParasiteManager(scene).getState().splitterObstacles).toHaveLength(1);
+
+    scene.update(interval, interval);
+
+    expect(scene.getPhase()).toBe("gameOver");
+    expect(snake.isAlive()).toBe(false);
+  });
+
   it("does not let shield absorb splitter obstacle collisions", () => {
     const scene = new MainScene();
     scene.create();
@@ -2666,6 +2717,70 @@ describe("MainScene – splitter obstacle collision", () => {
     expect(snake.getHeadPosition()).toEqual(preCollisionHead);
     expect(parasiteState.inventory.segments).toEqual([]);
     expect(parasiteState.blockedFoodCharges).toBe(1);
+  });
+});
+
+describe("MainScene – echo ghost parasite exclusions", () => {
+  it("does not consume parasite pickups when only echo ghost playback overlaps the pickup cell", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.enterPhase("playing");
+
+    const snake = scene.getSnake()!;
+    const echoGhost = scene.getEchoGhost()!;
+    snake.reset({ col: 5, row: 5 }, "right", 1);
+    scene.getFood()!.setPosition({ col: 0, row: 0 });
+
+    const parasiteManager = getParasiteManager(scene);
+    const seeded = parasiteManager.getState();
+    seeded.pickups = [
+      {
+        id: "pickup-ghost-overlap",
+        type: ParasiteType.Magnet,
+        position: { col: 10, row: 10 },
+        spawnedAtMs: 100,
+      },
+    ];
+    parasiteManager.replaceState(seeded);
+
+    vi.spyOn(echoGhost, "isActive").mockReturnValue(true);
+    vi.spyOn(echoGhost, "getPlaybackSegments").mockReturnValue([
+      { col: 10, row: 10 },
+    ]);
+
+    const interval = snake.getTicker().interval;
+    scene.update(0, interval);
+
+    const after = parasiteManager.getState();
+    expect(scene.getPhase()).toBe("playing");
+    expect(snake.isAlive()).toBe(true);
+    expect(after.pickups).toHaveLength(1);
+    expect(after.pickups[0]?.id).toBe("pickup-ghost-overlap");
+    expect(after.inventory.segments).toEqual([]);
+    expect(after.parasitesCollected).toBe(0);
+  });
+
+  it("does not trigger splitter-obstacle collisions when only echo ghost playback overlaps the obstacle", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.enterPhase("playing");
+
+    const snake = scene.getSnake()!;
+    const echoGhost = scene.getEchoGhost()!;
+    snake.reset({ col: 3, row: 3 }, "right", 1);
+    injectSplitterObstacle(scene, { col: 15, row: 15 });
+
+    vi.spyOn(echoGhost, "isActive").mockReturnValue(true);
+    vi.spyOn(echoGhost, "getPlaybackSegments").mockReturnValue([
+      { col: 15, row: 15 },
+    ]);
+
+    const interval = snake.getTicker().interval;
+    scene.update(0, interval);
+
+    expect(scene.getPhase()).toBe("playing");
+    expect(snake.isAlive()).toBe(true);
+    expect(getParasiteManager(scene).getState().splitterObstacles).toHaveLength(1);
   });
 });
 
