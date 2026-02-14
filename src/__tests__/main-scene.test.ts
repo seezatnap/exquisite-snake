@@ -1039,6 +1039,225 @@ describe("MainScene – echo ghost integration", () => {
   });
 });
 
+// ── Echo ghost collision ─────────────────────────────────────────
+
+describe("MainScene – echo ghost collision", () => {
+  it("ends the run when snake head overlaps a ghost trail segment", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.enterPhase("playing");
+
+    const snake = scene.getSnake()!;
+    const ghost = scene.getEchoGhost()!;
+    const interval = snake.getTicker().interval;
+
+    // Start snake at col=1, row=1, going right, length=1
+    snake.reset({ col: 1, row: 1 }, "right", 1);
+
+    // Advance 37 ticks going right (col 1 → 38)
+    for (let i = 0; i < 37; i++) {
+      scene.update(0, interval);
+    }
+    expect(scene.getPhase()).toBe("playing");
+
+    // Turn down for 3 more ticks to reach 40 total, ghost now active
+    snake.bufferDirection("down");
+    scene.update(0, interval); // tick 38
+    scene.update(0, interval); // tick 39
+    scene.update(0, interval); // tick 40, ghost active
+
+    expect(ghost.isActive()).toBe(true);
+    expect(scene.getPhase()).toBe("playing");
+
+    // Ghost trail at tick 40 shows the position from tick 0 (col=2, row=1).
+    // Steer snake back toward that position. Snake is at col=38, row=4.
+    // Turn left to go back.
+    snake.bufferDirection("left");
+    // We need to reach col=2, row=4 (or wherever the ghost trail is).
+    // The ghost trail from tick 0 was at col=2, row=1.
+    // Instead of navigating back 36 columns, let's test with a fresh approach.
+    // We know the ghost trail from 40 ticks ago is at (2, 1).
+
+    // Let's verify the ghost is active and the trail position
+    const trail = ghost.getGhostTrail()!;
+    expect(trail).not.toBeNull();
+    expect(trail[0].col).toBe(2);
+    expect(trail[0].row).toBe(1);
+
+    // Now, directly place the snake's head at the ghost trail position
+    // and trigger a collision check via update
+    snake.reset({ col: 1, row: 1 }, "right", 1);
+    // On next update, snake steps to col=2, row=1 — matching ghost trail
+    scene.update(0, interval);
+
+    expect(scene.getPhase()).toBe("gameOver");
+    expect(snake.isAlive()).toBe(false);
+  });
+
+  it("does not trigger ghost collision before ghost is active", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.enterPhase("playing");
+
+    const snake = scene.getSnake()!;
+    const ghost = scene.getEchoGhost()!;
+    const interval = snake.getTicker().interval;
+
+    // Snake starts at center going right, length 1
+    snake.reset({ col: 10, row: 15 }, "right", 1);
+
+    // Advance a few ticks — ghost is still warming
+    for (let i = 0; i < 5; i++) {
+      scene.update(0, interval);
+    }
+
+    expect(ghost.isActive()).toBe(false);
+    expect(ghost.getGhostTrail()).toBeNull();
+    expect(scene.getPhase()).toBe("playing");
+  });
+
+  it("does not trigger ghost collision when head is not on ghost trail", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.enterPhase("playing");
+
+    const snake = scene.getSnake()!;
+    const ghost = scene.getEchoGhost()!;
+    const interval = snake.getTicker().interval;
+
+    // Start snake at col=1, row=1, going right, length=1
+    snake.reset({ col: 1, row: 1 }, "right", 1);
+
+    // Advance 37 ticks going right
+    for (let i = 0; i < 37; i++) {
+      scene.update(0, interval);
+    }
+
+    // Turn down for 3 more ticks to reach tick 40
+    snake.bufferDirection("down");
+    scene.update(0, interval);
+    scene.update(0, interval);
+    scene.update(0, interval);
+
+    expect(ghost.isActive()).toBe(true);
+
+    // Snake is now at col=38, row=4 — far from ghost trail at col=2, row=1
+    // Continue stepping down, which is away from the ghost trail
+    scene.update(0, interval);
+    scene.update(0, interval);
+
+    expect(scene.getPhase()).toBe("playing");
+    expect(snake.isAlive()).toBe(true);
+  });
+
+  it("ghost collision triggers same game-over flow as self-collision", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.enterPhase("playing");
+
+    const snake = scene.getSnake()!;
+    const ghost = scene.getEchoGhost()!;
+    const interval = snake.getTicker().interval;
+
+    snake.reset({ col: 1, row: 1 }, "right", 1);
+
+    // Fill 40 ticks to activate ghost
+    for (let i = 0; i < 37; i++) {
+      scene.update(0, interval);
+    }
+    snake.bufferDirection("down");
+    scene.update(0, interval);
+    scene.update(0, interval);
+    scene.update(0, interval);
+
+    expect(ghost.isActive()).toBe(true);
+
+    // Add score to test high-score update on ghost collision
+    scene.addScore(42);
+
+    // Place snake at ghost trail position and trigger collision
+    snake.reset({ col: 1, row: 1 }, "right", 1);
+    scene.update(0, interval);
+
+    // Same outcome as self-collision: gameOver, snake dead, high score updated
+    expect(scene.getPhase()).toBe("gameOver");
+    expect(snake.isAlive()).toBe(false);
+    expect(scene.getHighScore()).toBe(42);
+  });
+
+  it("ghost collision stops recording on the echo ghost", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.enterPhase("playing");
+
+    const snake = scene.getSnake()!;
+    const ghost = scene.getEchoGhost()!;
+    const interval = snake.getTicker().interval;
+
+    snake.reset({ col: 1, row: 1 }, "right", 1);
+
+    // Fill 40 ticks to activate ghost
+    for (let i = 0; i < 37; i++) {
+      scene.update(0, interval);
+    }
+    snake.bufferDirection("down");
+    scene.update(0, interval);
+    scene.update(0, interval);
+    scene.update(0, interval);
+
+    expect(ghost.isRecordingStopped()).toBe(false);
+
+    // Trigger ghost collision
+    snake.reset({ col: 1, row: 1 }, "right", 1);
+    scene.update(0, interval);
+
+    // endRun calls stopRecording on the ghost
+    expect(ghost.isRecordingStopped()).toBe(true);
+  });
+
+  it("ghost collision with any segment of the trail ends the run", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.enterPhase("playing");
+
+    const snake = scene.getSnake()!;
+    const ghost = scene.getEchoGhost()!;
+    const interval = snake.getTicker().interval;
+
+    // Use a length-3 snake so the ghost trail has 3 segments
+    snake.reset({ col: 1, row: 1 }, "right", 3);
+
+    // Fill 40 ticks to activate ghost. Start at col 1, segments trail left.
+    for (let i = 0; i < 37; i++) {
+      scene.update(0, interval);
+    }
+    snake.bufferDirection("down");
+    scene.update(0, interval);
+    scene.update(0, interval);
+    scene.update(0, interval);
+
+    expect(ghost.isActive()).toBe(true);
+
+    // Ghost trail from 40 ticks ago has 3 segments.
+    // Tick 0 recorded: head at (2,1), body at (1,1), body at (0,1)
+    const trail = ghost.getGhostTrail()!;
+    expect(trail.length).toBe(3);
+
+    // Place snake head to hit the second ghost segment (body, not head)
+    // The second segment of the trail is at (1, 1)
+    const targetSeg = trail[1];
+    snake.reset(
+      { col: targetSeg.col - 1, row: targetSeg.row },
+      "right",
+      1,
+    );
+    scene.update(0, interval);
+
+    expect(scene.getPhase()).toBe("gameOver");
+    expect(snake.isAlive()).toBe(false);
+  });
+});
+
 // ── Source-level checks for echo ghost integration ──────────────
 
 describe("MainScene source – echo ghost integration", () => {
@@ -1066,5 +1285,10 @@ describe("MainScene source – echo ghost integration", () => {
 
   it("exposes getEchoGhost accessor", () => {
     expect(source).toContain("getEchoGhost()");
+  });
+
+  it("checks ghost trail in collision detection", () => {
+    expect(source).toContain("getGhostTrail()");
+    expect(source).toContain("gridEquals(head, seg)");
   });
 });

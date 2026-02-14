@@ -9,7 +9,7 @@ import {
 } from "../config";
 import { gameBridge, type GamePhase } from "../bridge";
 import { loadHighScore, saveHighScore } from "../utils/storage";
-import { isInBounds, type GridPos } from "../utils/grid";
+import { isInBounds, gridEquals, type GridPos } from "../utils/grid";
 import { Snake } from "../entities/Snake";
 import { Food } from "../entities/Food";
 import { EchoGhost } from "../entities/EchoGhost";
@@ -205,7 +205,7 @@ export class MainScene extends Phaser.Scene {
   // ── Collision detection ───────────────────────────────────────
 
   /**
-   * Check wall-collision and self-collision.
+   * Check wall-collision, self-collision, and echo ghost collision.
    * If a collision is detected, ends the run and returns true.
    */
   private checkCollisions(): boolean {
@@ -223,6 +223,19 @@ export class MainScene extends Phaser.Scene {
     if (this.snake.hasSelfCollision()) {
       this.endRun();
       return true;
+    }
+
+    // Echo ghost collision: head occupies any ghost trail segment
+    if (this.echoGhost) {
+      const trail = this.echoGhost.getGhostTrail();
+      if (trail) {
+        for (const seg of trail) {
+          if (gridEquals(head, seg)) {
+            this.endRun();
+            return true;
+          }
+        }
+      }
     }
 
     return false;
