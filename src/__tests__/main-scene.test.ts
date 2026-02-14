@@ -2684,6 +2684,32 @@ describe("MainScene – echo ghost collision", () => {
     expect(mockCameraShake).toHaveBeenCalledTimes(1);
   });
 
+  it("does not allow shield absorption on echo ghost collisions", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.enterPhase("playing");
+    setActiveParasiteSegments(scene, [ParasiteType.Shield]);
+
+    const snake = scene.getSnake()!;
+    const echoGhost = scene.getEchoGhost()!;
+    snake.reset({ col: 10, row: 10 }, "right", 1);
+
+    vi.spyOn(echoGhost, "isActive").mockReturnValue(true);
+    vi.spyOn(echoGhost, "getPlaybackSegments").mockReturnValue([
+      { col: 11, row: 10 },
+    ]);
+
+    const interval = snake.getTicker().interval;
+    scene.update(0, interval);
+
+    const parasiteState = getParasiteManager(scene).getState();
+    expect(scene.getPhase()).toBe("gameOver");
+    expect(snake.isAlive()).toBe(false);
+    expect(parasiteState.inventory.segments).toHaveLength(1);
+    expect(parasiteState.inventory.segments[0]?.type).toBe(ParasiteType.Shield);
+    expect(parasiteState.blockedFoodCharges).toBe(0);
+  });
+
   it("matches self-collision fatality side effects (parity with echo-collision)", () => {
     const runSelfCollision = () => {
       const scene = new MainScene();

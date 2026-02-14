@@ -283,6 +283,107 @@ describe("ParasiteManager scaffold", () => {
     expect(manager.isEchoGhostExcludedFromParasites()).toBe(true);
   });
 
+  it("keeps echo ghost excluded from parasite collisions and effects", () => {
+    const manager = new ParasiteManager();
+    const seeded = manager.getState();
+    seeded.pickups = [
+      {
+        id: "pickup-ghost",
+        type: ParasiteType.Shield,
+        position: { col: 3, row: 3 },
+        spawnedAtMs: 100,
+      },
+    ];
+    seeded.splitterObstacles = [
+      {
+        id: "splitter-ghost",
+        position: { col: 6, row: 6 },
+        spawnedAtMs: 200,
+        sourceSegmentId: "seg-splitter",
+      },
+    ];
+    seeded.inventory.segments = [
+      {
+        id: "seg-magnet",
+        type: ParasiteType.Magnet,
+        attachedAtMs: 1,
+        sourcePickupId: "pickup-magnet",
+      },
+      {
+        id: "seg-shield",
+        type: ParasiteType.Shield,
+        attachedAtMs: 2,
+        sourcePickupId: "pickup-shield",
+      },
+      {
+        id: "seg-splitter",
+        type: ParasiteType.Splitter,
+        attachedAtMs: 3,
+        sourcePickupId: "pickup-splitter",
+      },
+    ];
+    manager.replaceState(seeded);
+
+    expect(manager.canTargetCollideWithPickups("snake")).toBe(true);
+    expect(manager.canTargetCollideWithObstacles("snake")).toBe(true);
+    expect(manager.canTargetReceiveEffects("snake")).toBe(true);
+
+    expect(manager.canTargetCollideWithPickups("echoGhost")).toBe(false);
+    expect(manager.canTargetCollideWithObstacles("echoGhost")).toBe(false);
+    expect(manager.canTargetReceiveEffects("echoGhost")).toBe(false);
+
+    expect(manager.hasSplitterObstacleAt({ col: 6, row: 6 })).toBe(true);
+    expect(manager.hasSplitterObstacleAt({ col: 6, row: 6 }, "echoGhost")).toBe(
+      false,
+    );
+
+    expect(manager.getMagnetSpeedMultiplier("echoGhost")).toBe(1);
+    expect(manager.getSplitterScoreMultiplier("echoGhost")).toBe(1);
+    expect(
+      manager.applyScoreModifiers({
+        basePoints: 4,
+        source: "food",
+        target: "echoGhost",
+      }),
+    ).toBe(4);
+
+    const shieldCollision = manager.resolveShieldCollision({
+      target: "echoGhost",
+      head: { col: GRID_COLS, row: 6 },
+      wallCollision: true,
+      selfCollision: false,
+    });
+    expect(shieldCollision.absorbed).toBe(false);
+    expect(shieldCollision.consumedSegment).toBeNull();
+    expect(shieldCollision.blockedFoodCharges).toBe(0);
+    expect(shieldCollision.activeSegments).toHaveLength(3);
+
+    const pulledFood = manager.resolveMagnetFoodPull({
+      target: "echoGhost",
+      snakeSegments: [
+        { col: 7, row: 7 },
+        { col: 6, row: 7 },
+        { col: 5, row: 7 },
+      ],
+      foodPosition: { col: 5, row: 9 },
+      obstaclePositions: [],
+    });
+    expect(pulledFood).toBeNull();
+
+    const consumed = manager.consumePickupAt(
+      { col: 3, row: 3 },
+      999,
+      "echoGhost",
+    );
+    expect(consumed).toBeNull();
+
+    const after = manager.getState();
+    expect(after.pickups).toHaveLength(1);
+    expect(after.inventory.segments).toHaveLength(3);
+    expect(after.parasitesCollected).toBe(0);
+    expect(after.blockedFoodCharges).toBe(0);
+  });
+
   it("applies the splitter score multiplier while splitter is attached", () => {
     const manager = new ParasiteManager();
 
