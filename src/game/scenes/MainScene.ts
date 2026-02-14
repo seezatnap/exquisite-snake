@@ -15,6 +15,7 @@ import { Food } from "../entities/Food";
 import { EchoGhost, type RewindStateProvider } from "../entities/EchoGhost";
 import { emitFoodParticles, emitGhostFoodParticles, shakeCamera } from "../systems/effects";
 import { GhostRenderer } from "../systems/GhostRenderer";
+import { BiomeManager } from "../systems/BiomeTheme";
 
 // ── Default spawn configuration ─────────────────────────────────
 
@@ -50,6 +51,9 @@ export class MainScene extends Phaser.Scene {
 
   /** Renderer for the echo ghost's translucent visuals (null when not playing). */
   private ghostRenderer: GhostRenderer | null = null;
+
+  /** Biome manager for timed biome rotation and ghost color tinting. */
+  private biomeManager: BiomeManager | null = null;
 
   /**
    * Injectable RNG function for deterministic replay sessions.
@@ -97,6 +101,11 @@ export class MainScene extends Phaser.Scene {
     gameBridge.setElapsedTime(gameBridge.getState().elapsedTime + delta);
 
     if (!this.snake || !this.food) return;
+
+    // Advance biome rotation every frame for smooth color transitions
+    if (this.biomeManager) {
+      this.biomeManager.update(delta);
+    }
 
     // Render ghost every frame for smooth visuals
     if (this.ghost && this.ghostRenderer) {
@@ -195,6 +204,9 @@ export class MainScene extends Phaser.Scene {
     this.food = new Food(this, this.snake, this.rng);
     this.ghost = new EchoGhost();
     this.ghostRenderer = new GhostRenderer(this);
+    this.biomeManager = new BiomeManager();
+    this.biomeManager.start();
+    this.ghostRenderer.setBiomeColorProvider(this.biomeManager);
   }
 
   /** Destroy existing snake, food, and ghost entities. */
@@ -210,6 +222,10 @@ export class MainScene extends Phaser.Scene {
     if (this.ghostRenderer) {
       this.ghostRenderer.destroy();
       this.ghostRenderer = null;
+    }
+    if (this.biomeManager) {
+      this.biomeManager.reset();
+      this.biomeManager = null;
     }
     if (this.ghost) {
       this.ghost.reset();
@@ -299,6 +315,10 @@ export class MainScene extends Phaser.Scene {
 
   getGhostRenderer(): GhostRenderer | null {
     return this.ghostRenderer;
+  }
+
+  getBiomeManager(): BiomeManager | null {
+    return this.biomeManager;
   }
 
   /**

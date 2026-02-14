@@ -2,6 +2,7 @@ import Phaser from "phaser";
 import { TILE_SIZE, COLORS, TEXTURE_KEYS } from "../config";
 import { gridToPixel } from "../utils/grid";
 import type { EchoGhost, GhostTrailEntry } from "../entities/EchoGhost";
+import type { BiomeColorProvider } from "./BiomeTheme";
 
 // ── Rendering constants ─────────────────────────────────────────
 
@@ -52,15 +53,39 @@ const TRAIL_EMIT_INTERVAL_MS = 120;
  *
  * The renderer is a standalone system that reads from the EchoGhost
  * entity and draws to the scene. It does not modify game state.
+ *
+ * When a BiomeColorProvider is set, the ghost's fill/outline colors
+ * and particle tints are sourced from the current biome palette,
+ * enabling smooth biome-aware tinting with transitions.
  */
 export class GhostRenderer {
   private graphics: Phaser.GameObjects.Graphics;
   private scene: Phaser.Scene;
   private timeSinceLastEmit = 0;
+  private biomeColors: BiomeColorProvider | null = null;
 
   constructor(scene: Phaser.Scene) {
     this.scene = scene;
     this.graphics = scene.add.graphics();
+  }
+
+  /**
+   * Set the biome color provider for biome-aware tinting.
+   * When set, ghost fill/outline and particle tints are sourced
+   * from the current biome palette each frame, enabling smooth
+   * transitions when the biome changes.
+   *
+   * Pass `null` to revert to the default static colors.
+   */
+  setBiomeColorProvider(provider: BiomeColorProvider | null): void {
+    this.biomeColors = provider;
+  }
+
+  /**
+   * Get the current biome color provider (or null if using defaults).
+   */
+  getBiomeColorProvider(): BiomeColorProvider | null {
+    return this.biomeColors;
   }
 
   /**
@@ -88,8 +113,18 @@ export class GhostRenderer {
    * Draw all ghost trail entries as translucent segments with dashed
    * outlines. Each segment matches the snake body geometry: a rounded
    * rect inset by 2px on each side.
+   *
+   * Colors are sourced from the biome color provider if set, otherwise
+   * from the static GHOST_FILL_COLOR / GHOST_OUTLINE_COLOR constants.
    */
   private drawTrail(trail: readonly GhostTrailEntry[]): void {
+    const fillColor = this.biomeColors
+      ? this.biomeColors.getGhostBodyColor()
+      : GHOST_FILL_COLOR;
+    const outlineColor = this.biomeColors
+      ? this.biomeColors.getGhostBodyColor()
+      : GHOST_OUTLINE_COLOR;
+
     for (const entry of trail) {
       const alpha = entry.opacity * GHOST_BASE_ALPHA;
       if (alpha <= 0) continue;
@@ -100,7 +135,7 @@ export class GhostRenderer {
         const y = px.y - TILE_SIZE / 2;
 
         // Filled rounded rect (matching snake body: inset 2px, radius 3)
-        this.graphics.fillStyle(GHOST_FILL_COLOR, alpha);
+        this.graphics.fillStyle(fillColor, alpha);
         this.graphics.fillRoundedRect(
           x + 2,
           y + 2,
@@ -116,6 +151,7 @@ export class GhostRenderer {
           TILE_SIZE - 4,
           TILE_SIZE - 4,
           alpha,
+          outlineColor,
         );
       }
     }
@@ -133,8 +169,9 @@ export class GhostRenderer {
     w: number,
     h: number,
     alpha: number,
+    color: number,
   ): void {
-    this.graphics.lineStyle(GHOST_OUTLINE_WIDTH, GHOST_OUTLINE_COLOR, alpha);
+    this.graphics.lineStyle(GHOST_OUTLINE_WIDTH, color, alpha);
 
     // Top edge
     this.drawDashedLine(x, y, x + w, y);
@@ -178,6 +215,8 @@ export class GhostRenderer {
   /**
    * Emit trailing particles at the ghost's current head position.
    * Throttled to avoid excessive particle creation.
+   *
+   * Particle tint is sourced from the biome color provider if set.
    */
   private emitTrailingParticles(ghost: EchoGhost, delta: number): void {
     this.timeSinceLastEmit += delta;
@@ -196,6 +235,10 @@ export class GhostRenderer {
     const alpha = GHOST_BASE_ALPHA * fadeOpacity;
     if (alpha <= 0) return;
 
+    const particleTint = this.biomeColors
+      ? this.biomeColors.getGhostParticleColor()
+      : GHOST_OUTLINE_COLOR;
+
     const emitter = this.scene.add.particles(
       px.x,
       px.y,
@@ -210,7 +253,7 @@ export class GhostRenderer {
         quantity: GHOST_TRAIL_PARTICLE_COUNT,
         scale: { start: 0.6, end: 0 },
         alpha: { start: alpha, end: 0 },
-        tint: GHOST_OUTLINE_COLOR,
+        tint: particleTint,
         emitting: false,
       },
     );
