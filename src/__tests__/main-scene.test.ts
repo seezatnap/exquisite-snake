@@ -2072,6 +2072,83 @@ describe("MainScene – echo ghost collision", () => {
     expectCollisionGameOverSignal(scene, { cameraShakeSpy: mockCameraShake });
   });
 
+  it("matches self-collision fatal game-over action/result parity", () => {
+    interface CollisionOutcomeSignature {
+      phase: string;
+      snakeAlive: boolean;
+      endRunCalls: number;
+      cameraShakeCalls: number;
+    }
+
+    function runSelfCollisionOutcome(): CollisionOutcomeSignature {
+      const scene = new MainScene();
+      scene.create();
+      scene.enterPhase("playing");
+
+      const snake = scene.getSnake()!;
+      snake.reset({ col: 5, row: 5 }, "right", 5);
+
+      const interval = snake.getTicker().interval;
+      scene.update(0, interval);
+      snake.bufferDirection("down");
+      scene.update(0, interval);
+      snake.bufferDirection("left");
+      scene.update(0, interval);
+
+      const endRunSpy = vi.spyOn(scene, "endRun");
+      mockCameraShake.mockClear();
+      spySetPhase.mockClear();
+
+      snake.bufferDirection("up");
+      scene.update(0, interval);
+
+      expectCollisionGameOverSignal(scene, { cameraShakeSpy: mockCameraShake });
+
+      return {
+        phase: scene.getPhase(),
+        snakeAlive: snake.isAlive(),
+        endRunCalls: endRunSpy.mock.calls.length,
+        cameraShakeCalls: mockCameraShake.mock.calls.length,
+      };
+    }
+
+    function runGhostCollisionOutcome(): CollisionOutcomeSignature {
+      const scene = new MainScene();
+      scene.create();
+      scene.enterPhase("playing");
+
+      const snake = scene.getSnake()!;
+      snake.reset({ col: 10, row: 10 }, "right", 3);
+      const interval = snake.getTicker().interval;
+      activateGhostAt(scene, [{ col: 11, row: 10 }]);
+
+      const endRunSpy = vi.spyOn(scene, "endRun");
+      mockCameraShake.mockClear();
+      spySetPhase.mockClear();
+
+      scene.update(0, interval);
+      expectCollisionGameOverSignal(scene, { cameraShakeSpy: mockCameraShake });
+
+      return {
+        phase: scene.getPhase(),
+        snakeAlive: snake.isAlive(),
+        endRunCalls: endRunSpy.mock.calls.length,
+        cameraShakeCalls: mockCameraShake.mock.calls.length,
+      };
+    }
+
+    const selfCollisionOutcome = runSelfCollisionOutcome();
+    const ghostCollisionOutcome = runGhostCollisionOutcome();
+
+    expect(selfCollisionOutcome).toEqual({
+      phase: "gameOver",
+      snakeAlive: false,
+      endRunCalls: 1,
+      cameraShakeCalls: 1,
+    });
+    expect(ghostCollisionOutcome).toEqual(selfCollisionOutcome);
+  });
+
   it("does not end the run when ghost is inactive", () => {
     const scene = new MainScene();
     scene.create();
