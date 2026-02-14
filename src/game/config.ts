@@ -38,6 +38,8 @@ export const RENDER_DEPTH = {
   FOOD: 20,
   PARASITE_PICKUP: 24,
   SNAKE: 30,
+  PARASITE_SEGMENT_GLOW: 31,
+  PARASITE_SEGMENT_ICON: 32,
 } as const;
 
 // ── Scene class type ─────────────────────────────────────────────
