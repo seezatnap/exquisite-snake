@@ -5,6 +5,7 @@ import {
   PARASITE_MAGNET_SPEED_BONUS_PER_SEGMENT,
   PARASITE_MAX_SEGMENTS,
   PARASITE_SPLITTER_INTERVAL_MS,
+  PARASITE_SPLITTER_SCORE_MULTIPLIER,
   getParasitePickupRenderIdentity,
   Parasite,
   ParasiteType,
@@ -267,6 +268,13 @@ function normalizeTimestampMs(timestampMs: number): number {
   return Math.max(0, Math.floor(timestampMs));
 }
 
+function normalizeScorePoints(points: number): number {
+  if (!Number.isFinite(points)) {
+    return 0;
+  }
+  return points;
+}
+
 function normalizeRandomSample(rng: () => number): number {
   const sample = rng();
   if (!Number.isFinite(sample)) {
@@ -345,6 +353,34 @@ export class ParasiteManager {
       ParasiteType.Magnet,
     );
     return calculateMagnetSpeedMultiplier(magnetSegments);
+  }
+
+  getSplitterScoreMultiplier(): number {
+    if (!this.hasActiveSegmentType(ParasiteType.Splitter)) {
+      return 1;
+    }
+    return PARASITE_SPLITTER_SCORE_MULTIPLIER;
+  }
+
+  applyScoreModifiers(context: ParasiteScoringContext): number {
+    const safeBasePoints = normalizeScorePoints(context.basePoints);
+    const splitterAdjustedBasePoints = safeBasePoints > 0
+      ? safeBasePoints * this.getSplitterScoreMultiplier()
+      : safeBasePoints;
+
+    const scoringHook = this.phase3Hooks.scoring;
+    if (typeof scoringHook !== "function") {
+      return splitterAdjustedBasePoints;
+    }
+
+    const scoreWithHook = scoringHook({
+      ...context,
+      basePoints: splitterAdjustedBasePoints,
+    });
+    if (!Number.isFinite(scoreWithHook)) {
+      return splitterAdjustedBasePoints;
+    }
+    return scoreWithHook;
   }
 
   getActiveSegments(): ParasiteSegmentState[] {

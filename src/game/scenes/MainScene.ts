@@ -43,6 +43,7 @@ import {
 } from "../systems/biomeMechanics";
 import {
   ParasiteManager,
+  type ParasiteScoreSource,
   type ParasiteSpawnedPickup,
 } from "../systems/ParasiteManager";
 
@@ -566,8 +567,12 @@ export class MainScene extends Phaser.Scene {
 
   // ── Score helpers ───────────────────────────────────────────
 
-  addScore(points: number): void {
-    gameBridge.setScore(gameBridge.getState().score + points);
+  addScore(points: number, source: ParasiteScoreSource = "other"): void {
+    const adjustedPoints = this.parasiteManager.applyScoreModifiers({
+      basePoints: points,
+      source,
+    });
+    gameBridge.setScore(gameBridge.getState().score + adjustedPoints);
   }
 
   getScore(): number {
