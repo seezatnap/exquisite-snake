@@ -1496,17 +1496,19 @@ describe("Game.tsx loads MainScene for the scene list", () => {
 // ── Entity management ────────────────────────────────────────────
 
 describe("MainScene – entity management", () => {
-  it("creates snake and food when entering 'playing'", () => {
+  it("creates snake, food, and echo ghost when entering 'playing'", () => {
     const scene = new MainScene();
     scene.create();
 
     expect(scene.getSnake()).toBeNull();
     expect(scene.getFood()).toBeNull();
+    expect(scene.getEchoGhost()).toBeNull();
 
     scene.enterPhase("playing");
 
     expect(scene.getSnake()).not.toBeNull();
     expect(scene.getFood()).not.toBeNull();
+    expect(scene.getEchoGhost()).not.toBeNull();
   });
 
   it("snake starts alive when entering 'playing'", () => {
@@ -1537,6 +1539,25 @@ describe("MainScene – entity management", () => {
     spy.mockRestore();
   });
 
+  it("feeds snake positions into EchoGhost only on movement ticks", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.enterPhase("playing");
+
+    const snake = scene.getSnake()!;
+    const echoGhost = scene.getEchoGhost()!;
+    snake.getTicker().setInterval(100);
+
+    const initialSamples = echoGhost.getBufferedSampleCount();
+    expect(initialSamples).toBeGreaterThan(0);
+
+    scene.update(0, 50);
+    expect(echoGhost.getBufferedSampleCount()).toBe(initialSamples);
+
+    scene.update(0, 50);
+    expect(echoGhost.getBufferedSampleCount()).toBe(initialSamples + 1);
+  });
+
   it("destroys old entities on replay (entering 'playing' again)", () => {
     const scene = new MainScene();
     scene.create();
@@ -1544,6 +1565,7 @@ describe("MainScene – entity management", () => {
 
     const firstSnake = scene.getSnake();
     const firstFood = scene.getFood();
+    const firstGhost = scene.getEchoGhost();
 
     scene.endRun();
     scene.enterPhase("playing");
@@ -1551,8 +1573,20 @@ describe("MainScene – entity management", () => {
     // New entities should be created (different instances)
     expect(scene.getSnake()).not.toBe(firstSnake);
     expect(scene.getFood()).not.toBe(firstFood);
+    expect(scene.getEchoGhost()).not.toBe(firstGhost);
     expect(scene.getSnake()).not.toBeNull();
     expect(scene.getFood()).not.toBeNull();
+    expect(scene.getEchoGhost()).not.toBeNull();
+  });
+
+  it("cleans up EchoGhost when the scene shuts down", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.enterPhase("playing");
+    expect(scene.getEchoGhost()).not.toBeNull();
+
+    scene.shutdown();
+    expect(scene.getEchoGhost()).toBeNull();
   });
 });
 
