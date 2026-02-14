@@ -213,6 +213,21 @@ function getParasiteSegmentIconMap(scene: MainScene): Map<string, unknown> {
   ).parasiteSegmentIconOverlays;
 }
 
+function injectSplitterObstacle(
+  scene: MainScene,
+  pos: { col: number; row: number },
+): void {
+  const parasiteManager = getParasiteManager(scene);
+  const nextState = parasiteManager.getState();
+  nextState.splitterObstacles.push({
+    id: `test-splitter-${nextState.splitterObstacles.length + 1}`,
+    position: { ...pos },
+    spawnedAtMs: 0,
+    sourceSegmentId: "test-segment",
+  });
+  parasiteManager.replaceState(nextState);
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   resetBridge();
@@ -2463,6 +2478,75 @@ describe("MainScene – wall collision", () => {
 
     expect(scene.getPhase()).toBe("playing");
     expect(snake.isAlive()).toBe(true);
+  });
+});
+
+describe("MainScene – splitter obstacle collision", () => {
+  it("ends the run when snake head touches a splitter obstacle", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.enterPhase("playing");
+
+    const snake = scene.getSnake()!;
+    snake.reset({ col: 10, row: 10 }, "right", 1);
+    injectSplitterObstacle(scene, { col: 11, row: 10 });
+
+    const interval = snake.getTicker().interval;
+    scene.update(0, interval);
+
+    expect(scene.getPhase()).toBe("gameOver");
+    expect(snake.isAlive()).toBe(false);
+  });
+
+  it("does not let shield absorb splitter obstacle collisions", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.enterPhase("playing");
+    setActiveParasiteSegments(scene, [ParasiteType.Shield]);
+
+    const snake = scene.getSnake()!;
+    snake.reset({ col: 12, row: 12 }, "right", 1);
+    injectSplitterObstacle(scene, { col: 13, row: 12 });
+
+    const interval = snake.getTicker().interval;
+    scene.update(0, interval);
+
+    const parasiteState = getParasiteManager(scene).getState();
+    expect(scene.getPhase()).toBe("gameOver");
+    expect(snake.isAlive()).toBe(false);
+    expect(parasiteState.inventory.segments).toHaveLength(1);
+    expect(parasiteState.inventory.segments[0]?.type).toBe(ParasiteType.Shield);
+    expect(parasiteState.blockedFoodCharges).toBe(0);
+  });
+
+  it("keeps wall/self collision precedence deterministic over splitter overlap edge cases", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.enterPhase("playing");
+    setActiveParasiteSegments(scene, [ParasiteType.Shield]);
+
+    const snake = scene.getSnake()!;
+    snake.reset({ col: 5, row: 5 }, "right", 5);
+    const interval = snake.getTicker().interval;
+
+    scene.update(0, interval);
+    snake.bufferDirection("down");
+    scene.update(0, interval);
+    snake.bufferDirection("left");
+    scene.update(0, interval);
+
+    const preCollisionHead = snake.getHeadPosition();
+    injectSplitterObstacle(scene, { col: 5, row: 5 });
+
+    snake.bufferDirection("up");
+    scene.update(0, interval);
+
+    const parasiteState = getParasiteManager(scene).getState();
+    expect(scene.getPhase()).toBe("playing");
+    expect(snake.isAlive()).toBe(true);
+    expect(snake.getHeadPosition()).toEqual(preCollisionHead);
+    expect(parasiteState.inventory.segments).toEqual([]);
+    expect(parasiteState.blockedFoodCharges).toBe(1);
   });
 });
 
