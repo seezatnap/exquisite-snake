@@ -1,5 +1,5 @@
 import Phaser from "phaser";
-import { TEXTURE_KEYS } from "../config";
+import { TEXTURE_KEYS, RENDER_DEPTH } from "../config";
 import {
   type GridPos,
   type Direction,
@@ -20,6 +20,9 @@ const INPUT_BUFFER_SIZE = 2;
 /** Default starting length (head + body segments). */
 const DEFAULT_START_LENGTH = 3;
 
+/** Extra tiles to keep sliding before a queued turn is applied. */
+const NO_TURN_MOMENTUM = 0;
+
 /** Key mapping from keyboard codes to Direction. */
 const KEY_DIRECTION_MAP: Record<string, Direction> = {
   ArrowUp: "up",
@@ -31,6 +34,8 @@ const KEY_DIRECTION_MAP: Record<string, Direction> = {
   KeyA: "left",
   KeyD: "right",
 };
+
+type DirectionInputGuard = (dir: Direction) => boolean;
 
 // ── Snake entity ─────────────────────────────────────────────────
 
@@ -46,6 +51,15 @@ export class Snake {
 
   /** Buffered upcoming direction changes (max INPUT_BUFFER_SIZE). */
   private inputBuffer: Direction[] = [];
+
+  /** Extra tiles to keep moving in the current direction before each turn applies. */
+  private turnMomentumTiles = NO_TURN_MOMENTUM;
+
+  /** Next queued turn currently waiting for momentum tiles to be consumed. */
+  private pendingTurn: Direction | null = null;
+
+  /** Number of remaining slide tiles before `pendingTurn` is applied. */
+  private pendingTurnSlideTiles = 0;
 
   /** Whether the snake should grow on the next step (tail not removed). */
   private pendingGrowth = 0;
@@ -67,6 +81,12 @@ export class Snake {
 
   /** Stored keyboard handler reference for cleanup in destroy(). */
   private keydownHandler: ((event: { code: string }) => void) | null = null;
+
+  /** Optional scene-provided guard to reject biome-specific direction inputs. */
+  private directionInputGuard: DirectionInputGuard | null = null;
+
+  /** Whether an opposite-direction input was rejected since the last consumed step. */
+  private rejectedOppositeDirectionInput = false;
 
   constructor(
     scene: Phaser.Scene,
@@ -105,6 +125,7 @@ export class Snake {
         i === 0 ? TEXTURE_KEYS.SNAKE_HEAD : TEXTURE_KEYS.SNAKE_BODY;
       const pos = gridToPixel(this.segments[i]);
       const sprite = this.scene.add.sprite(pos.x, pos.y, textureKey);
+      sprite.setDepth?.(RENDER_DEPTH.SNAKE);
       this.sprites.push(sprite);
     }
   }
@@ -117,7 +138,15 @@ export class Snake {
       pos.y,
       TEXTURE_KEYS.SNAKE_BODY,
     );
+    sprite.setDepth?.(RENDER_DEPTH.SNAKE);
     this.sprites.push(sprite);
+  }
+
+  /** Re-apply a uniform render depth to all segment sprites. */
+  setRenderDepth(depth: number): void {
+    for (const sprite of this.sprites) {
+      sprite.setDepth?.(depth);
+    }
   }
 
   // ── Input handling ─────────────────────────────────────────────
@@ -160,17 +189,50 @@ export class Snake {
    * - It's the same as the last buffered direction (or current direction)
    */
   bufferDirection(dir: Direction): void {
+    if (this.directionInputGuard && !this.directionInputGuard(dir)) {
+      this.rejectedOppositeDirectionInput = true;
+      return;
+    }
     if (this.inputBuffer.length >= INPUT_BUFFER_SIZE) return;
 
     const lastDir =
       this.inputBuffer.length > 0
         ? this.inputBuffer[this.inputBuffer.length - 1]
-        : this.direction;
+        : this.pendingTurn ?? this.direction;
 
-    // Reject same direction or opposite (180°)
-    if (dir === lastDir || dir === oppositeDirection(lastDir)) return;
+    // Reject same direction.
+    if (dir === lastDir) return;
+    // Reject opposite (180°) and mark it so callers can treat it as a no-op.
+    if (dir === oppositeDirection(lastDir)) {
+      this.rejectedOppositeDirectionInput = true;
+      return;
+    }
 
     this.inputBuffer.push(dir);
+  }
+
+  /** Install/remove a scene-provided direction guard. */
+  setDirectionInputGuard(guard: DirectionInputGuard | null): void {
+    this.directionInputGuard = guard;
+  }
+
+  /**
+   * Consume and clear whether an opposite-direction input was rejected.
+   *
+   * Call once per gameplay step to treat rejected opposite turns as explicit no-ops.
+   */
+  consumeRejectedOppositeDirectionInput(): boolean {
+    const rejected = this.rejectedOppositeDirectionInput;
+    this.rejectedOppositeDirectionInput = false;
+    return rejected;
+  }
+
+  /** Configure how many extra tiles to slide before each queued turn applies. */
+  setTurnMomentumTiles(extraTiles: number): void {
+    this.turnMomentumTiles = Math.max(0, Math.floor(extraTiles));
+    if (this.turnMomentumTiles === NO_TURN_MOMENTUM) {
+      this.pendingTurnSlideTiles = 0;
+    }
   }
 
   // ── Movement ───────────────────────────────────────────────────
@@ -198,16 +260,45 @@ export class Snake {
    * Consumes the next buffered direction if available.
    */
   private step(): void {
-    // Consume next buffered direction
-    if (this.inputBuffer.length > 0) {
-      this.direction = this.inputBuffer.shift()!;
+    if (this.pendingTurn === null && this.inputBuffer.length > 0) {
+      const queuedTurn = this.inputBuffer.shift()!;
+      if (this.turnMomentumTiles === NO_TURN_MOMENTUM) {
+        this.direction = queuedTurn;
+      } else {
+        this.pendingTurn = queuedTurn;
+        this.pendingTurnSlideTiles = this.turnMomentumTiles;
+      }
     }
 
+    if (this.pendingTurn !== null) {
+      if (this.pendingTurnSlideTiles > 0) {
+        this.pendingTurnSlideTiles--;
+      } else {
+        this.direction = this.pendingTurn;
+        this.pendingTurn = null;
+      }
+    }
+
+    this.advanceSegments(this.direction);
+  }
+
+  /**
+   * Apply a deterministic one-tile external displacement.
+   *
+   * Used by biome mechanics such as Void Rift gravity. This does not mutate
+   * the snake's facing direction or consume buffered player turns.
+   */
+  applyExternalNudge(direction: Direction): void {
+    if (!this.alive) return;
+    this.advanceSegments(direction);
+  }
+
+  private advanceSegments(direction: Direction): void {
     // Save previous positions for interpolation
     this.prevSegments = this.segments.map((s) => ({ ...s }));
 
     // Compute new head position
-    const newHead = stepInDirection(this.segments[0], this.direction);
+    const newHead = stepInDirection(this.segments[0], direction);
 
     // Shift segments: add new head, optionally keep or remove tail
     this.segments.unshift(newHead);
@@ -244,6 +335,31 @@ export class Snake {
     this.pendingGrowth += amount;
   }
 
+  /**
+   * Burn tail segments from the snake.
+   *
+   * Returns `false` when burning would consume the head segment.
+   */
+  burnTailSegments(amount: number): boolean {
+    const burnCount = Math.max(0, Math.floor(amount));
+    if (burnCount === 0) {
+      return true;
+    }
+
+    // Keep at least the head segment alive.
+    if (this.segments.length <= burnCount) {
+      return false;
+    }
+
+    for (let i = 0; i < burnCount; i++) {
+      this.segments.pop();
+      this.prevSegments.pop();
+      this.sprites.pop()?.destroy();
+    }
+
+    return true;
+  }
+
   // ── State queries ──────────────────────────────────────────────
 
   /** Get the head grid position. */
@@ -264,6 +380,18 @@ export class Snake {
   /** Get the current movement direction. */
   getDirection(): Direction {
     return this.direction;
+  }
+
+  /**
+   * Whether a direction is currently queued to be applied on a future step.
+   *
+   * Includes both the immediate input buffer and a pending delayed-turn state.
+   */
+  hasQueuedDirection(dir: Direction): boolean {
+    if (this.pendingTurn === dir) {
+      return true;
+    }
+    return this.inputBuffer.includes(dir);
   }
 
   /** Check if the given grid position overlaps any body segment (not head). */
@@ -313,6 +441,8 @@ export class Snake {
     }
     this.touchInput?.detach();
     this.touchInput = null;
+    this.directionInputGuard = null;
+    this.rejectedOppositeDirectionInput = false;
     for (const sprite of this.sprites) {
       sprite.destroy();
     }
@@ -338,7 +468,10 @@ export class Snake {
     this.alive = true;
     this.direction = direction;
     this.inputBuffer = [];
+    this.pendingTurn = null;
+    this.pendingTurnSlideTiles = 0;
     this.pendingGrowth = 0;
+    this.rejectedOppositeDirectionInput = false;
     this.ticker.reset();
 
     // Build new segments

@@ -5,6 +5,25 @@
  * overlays subscribe to.  Exported as a singleton so both sides import
  * the same instance.
  */
+import {
+  Biome,
+  type BiomeTransition,
+  type BiomeVisitStats,
+} from "./systems/BiomeManager";
+
+function createInitialBiomeVisitStats(firstBiome: Biome = Biome.NeonCity): BiomeVisitStats {
+  const stats: BiomeVisitStats = {
+    [Biome.NeonCity]: 1,
+    [Biome.IceCavern]: 0,
+    [Biome.MoltenCore]: 0,
+    [Biome.VoidRift]: 0,
+  };
+  if (firstBiome !== Biome.NeonCity) {
+    stats[Biome.NeonCity] = 0;
+    stats[firstBiome] = 1;
+  }
+  return stats;
+}
 
 // ── Game phases ─────────────────────────────────────────────────
 export type GamePhase = "start" | "playing" | "gameOver";
@@ -16,6 +35,10 @@ export interface GameState {
   highScore: number;
   /** Elapsed survival time in milliseconds. */
   elapsedTime: number;
+  /** Active biome for the current run. */
+  currentBiome: Biome;
+  /** Per-biome visit counts for the current run. */
+  biomeVisitStats: BiomeVisitStats;
 }
 
 // ── Event map: event name → payload ─────────────────────────────
@@ -24,6 +47,16 @@ export interface GameBridgeEvents {
   scoreChange: number;
   highScoreChange: number;
   elapsedTimeChange: number;
+  biomeChange: Biome;
+  biomeVisitStatsChange: BiomeVisitStats;
+  biomeTransition: BiomeTransition;
+  biomeEnter: Biome;
+  biomeExit: Biome;
+}
+
+export interface ResetRunOptions {
+  currentBiome?: Biome;
+  biomeVisitStats?: BiomeVisitStats;
 }
 
 export type GameBridgeEventName = keyof GameBridgeEvents;
@@ -41,6 +74,8 @@ export class GameBridge {
     score: 0,
     highScore: 0,
     elapsedTime: 0,
+    currentBiome: Biome.NeonCity,
+    biomeVisitStats: createInitialBiomeVisitStats(),
   };
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -72,12 +107,47 @@ export class GameBridge {
     this.emit("elapsedTimeChange", elapsedTime);
   }
 
-  /** Reset score and elapsed time (called on new game). */
-  resetRun(): void {
+  setCurrentBiome(currentBiome: Biome): void {
+    this.state.currentBiome = currentBiome;
+    this.emit("biomeChange", currentBiome);
+  }
+
+  setBiomeVisitStats(stats: BiomeVisitStats): void {
+    const nextStats: BiomeVisitStats = { ...stats };
+    this.state.biomeVisitStats = nextStats;
+    this.emit("biomeVisitStatsChange", nextStats);
+  }
+
+  /**
+   * Emit a biome transition record for subscribers that need both endpoints.
+   */
+  emitBiomeTransition(transition: BiomeTransition): void {
+    this.emit("biomeTransition", transition);
+  }
+
+  emitBiomeEnter(biome: Biome): void {
+    this.emit("biomeEnter", biome);
+  }
+
+  emitBiomeExit(biome: Biome): void {
+    this.emit("biomeExit", biome);
+  }
+
+  /** Reset all per-run state (called on new game). */
+  resetRun(options: ResetRunOptions = {}): void {
+    const currentBiome = options.currentBiome ?? Biome.NeonCity;
+    const visitStats = options.biomeVisitStats
+      ? { ...options.biomeVisitStats }
+      : createInitialBiomeVisitStats(currentBiome);
+
     this.state.score = 0;
     this.state.elapsedTime = 0;
+    this.state.currentBiome = currentBiome;
+    this.state.biomeVisitStats = visitStats;
     this.emit("scoreChange", 0);
     this.emit("elapsedTimeChange", 0);
+    this.emit("biomeChange", this.state.currentBiome);
+    this.emit("biomeVisitStatsChange", this.state.biomeVisitStats);
   }
 
   // ── Pub / Sub ───────────────────────────────────────────────

@@ -3,6 +3,7 @@ import fs from "fs";
 import path from "path";
 import { gameBridge } from "@/game/bridge";
 import { GRID_COLS, GRID_ROWS, ARENA_WIDTH, ARENA_HEIGHT, TILE_SIZE } from "@/game/config";
+import { Biome } from "@/game/systems/BiomeManager";
 
 const ROOT = path.resolve(__dirname, "../..");
 
@@ -74,6 +75,13 @@ function resetBridge(): void {
   gameBridge.setScore(0);
   gameBridge.setHighScore(0);
   gameBridge.setElapsedTime(0);
+  gameBridge.setCurrentBiome(Biome.NeonCity);
+  gameBridge.setBiomeVisitStats({
+    [Biome.NeonCity]: 1,
+    [Biome.IceCavern]: 0,
+    [Biome.MoltenCore]: 0,
+    [Biome.VoidRift]: 0,
+  });
 }
 
 beforeEach(() => {

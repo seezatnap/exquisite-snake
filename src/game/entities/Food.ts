@@ -1,5 +1,5 @@
 import Phaser from "phaser";
-import { GRID_COLS, GRID_ROWS, TEXTURE_KEYS } from "../config";
+import { GRID_COLS, GRID_ROWS, TEXTURE_KEYS, RENDER_DEPTH } from "../config";
 import { type GridPos, gridToPixel, gridEquals } from "../utils/grid";
 import type { Snake } from "./Snake";
 
@@ -42,6 +42,7 @@ export class Food {
     this.position = this.findSafePosition(snake);
     const px = gridToPixel(this.position);
     this.sprite = this.scene.add.sprite(px.x, px.y, TEXTURE_KEYS.FOOD);
+    this.sprite.setDepth?.(RENDER_DEPTH.FOOD);
   }
 
   // ── Spawn logic ─────────────────────────────────────────────────

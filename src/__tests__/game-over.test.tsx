@@ -5,16 +5,36 @@ import type { GameBridge } from "@/game/bridge";
 // vi.hoisted runs before the mock factory, so bridge is available.
 const { bridge } = vi.hoisted(() => {
   type GamePhase = "start" | "playing" | "gameOver";
+  interface BiomeVisitStats {
+    "neon-city": number;
+    "ice-cavern": number;
+    "molten-core": number;
+    "void-rift": number;
+  }
   interface State {
     phase: GamePhase;
     score: number;
     highScore: number;
     elapsedTime: number;
+    biomeVisitStats: BiomeVisitStats;
   }
   type Listener = (v: unknown) => void;
 
+  const createInitialBiomeVisitStats = (): BiomeVisitStats => ({
+    "neon-city": 1,
+    "ice-cavern": 0,
+    "molten-core": 0,
+    "void-rift": 0,
+  });
+
   class HoistedBridge {
-    private state: State = { phase: "start", score: 0, highScore: 0, elapsedTime: 0 };
+    private state: State = {
+      phase: "start",
+      score: 0,
+      highScore: 0,
+      elapsedTime: 0,
+      biomeVisitStats: createInitialBiomeVisitStats(),
+    };
     private listeners = new Map<string, Set<Listener>>();
 
     getState() { return this.state; }
@@ -23,11 +43,17 @@ const { bridge } = vi.hoisted(() => {
     setScore(s: number) { this.state.score = s; this.emit("scoreChange", s); }
     setHighScore(h: number) { this.state.highScore = h; this.emit("highScoreChange", h); }
     setElapsedTime(t: number) { this.state.elapsedTime = t; this.emit("elapsedTimeChange", t); }
+    setBiomeVisitStats(stats: BiomeVisitStats) {
+      this.state.biomeVisitStats = { ...stats };
+      this.emit("biomeVisitStatsChange", this.state.biomeVisitStats);
+    }
     resetRun() {
       this.state.score = 0;
       this.state.elapsedTime = 0;
+      this.state.biomeVisitStats = createInitialBiomeVisitStats();
       this.emit("scoreChange", 0);
       this.emit("elapsedTimeChange", 0);
+      this.emit("biomeVisitStatsChange", this.state.biomeVisitStats);
     }
 
     on(event: string, fn: Listener) {
@@ -62,6 +88,12 @@ describe("GameOver component", () => {
     bridge.setScore(0);
     bridge.setHighScore(0);
     bridge.setElapsedTime(0);
+    bridge.setBiomeVisitStats({
+      "neon-city": 1,
+      "ice-cavern": 0,
+      "molten-core": 0,
+      "void-rift": 0,
+    });
   });
 
   // ── Visibility ────────────────────────────────────────────
@@ -192,6 +224,71 @@ describe("GameOver component", () => {
     expect(getByTestId("time-survived").textContent).toContain("0s");
   });
 
+  // ── Biomes visited ───────────────────────────────────────
+
+  it("displays biomes visited label and unique visited count", () => {
+    bridge.setPhase("gameOver");
+    const { getByTestId } = render(<GameOver />);
+    expect(getByTestId("biomes-visited").textContent).toContain("BIOMES VISITED");
+    expect(getByTestId("biomes-visited").textContent).toContain("1/4");
+    expect(getByTestId("biomes-visited-list").textContent).toBe("Neon City");
+  });
+
+  it("lists visited biomes with repeat counts from bridge state", () => {
+    bridge.setBiomeVisitStats({
+      "neon-city": 2,
+      "ice-cavern": 1,
+      "molten-core": 0,
+      "void-rift": 1,
+    });
+    bridge.setPhase("gameOver");
+    const { getByTestId } = render(<GameOver />);
+    expect(getByTestId("biomes-visited").textContent).toContain("3/4");
+    expect(getByTestId("biomes-visited-list").textContent).toBe(
+      "Neon City x2 • Ice Cavern • Void Rift",
+    );
+  });
+
+  it("updates biome visit stats reactively when bridge emits biomeVisitStatsChange", () => {
+    bridge.setPhase("gameOver");
+    const { getByTestId } = render(<GameOver />);
+
+    act(() =>
+      bridge.setBiomeVisitStats({
+        "neon-city": 1,
+        "ice-cavern": 1,
+        "molten-core": 1,
+        "void-rift": 0,
+      }),
+    );
+
+    expect(getByTestId("biomes-visited").textContent).toContain("3/4");
+    expect(getByTestId("biomes-visited-list").textContent).toBe(
+      "Neon City • Ice Cavern • Molten Core",
+    );
+  });
+
+  it("shows reset biome stats on the next game over after resetRun", () => {
+    bridge.setBiomeVisitStats({
+      "neon-city": 1,
+      "ice-cavern": 1,
+      "molten-core": 1,
+      "void-rift": 1,
+    });
+    bridge.setPhase("gameOver");
+    const { getByTestId } = render(<GameOver />);
+    expect(getByTestId("biomes-visited").textContent).toContain("4/4");
+
+    act(() => {
+      bridge.setPhase("playing");
+      bridge.resetRun();
+      bridge.setPhase("gameOver");
+    });
+
+    expect(getByTestId("biomes-visited").textContent).toContain("1/4");
+    expect(getByTestId("biomes-visited-list").textContent).toBe("Neon City");
+  });
+
   // ── Play Again button ─────────────────────────────────────
 
   it("renders a 'PLAY AGAIN' button", () => {
@@ -301,12 +398,13 @@ describe("GameOver component", () => {
     const offSpy = vi.spyOn(bridge, "off");
     unmount();
 
-    expect(offSpy).toHaveBeenCalledTimes(4);
+    expect(offSpy).toHaveBeenCalledTimes(5);
     const events = offSpy.mock.calls.map((c) => c[0]);
     expect(events).toContain("phaseChange");
     expect(events).toContain("scoreChange");
     expect(events).toContain("highScoreChange");
     expect(events).toContain("elapsedTimeChange");
+    expect(events).toContain("biomeVisitStatsChange");
 
     offSpy.mockRestore();
   });
