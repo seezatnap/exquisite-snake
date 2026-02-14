@@ -3,7 +3,7 @@
 ## Core Ghost Systems
 
 - [x] (#1) Create `src/game/entities/EchoGhost.ts` with an `EchoGhost` entity that records the snake path each tick into a fixed-size circular buffer, supports 5-second replay delay derived from tick rate, and exposes deterministic APIs for writing positions and reading the delayed ghost trail. [5 pts] (A)
-- [A] (#2) Integrate the new ghost entity into game initialization and update lifecycle so each game tick appends the current snake state, tracks progression vs. replay, and starts ghost output after exactly 5 seconds without affecting existing movement/food logic. [5 pts] (blocked by #1)
+- [x] (#2) Integrate the new ghost entity into game initialization and update lifecycle so each game tick appends the current snake state, tracks progression vs. replay, and starts ghost output after exactly 5 seconds without affecting existing movement/food logic. [5 pts] (blocked by #1) (A)
 - [ ] (#3) Implement ghost lifecycle management for bounded playback: when buffered history is exhausted, fade the ghost out cleanly and prevent indefinite extension/growth while still maintaining a rolling replay window. [5 pts] (blocked by #1, #2)
 
 ## Gameplay & Collision
@@ -25,4 +25,4 @@
 - [ ] (#9) Add automated tests for 5-second delay accuracy, ghost self-overlap kill behavior, fade-out and bounded buffer lifecycle, delayed food particle burst timing, and biome-tinted ghost rendering metadata. [5 pts] (blocked by #4, #5, #6, #7, #8)
 
 ## Follow-up tasks (from sprint review)
-- [A] (#10) Add unit tests for `EchoGhost.reset()` and constructor edge cases (zero/negative tick interval and delay) in `echo-ghost.test.ts` (blocked by #1)
+- [x] (#10) Add unit tests for `EchoGhost.reset()` and constructor edge cases (zero/negative tick interval and delay) in `echo-ghost.test.ts` (blocked by #1) (A)
