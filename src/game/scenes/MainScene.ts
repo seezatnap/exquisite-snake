@@ -9,11 +9,11 @@ import {
 } from "../config";
 import { gameBridge, type GamePhase } from "../bridge";
 import { loadHighScore, saveHighScore } from "../utils/storage";
-import { isInBounds, type GridPos } from "../utils/grid";
+import { isInBounds, gridToPixel, type GridPos } from "../utils/grid";
 import { Snake } from "../entities/Snake";
 import { Food } from "../entities/Food";
 import { EchoGhost, type RewindStateProvider } from "../entities/EchoGhost";
-import { emitFoodParticles, shakeCamera } from "../systems/effects";
+import { emitFoodParticles, emitGhostFoodParticles, shakeCamera } from "../systems/effects";
 
 // ── Default spawn configuration ─────────────────────────────────
 
@@ -100,6 +100,13 @@ export class MainScene extends Phaser.Scene {
       // Record the snake's current position into the ghost buffer
       if (this.ghost) {
         this.ghost.recordTick(this.snake.getSegments());
+
+        // Emit any ghost-food bursts that became ready this tick
+        const bursts = this.ghost.consumePendingBursts();
+        for (const pos of bursts) {
+          const px = gridToPixel(pos);
+          emitGhostFoodParticles(this, px.x, px.y);
+        }
       }
 
       // Check collisions after the snake moved to its new grid position
@@ -116,6 +123,10 @@ export class MainScene extends Phaser.Scene {
       );
       if (eaten) {
         emitFoodParticles(this, fx, fy);
+        // Schedule a ghost-food burst at the ghost's position in 5 seconds
+        if (this.ghost) {
+          this.ghost.scheduleFoodBurst();
+        }
       }
     }
   }

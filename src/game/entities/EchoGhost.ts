@@ -186,6 +186,22 @@ export class EchoGhost implements RewindStateProvider {
   private lifecycleState: GhostLifecycleState = "inactive";
 
   /**
+   * Pending ghost-food burst events.
+   * Maps the tick index at which the burst should fire to the
+   * ghost head position at that tick (resolved when the tick arrives).
+   * Scheduled when the real snake eats food; fires exactly
+   * `delayTicks` later at the ghost's corresponding position.
+   */
+  private pendingFoodBursts: Set<number> = new Set();
+
+  /**
+   * Grid positions where ghost-food bursts should be emitted this tick.
+   * Populated by `recordTick()` and consumed by the caller via
+   * `consumePendingBursts()`.
+   */
+  private readyBursts: GridPos[] = [];
+
+  /**
    * Number of fade-out ticks elapsed since `stopRecording()` was called.
    * During fade-out, the ghost drains its remaining trail over
    * `trailWindow` ticks, reducing global opacity from 1 → 0.
@@ -279,7 +295,51 @@ export class EchoGhost implements RewindStateProvider {
       this.emitRewindEvent({ type: "lifecycleChange", from, to: "active" });
     }
 
+    // Check for pending ghost-food bursts that should fire this tick
+    this.readyBursts = [];
+    if (this.pendingFoodBursts.has(this.ticksWritten)) {
+      this.pendingFoodBursts.delete(this.ticksWritten);
+      const ghostHead = this.getGhostHead();
+      if (ghostHead && ghostHead.segments.length > 0) {
+        this.readyBursts.push({ ...ghostHead.segments[0] });
+      }
+    }
+
     this.emitRewindEvent({ type: "tick", tickIndex: this.ticksWritten });
+  }
+
+  // ── Ghost-food burst API ────────────────────────────────────────
+
+  /**
+   * Schedule a cosmetic ghost-food particle burst to fire exactly
+   * `delayTicks` from now, at the ghost's position at that future tick.
+   *
+   * Call this when the real snake eats food. The burst has no impact
+   * on score or game state — it is purely visual.
+   */
+  scheduleFoodBurst(): void {
+    const fireTick = this.ticksWritten + this.delayTicks;
+    this.pendingFoodBursts.add(fireTick);
+  }
+
+  /**
+   * Consume and return all ghost-food burst positions that became
+   * ready during the most recent `recordTick()` call.
+   *
+   * Returns an empty array if no bursts are ready. The caller should
+   * emit cosmetic particle effects at the returned grid positions.
+   */
+  consumePendingBursts(): readonly GridPos[] {
+    const bursts = this.readyBursts;
+    this.readyBursts = [];
+    return bursts;
+  }
+
+  /**
+   * Number of pending food bursts not yet fired (useful for testing).
+   */
+  getPendingBurstCount(): number {
+    return this.pendingFoodBursts.size;
   }
 
   // ── Read API ────────────────────────────────────────────────────
@@ -463,6 +523,8 @@ export class EchoGhost implements RewindStateProvider {
     this.lifecycleState = "inactive";
     this.fadeOutTick = 0;
     this.fadeOutDuration = 0;
+    this.pendingFoodBursts.clear();
+    this.readyBursts = [];
   }
 
   // ── Rewind support (Phase 6 hook) ──────────────────────────────

@@ -62,6 +62,48 @@ export function emitFoodParticles(
   return emitter;
 }
 
+/** Number of particles emitted per ghost-food burst. */
+export const GHOST_FOOD_PARTICLE_COUNT = 8;
+
+/** Ghost-food particle lifespan in ms (slightly longer than regular). */
+export const GHOST_FOOD_PARTICLE_LIFESPAN = 400;
+
+/** Ghost-food particle opacity — translucent to match ghost aesthetics. */
+export const GHOST_FOOD_PARTICLE_ALPHA = 0.4;
+
+/**
+ * Emit a cosmetic ghost-food particle burst at the given world position.
+ *
+ * Visually similar to `emitFoodParticles` but more subdued: fewer
+ * particles, lower opacity, slightly longer lifespan. This burst is
+ * purely cosmetic — it has no impact on score or game state.
+ */
+export function emitGhostFoodParticles(
+  scene: Phaser.Scene,
+  x: number,
+  y: number,
+): Phaser.GameObjects.Particles.ParticleEmitter | null {
+  if (!scene.textures.exists(TEXTURE_KEYS.PARTICLE)) return null;
+
+  const emitter = scene.add.particles(x, y, TEXTURE_KEYS.PARTICLE, {
+    speed: { min: PARTICLE_SPEED_MIN, max: PARTICLE_SPEED_MAX },
+    angle: { min: 0, max: 360 },
+    lifespan: GHOST_FOOD_PARTICLE_LIFESPAN,
+    quantity: GHOST_FOOD_PARTICLE_COUNT,
+    scale: { start: 1, end: 0 },
+    alpha: { start: GHOST_FOOD_PARTICLE_ALPHA, end: 0 },
+    emitting: false,
+  });
+
+  emitter.explode(GHOST_FOOD_PARTICLE_COUNT, 0, 0);
+
+  scene.time.delayedCall(GHOST_FOOD_PARTICLE_LIFESPAN + 50, () => {
+    emitter.destroy();
+  });
+
+  return emitter;
+}
+
 /**
  * Trigger a brief, subtle camera shake.
  *
