@@ -8,6 +8,7 @@ import {
   PARASITE_PICKUP_SPAWN_INTERVAL_MS,
   ParasiteManager,
 } from "@/game/systems/ParasiteManager";
+import { ParasiteType } from "@/game/entities/Parasite";
 import { gridToPixel } from "@/game/utils/grid";
 
 const ROOT = path.resolve(__dirname, "../..");
@@ -301,6 +302,60 @@ describe("MainScene", () => {
     scene.addScore(5);
     expect(scene.getScore()).toBe(15);
     expect(spySetScore).toHaveBeenCalledWith(15);
+  });
+
+  it("addScore applies splitter multiplier while a splitter segment is attached", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.enterPhase("playing");
+
+    const parasiteManager = getParasiteManager(scene);
+    const seeded = parasiteManager.getState();
+    seeded.inventory.segments.push({
+      id: "segment-splitter",
+      type: ParasiteType.Splitter,
+      attachedAtMs: 0,
+      sourcePickupId: null,
+    });
+    parasiteManager.replaceState(seeded);
+
+    spySetScore.mockClear();
+    scene.addScore(2);
+    expect(scene.getScore()).toBe(3);
+    expect(spySetScore).toHaveBeenLastCalledWith(3);
+  });
+
+  it("food-score callback path uses splitter multiplier while attached", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.enterPhase("playing");
+
+    const parasiteManager = getParasiteManager(scene);
+    const seeded = parasiteManager.getState();
+    seeded.inventory.segments.push({
+      id: "segment-splitter",
+      type: ParasiteType.Splitter,
+      attachedAtMs: 0,
+      sourcePickupId: null,
+    });
+    parasiteManager.replaceState(seeded);
+
+    const food = scene.getFood();
+    expect(food).not.toBeNull();
+    vi.spyOn(food!, "checkEat").mockImplementation((_snake, onScore) => {
+      onScore(2);
+      return true;
+    });
+
+    spySetScore.mockClear();
+    (
+      scene as unknown as {
+        resolveFoodConsumption: () => void;
+      }
+    ).resolveFoodConsumption();
+
+    expect(scene.getScore()).toBe(3);
+    expect(spySetScore).toHaveBeenLastCalledWith(3);
   });
 
   // ── High score ─────────────────────────────────────────────

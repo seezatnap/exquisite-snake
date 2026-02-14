@@ -19,6 +19,9 @@ export const PARASITE_MAGNET_SPEED_BONUS_PER_SEGMENT = 0.1;
 /** Spawn cadence for splitter-generated obstacles. */
 export const PARASITE_SPLITTER_INTERVAL_MS = 10_000;
 
+/** Score multiplier applied while at least one splitter segment is attached. */
+export const PARASITE_SPLITTER_SCORE_MULTIPLIER = 1.5;
+
 /** Shared texture key reserved for parasite pickup rendering. */
 export const PARASITE_PICKUP_TEXTURE_KEY = TEXTURE_KEYS.PARASITE_PICKUP;
 

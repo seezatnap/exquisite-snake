@@ -7,6 +7,7 @@ import {
   PARASITE_MAX_SEGMENTS,
   PARASITE_PICKUP_TEXTURE_KEY,
   PARASITE_SPLITTER_INTERVAL_MS,
+  PARASITE_SPLITTER_SCORE_MULTIPLIER,
   Parasite,
   getParasitePickupRenderIdentity,
   ParasiteType,
@@ -41,6 +42,7 @@ describe("Parasite scaffold constants", () => {
     expect(PARASITE_MAGNET_RADIUS_TILES).toBe(2);
     expect(PARASITE_MAGNET_SPEED_BONUS_PER_SEGMENT).toBe(0.1);
     expect(PARASITE_SPLITTER_INTERVAL_MS).toBe(10_000);
+    expect(PARASITE_SPLITTER_SCORE_MULTIPLIER).toBe(1.5);
     expect(PARASITE_PICKUP_SPAWN_INTERVAL_MS).toBe(8_000);
   });
 
@@ -195,6 +197,32 @@ describe("ParasiteManager scaffold", () => {
 
     expect(manager.getMagnetSpeedMultiplier()).toBeCloseTo(1.2);
     expect(manager.isEchoGhostExcludedFromParasites()).toBe(true);
+  });
+
+  it("applies the splitter score multiplier while splitter is attached", () => {
+    const manager = new ParasiteManager();
+
+    expect(manager.getSplitterScoreMultiplier()).toBe(1);
+    expect(
+      manager.applyScoreModifiers({ basePoints: 2, source: "food" }),
+    ).toBe(2);
+
+    const seeded = manager.getState();
+    seeded.inventory.segments.push({
+      id: "splitter-segment",
+      type: ParasiteType.Splitter,
+      attachedAtMs: 0,
+      sourcePickupId: null,
+    });
+    manager.replaceState(seeded);
+
+    expect(manager.getSplitterScoreMultiplier()).toBe(1.5);
+    expect(
+      manager.applyScoreModifiers({ basePoints: 2, source: "food" }),
+    ).toBe(3);
+    expect(
+      manager.applyScoreModifiers({ basePoints: -4, source: "other" }),
+    ).toBe(-4);
   });
 
   it("returns defensive state snapshots", () => {
