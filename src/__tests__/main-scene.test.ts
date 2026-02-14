@@ -2005,3 +2005,170 @@ describe("MainScene – EchoGhost lifecycle integration", () => {
     expect(recorded.segments).toEqual(snake.getSegments());
   });
 });
+
+// ── EchoGhost collision ─────────────────────────────────────────
+
+describe("MainScene – echo ghost collision", () => {
+  /**
+   * Helper: put the echo ghost into an active state with segments at
+   * the given positions so we can test collision without waiting
+   * for the full 5-second delay.
+   *
+   * Uses a large buffer so that `record()` (called each tick in update)
+   * doesn't drain the ghost and change its segments before collision
+   * checks run.
+   */
+  function activateGhostAt(
+    scene: MainScene,
+    ghostSegments: { col: number; row: number }[],
+  ): void {
+    const ghost = scene.getEchoGhost()!;
+    // Build a buffer with many copies of the same segments
+    // so record()/advancePlayback() keeps showing these segments.
+    const bufferSize = 50;
+    const buffer = Array.from({ length: bufferSize }, () => ({
+      segments: ghostSegments.map((s) => ({ ...s })),
+    }));
+    ghost.restore({
+      buffer,
+      head: 0,
+      count: bufferSize,
+      writeIndex: 0,
+      readIndex: 0,
+      active: true,
+      opacity: 1,
+      currentSegments: ghostSegments.map((s) => ({ ...s })),
+      ticksSinceStart: 100,
+    });
+  }
+
+  it("ends the run when snake head collides with the echo ghost", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.enterPhase("playing");
+
+    const snake = scene.getSnake()!;
+    // Place snake at (10, 10) heading right, length 3
+    snake.reset({ col: 10, row: 10 }, "right", 3);
+    const interval = snake.getTicker().interval;
+
+    // Place ghost segments directly ahead of the snake (col 11, row 10)
+    activateGhostAt(scene, [{ col: 11, row: 10 }]);
+
+    // Step the snake — head moves to (11, 10) which overlaps ghost
+    scene.update(0, interval);
+
+    expect(scene.getPhase()).toBe("gameOver");
+    expect(snake.isAlive()).toBe(false);
+  });
+
+  it("triggers the same game-over path as self-collision (camera shake, phase change)", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.enterPhase("playing");
+
+    const snake = scene.getSnake()!;
+    snake.reset({ col: 10, row: 10 }, "right", 3);
+    const interval = snake.getTicker().interval;
+
+    activateGhostAt(scene, [{ col: 11, row: 10 }]);
+    mockCameraShake.mockClear();
+
+    scene.update(0, interval);
+
+    // Same side effects as self-collision
+    expect(scene.getPhase()).toBe("gameOver");
+    expect(snake.isAlive()).toBe(false);
+    expect(mockCameraShake).toHaveBeenCalled();
+  });
+
+  it("does not end the run when ghost is inactive", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.enterPhase("playing");
+
+    const snake = scene.getSnake()!;
+    snake.reset({ col: 10, row: 10 }, "right", 3);
+    const interval = snake.getTicker().interval;
+
+    // Ghost is freshly created (inactive) — no collision even if positions overlap
+    const ghost = scene.getEchoGhost()!;
+    expect(ghost.active).toBe(false);
+
+    scene.update(0, interval);
+    expect(scene.getPhase()).toBe("playing");
+  });
+
+  it("does not end the run when snake head is not on ghost segments", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.enterPhase("playing");
+
+    const snake = scene.getSnake()!;
+    // Snake at (10, 10) heading right — next head pos will be (11, 10)
+    snake.reset({ col: 10, row: 10 }, "right", 3);
+    const interval = snake.getTicker().interval;
+
+    // Ghost active but far away from the snake.
+    // Use a large buffer so record() doesn't drain it immediately.
+    const ghost = scene.getEchoGhost()!;
+    const bigBuffer = Array.from({ length: 50 }, () => ({
+      segments: [{ col: 30, row: 25 }],
+    }));
+    ghost.restore({
+      buffer: bigBuffer,
+      head: 0,
+      count: 50,
+      writeIndex: 0,
+      readIndex: 0,
+      active: true,
+      opacity: 1,
+      currentSegments: [{ col: 30, row: 25 }],
+      ticksSinceStart: 100,
+    });
+
+    scene.update(0, interval);
+    expect(scene.getPhase()).toBe("playing");
+    expect(snake.isAlive()).toBe(true);
+  });
+
+  it("detects collision with any ghost body segment, not just ghost head", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.enterPhase("playing");
+
+    const snake = scene.getSnake()!;
+    snake.reset({ col: 10, row: 10 }, "right", 3);
+    const interval = snake.getTicker().interval;
+
+    // Ghost has head at (20, 20) and body at (11, 10)
+    activateGhostAt(scene, [
+      { col: 20, row: 20 },
+      { col: 11, row: 10 },
+      { col: 19, row: 20 },
+    ]);
+
+    // Snake head moves to (11, 10) — overlapping ghost body segment
+    scene.update(0, interval);
+    expect(scene.getPhase()).toBe("gameOver");
+  });
+
+  it("ghost collision calls endRun which persists high score", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.enterPhase("playing");
+
+    const snake = scene.getSnake()!;
+    snake.reset({ col: 10, row: 10 }, "right", 3);
+    const interval = snake.getTicker().interval;
+
+    activateGhostAt(scene, [{ col: 11, row: 10 }]);
+
+    scene.update(0, interval);
+
+    // Ghost collision ends the run through the same endRun() path
+    // that self-collision uses, which handles high-score persistence.
+    expect(scene.getPhase()).toBe("gameOver");
+    expect(snake.isAlive()).toBe(false);
+  });
+});

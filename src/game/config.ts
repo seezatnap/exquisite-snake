@@ -34,6 +34,7 @@ export const RENDER_DEPTH = {
   BIOME_TILEMAP: -20,
   BIOME_GRID: -10,
   BIOME_MECHANIC: 5,
+  ECHO_GHOST: 15,
   FOOD: 20,
   SNAKE: 30,
 } as const;

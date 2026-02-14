@@ -1,4 +1,5 @@
 import { type GridPos, gridEquals, DEFAULT_MOVE_INTERVAL_MS } from "../utils/grid";
+import type { Rewindable } from "../systems/rewindTypes";
 
 // ── Types ─────────────────────────────────────────────────────────
 
@@ -71,7 +72,7 @@ const FADE_OUT_TICKS = 8;
  * positions only. Rendering (dashed outline, opacity, particles, biome
  * tinting) is handled externally by reading `getState()`.
  */
-export class EchoGhost {
+export class EchoGhost implements Rewindable<EchoGhostBufferSnapshot> {
   // ── Circular buffer ───────────────────────────────────────────
 
   /** Fixed-size ring buffer of path snapshots. */

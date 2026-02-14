@@ -22,6 +22,12 @@ import { Snake } from "../entities/Snake";
 import { Food } from "../entities/Food";
 import { EchoGhost } from "../entities/EchoGhost";
 import { emitFoodParticles, shakeCamera } from "../systems/effects";
+import { GhostFoodBurstQueue } from "../systems/GhostFoodBurstQueue";
+import { EchoGhostRenderer } from "../systems/EchoGhostRenderer";
+import {
+  EchoRewindHook,
+  type EchoStateSnapshot,
+} from "../systems/RewindHook";
 import {
   Biome,
   BIOME_CONFIG,
@@ -182,6 +188,15 @@ export class MainScene extends Phaser.Scene {
   /** The echo ghost for the current run (null when not playing). */
   private echoGhost: EchoGhost | null = null;
 
+  /** Queue for delayed ghost-food cosmetic bursts. */
+  private ghostFoodBurstQueue: GhostFoodBurstQueue | null = null;
+
+  /** Visual renderer for the echo ghost trail. */
+  private echoGhostRenderer: EchoGhostRenderer | null = null;
+
+  /** Aggregated rewind hook for all echo-ghost-related state (Phase 6). */
+  private echoRewindHook = new EchoRewindHook(null, null);
+
   /** Biome rotation/timing owner for the current run. */
   private readonly biomeManager = new BiomeManager();
 
@@ -296,6 +311,7 @@ export class MainScene extends Phaser.Scene {
     if (!this.snake || !this.food) return;
     this.updateMoltenCoreMechanics(delta);
     this.updateBiomeMechanicVisuals(delta);
+    this.renderEchoGhost();
 
     const stepped = this.snake.update(delta);
 
@@ -304,6 +320,9 @@ export class MainScene extends Phaser.Scene {
       if (this.echoGhost) {
         this.echoGhost.record(this.snake.getSegments());
       }
+
+      // Process any queued ghost-food bursts that are now due
+      this.processGhostFoodBursts();
 
       if (this.checkCollisions()) {
         return; // Game over — stop processing this frame
@@ -392,6 +411,9 @@ export class MainScene extends Phaser.Scene {
     this.snake.setupTouchInput();
     this.food = new Food(this, this.snake, this.rng);
     this.echoGhost = new EchoGhost();
+    this.ghostFoodBurstQueue = new GhostFoodBurstQueue();
+    this.echoGhostRenderer = new EchoGhostRenderer(this);
+    this.echoRewindHook.setEntities(this.echoGhost, this.ghostFoodBurstQueue);
   }
 
   /** Destroy existing snake and food entities. */
@@ -408,12 +430,21 @@ export class MainScene extends Phaser.Scene {
       this.echoGhost.reset();
       this.echoGhost = null;
     }
+    if (this.ghostFoodBurstQueue) {
+      this.ghostFoodBurstQueue.reset();
+      this.ghostFoodBurstQueue = null;
+    }
+    if (this.echoGhostRenderer) {
+      this.echoGhostRenderer.destroy();
+      this.echoGhostRenderer = null;
+    }
+    this.echoRewindHook.setEntities(null, null);
   }
 
   // ── Collision detection ───────────────────────────────────────
 
   /**
-   * Check wall-collision and self-collision.
+   * Check wall-collision, self-collision, echo ghost collision, and hazards.
    * If a collision is detected, ends the run and returns true.
    */
   private checkCollisions(): boolean {
@@ -429,6 +460,12 @@ export class MainScene extends Phaser.Scene {
 
     // Self-collision: head occupies a body segment
     if (this.snake.hasSelfCollision()) {
+      this.endRun();
+      return true;
+    }
+
+    // Echo ghost collision: head overlaps the delayed ghost trail
+    if (this.echoGhost?.isOnGhost(head)) {
       this.endRun();
       return true;
     }
@@ -540,6 +577,29 @@ export class MainScene extends Phaser.Scene {
 
   getEchoGhost(): EchoGhost | null {
     return this.echoGhost;
+  }
+
+  getGhostFoodBurstQueue(): GhostFoodBurstQueue | null {
+    return this.ghostFoodBurstQueue;
+  }
+
+  getEchoGhostRenderer(): EchoGhostRenderer | null {
+    return this.echoGhostRenderer;
+  }
+
+  /** Phase 6 integration point: get the aggregated echo rewind hook. */
+  getEchoRewindHook(): EchoRewindHook {
+    return this.echoRewindHook;
+  }
+
+  /** Convenience: snapshot all echo-ghost-related state for rewind. */
+  snapshotEchoState(): EchoStateSnapshot {
+    return this.echoRewindHook.snapshot();
+  }
+
+  /** Convenience: restore all echo-ghost-related state from a snapshot. */
+  restoreEchoState(snap: EchoStateSnapshot): void {
+    this.echoRewindHook.restore(snap);
   }
 
   // ── Arena grid ──────────────────────────────────────────────
@@ -764,7 +824,25 @@ export class MainScene extends Phaser.Scene {
     );
     if (eaten) {
       emitFoodParticles(this, fx, fy);
+      this.ghostFoodBurstQueue?.enqueue();
     }
+  }
+
+  private processGhostFoodBursts(): void {
+    if (!this.ghostFoodBurstQueue) return;
+
+    const bursts = this.ghostFoodBurstQueue.processTick(this.echoGhost);
+    for (const burst of bursts) {
+      emitFoodParticles(this, burst.x, burst.y);
+    }
+  }
+
+  private renderEchoGhost(): void {
+    if (!this.echoGhostRenderer || !this.echoGhost) return;
+    this.echoGhostRenderer.render(
+      this.echoGhost.getState(),
+      this.biomeManager.getCurrentBiome(),
+    );
   }
 
   private applyVoidRiftGravityNudgeIfDue(): boolean {
@@ -965,6 +1043,7 @@ export class MainScene extends Phaser.Scene {
    */
   private syncGameplayLayering(): void {
     this.gridGraphics?.setDepth?.(RENDER_DEPTH.BIOME_GRID);
+    this.echoGhostRenderer?.getGraphics()?.setDepth?.(RENDER_DEPTH.ECHO_GHOST);
     this.food?.getSprite()?.setDepth?.(RENDER_DEPTH.FOOD);
     this.snake?.setRenderDepth(RENDER_DEPTH.SNAKE);
     this.children?.depthSort?.();
