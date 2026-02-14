@@ -1,13 +1,17 @@
 import type { BiomeTransition } from "./BiomeManager";
+import { GRID_COLS, GRID_ROWS } from "../config";
 import {
   PARASITE_ECHO_GHOST_POLICY,
   PARASITE_MAGNET_SPEED_BONUS_PER_SEGMENT,
   PARASITE_MAX_SEGMENTS,
   PARASITE_SPLITTER_INTERVAL_MS,
+  getParasitePickupRenderIdentity,
+  Parasite,
   ParasiteType,
   type ParasiteInventoryState,
   type ParasiteObstacleState,
   type ParasitePickupState,
+  type ParasitePickupRenderIdentity,
   type ParasiteSegmentState,
 } from "../entities/Parasite";
 import type { GridPos } from "../utils/grid";
@@ -91,6 +95,31 @@ export interface ParasiteTimerTickResult {
   deltaMs: number;
   hasActiveSplitter: boolean;
   splitterTicksDue: number;
+}
+
+/** Base cadence for parasite pickup spawn checks. */
+export const PARASITE_PICKUP_SPAWN_INTERVAL_MS = 8_000;
+
+/** Probability [0,1] that a pickup is spawned each elapsed spawn interval. */
+export const PARASITE_PICKUP_SPAWN_CHANCE_PER_INTERVAL = 0.2;
+
+const PARASITE_PICKUP_TYPES: readonly ParasiteType[] = [
+  ParasiteType.Magnet,
+  ParasiteType.Shield,
+  ParasiteType.Splitter,
+] as const;
+
+export interface ParasitePickupSpawnContext {
+  snakeSegments: readonly GridPos[];
+  foodPosition: GridPos | null;
+  obstaclePositions?: readonly GridPos[];
+  rng?: () => number;
+  nowMs?: number;
+}
+
+export interface ParasiteSpawnedPickup {
+  pickup: ParasitePickupState;
+  render: ParasitePickupRenderIdentity;
 }
 
 export function createInitialParasiteTimerState(): ParasiteTimerState {
@@ -223,11 +252,44 @@ function normalizeDeltaMs(deltaMs: number): number {
   return Math.max(0, Math.floor(deltaMs));
 }
 
+function normalizeTimestampMs(timestampMs: number): number {
+  if (!Number.isFinite(timestampMs)) {
+    return 0;
+  }
+  return Math.max(0, Math.floor(timestampMs));
+}
+
+function normalizeRandomSample(rng: () => number): number {
+  const sample = rng();
+  if (!Number.isFinite(sample)) {
+    return 0;
+  }
+  if (sample <= 0) {
+    return 0;
+  }
+  if (sample >= 1) {
+    return 0.999_999_999_999;
+  }
+  return sample;
+}
+
+function sampleIndex(length: number, rng: () => number): number {
+  if (length <= 1) {
+    return 0;
+  }
+  const clampedLength = Math.max(1, Math.floor(length));
+  return Math.min(
+    clampedLength - 1,
+    Math.floor(normalizeRandomSample(rng) * clampedLength),
+  );
+}
+
+function gridPosKey(position: GridPos): string {
+  return `${position.col}:${position.row}`;
+}
+
 /**
- * Phase-4 scaffold manager for parasite runtime state.
- *
- * This file intentionally stops at shared state/timer/model plumbing.
- * Spawn, pickup, and ability mechanics are implemented in later tasks.
+ * Phase-4 manager for parasite runtime state and pickup spawning.
  */
 export class ParasiteManager {
   private state: ParasiteSharedState;
@@ -277,6 +339,67 @@ export class ParasiteManager {
     return calculateMagnetSpeedMultiplier(magnetSegments);
   }
 
+  getPickupSpawnCandidates(context: ParasitePickupSpawnContext): GridPos[] {
+    const occupied = this.collectOccupiedCellKeys(context);
+    const candidates: GridPos[] = [];
+
+    for (let col = 0; col < GRID_COLS; col++) {
+      for (let row = 0; row < GRID_ROWS; row++) {
+        const position: GridPos = { col, row };
+        if (occupied.has(gridPosKey(position))) {
+          continue;
+        }
+        candidates.push(position);
+      }
+    }
+
+    return candidates;
+  }
+
+  spawnPickupIfDue(
+    context: ParasitePickupSpawnContext,
+  ): ParasiteSpawnedPickup | null {
+    if (this.state.timers.pickupSpawnElapsedMs < PARASITE_PICKUP_SPAWN_INTERVAL_MS) {
+      return null;
+    }
+
+    const rng = context.rng ?? Math.random;
+    const spawnedAtMs = normalizeTimestampMs(
+      context.nowMs ?? this.state.timers.elapsedRunMs,
+    );
+    let spawned: ParasiteSpawnedPickup | null = null;
+
+    while (this.state.timers.pickupSpawnElapsedMs >= PARASITE_PICKUP_SPAWN_INTERVAL_MS) {
+      this.state.timers.pickupSpawnElapsedMs -= PARASITE_PICKUP_SPAWN_INTERVAL_MS;
+
+      if (spawned !== null) {
+        continue;
+      }
+
+      if (normalizeRandomSample(rng) >= PARASITE_PICKUP_SPAWN_CHANCE_PER_INTERVAL) {
+        continue;
+      }
+
+      const candidates = this.getPickupSpawnCandidates(context);
+      if (candidates.length === 0) {
+        continue;
+      }
+
+      const spawnPos = candidates[sampleIndex(candidates.length, rng)];
+      const spawnType = this.samplePickupType(rng);
+      const parasite = new Parasite(spawnType, spawnPos, spawnedAtMs);
+      const pickup = parasite.toPickupState();
+
+      this.state.pickups.push(pickup);
+      spawned = {
+        pickup: clonePickupState(pickup),
+        render: getParasitePickupRenderIdentity(spawnType),
+      };
+    }
+
+    return spawned;
+  }
+
   advanceTimers(deltaMs: number): ParasiteTimerTickResult {
     const safeDelta = normalizeDeltaMs(deltaMs);
     if (safeDelta <= 0) {
@@ -316,5 +439,36 @@ export class ParasiteManager {
 
   private hasActiveSegmentType(type: ParasiteType): boolean {
     return this.state.inventory.segments.some((segment) => segment.type === type);
+  }
+
+  private collectOccupiedCellKeys(context: ParasitePickupSpawnContext): Set<string> {
+    const occupied = new Set<string>();
+
+    for (const segmentPos of context.snakeSegments) {
+      occupied.add(gridPosKey(segmentPos));
+    }
+
+    if (context.foodPosition) {
+      occupied.add(gridPosKey(context.foodPosition));
+    }
+
+    for (const obstaclePos of context.obstaclePositions ?? []) {
+      occupied.add(gridPosKey(obstaclePos));
+    }
+
+    for (const obstacle of this.state.splitterObstacles) {
+      occupied.add(gridPosKey(obstacle.position));
+    }
+
+    for (const pickup of this.state.pickups) {
+      occupied.add(gridPosKey(pickup.position));
+    }
+
+    return occupied;
+  }
+
+  private samplePickupType(rng: () => number): ParasiteType {
+    const typeIndex = sampleIndex(PARASITE_PICKUP_TYPES.length, rng);
+    return PARASITE_PICKUP_TYPES[typeIndex];
   }
 }

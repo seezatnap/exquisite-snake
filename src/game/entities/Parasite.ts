@@ -1,4 +1,5 @@
 import type { GridPos } from "../utils/grid";
+import { TEXTURE_KEYS } from "../config";
 
 export enum ParasiteType {
   Magnet = "magnet",
@@ -19,7 +20,7 @@ export const PARASITE_MAGNET_SPEED_BONUS_PER_SEGMENT = 0.1;
 export const PARASITE_SPLITTER_INTERVAL_MS = 10_000;
 
 /** Shared texture key reserved for parasite pickup rendering. */
-export const PARASITE_PICKUP_TEXTURE_KEY = "parasite-pickup";
+export const PARASITE_PICKUP_TEXTURE_KEY = TEXTURE_KEYS.PARASITE_PICKUP;
 
 /** Type-level tint values for rendering parasite pickups/overlays. */
 export const PARASITE_COLOR_BY_TYPE: Record<ParasiteType, number> = {
@@ -34,6 +35,29 @@ export const PARASITE_ICON_BY_TYPE: Record<ParasiteType, string> = {
   [ParasiteType.Shield]: "shield",
   [ParasiteType.Splitter]: "splitter",
 };
+
+/** Render profile used when drawing parasite pickups in-world. */
+export interface ParasitePickupRenderIdentity {
+  textureKey: string;
+  tint: number;
+  shape: "rounded-rect";
+  pulseDurationMs: number;
+}
+
+const PARASITE_PICKUP_SHAPE: ParasitePickupRenderIdentity["shape"] =
+  "rounded-rect";
+const PARASITE_PICKUP_PULSE_DURATION_MS = 900;
+
+export function getParasitePickupRenderIdentity(
+  type: ParasiteType,
+): ParasitePickupRenderIdentity {
+  return {
+    textureKey: PARASITE_PICKUP_TEXTURE_KEY,
+    tint: PARASITE_COLOR_BY_TYPE[type],
+    shape: PARASITE_PICKUP_SHAPE,
+    pulseDurationMs: PARASITE_PICKUP_PULSE_DURATION_MS,
+  };
+}
 
 export interface ParasitePickupState {
   id: string;
