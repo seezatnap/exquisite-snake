@@ -132,6 +132,37 @@ export class EchoGhost {
     return this.sampleCount;
   }
 
+  /** Configured replay delay in milliseconds. */
+  getDelayMs(): number {
+    return this.delayMs;
+  }
+
+  /** Current internal elapsed time in milliseconds. */
+  getElapsedMs(): number {
+    return this.elapsedMs;
+  }
+
+  /**
+   * Head position from the newest recorded sample at or before `timestampMs`.
+   * Returns `null` when no suitable sample is retained in history.
+   */
+  getHeadAtOrBefore(timestampMs: number): GridPos | null {
+    if (!Number.isFinite(timestampMs)) {
+      return null;
+    }
+
+    const sample = this.findLatestSampleAtOrBefore(Math.floor(timestampMs));
+    if (!sample || sample.segments.length === 0) {
+      return null;
+    }
+
+    const head = sample.segments[0];
+    return {
+      col: head.col,
+      row: head.row,
+    };
+  }
+
   /**
    * Snapshot the current timing/buffer/playback state for future rewind integration.
    */
@@ -189,7 +220,6 @@ export class EchoGhost {
       this.opacity = 0;
     }
   }
-
   private updatePlayback(deltaMs: number): void {
     const delayedTimestamp = this.elapsedMs - this.delayMs;
     const delayedSample =

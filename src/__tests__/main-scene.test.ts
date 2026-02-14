@@ -4,6 +4,7 @@ import path from "path";
 import { gameBridge } from "@/game/bridge";
 import { GRID_COLS, GRID_ROWS, RENDER_DEPTH } from "@/game/config";
 import { Biome } from "@/game/systems/BiomeManager";
+import { gridToPixel } from "@/game/utils/grid";
 
 const ROOT = path.resolve(__dirname, "../..");
 
@@ -21,6 +22,7 @@ const mockFillCircle = vi.fn();
 const mockAddGraphics = vi.fn(() => mockGraphics);
 const mockSetBackgroundColor = vi.fn();
 const mockCameraShake = vi.fn();
+const mockTimeDelayedCall = vi.fn();
 
 const mockGraphics = {
   lineStyle: mockLineStyle,
@@ -98,7 +100,7 @@ vi.mock("phaser", () => {
       exists: vi.fn().mockReturnValue(true),
     };
     time = {
-      delayedCall: vi.fn(),
+      delayedCall: mockTimeDelayedCall,
     };
     constructor(public config?: { key: string }) {}
   }
@@ -1622,6 +1624,77 @@ describe("MainScene – entity management", () => {
 
     expect(scene.getCurrentBiome()).toBe(Biome.IceCavern);
     expect(mockLineStyle).toHaveBeenCalledWith(2, 0xd3f1ff, 0.4);
+  });
+
+  it("queues a delayed ghost-food burst exactly 5 seconds after food is eaten", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.setRng(() => 0.5);
+    scene.enterPhase("playing");
+
+    const snake = scene.getSnake()!;
+    const foodPos = scene.getFood()!.getPosition();
+    const moveDirection = foodPos.col > 0 ? "right" : "left";
+    const startCol = moveDirection === "right" ? foodPos.col - 1 : foodPos.col + 1;
+    snake.reset({ col: startCol, row: foodPos.row }, moveDirection, 1);
+
+    const particlesAdd = (
+      scene as unknown as { add: { particles: ReturnType<typeof vi.fn> } }
+    ).add.particles;
+    particlesAdd.mockClear();
+    mockTimeDelayedCall.mockClear();
+
+    const interval = snake.getTicker().interval;
+    scene.update(0, interval);
+
+    expect(particlesAdd).toHaveBeenCalledTimes(1);
+    const delayedGhostBurstCall = mockTimeDelayedCall.mock.calls.find(
+      (call) => call[0] === 5_000,
+    );
+    expect(delayedGhostBurstCall).toBeDefined();
+
+    const delayedGhostBurstCallback = delayedGhostBurstCall![1] as () => void;
+    delayedGhostBurstCallback();
+
+    expect(particlesAdd).toHaveBeenCalledTimes(2);
+    const delayedBurstArgs = particlesAdd.mock.calls[1];
+    const expectedGhostBurstPixel = gridToPixel(foodPos);
+    expect(delayedBurstArgs[0]).toBe(expectedGhostBurstPixel.x);
+    expect(delayedBurstArgs[1]).toBe(expectedGhostBurstPixel.y);
+  });
+
+  it("skips delayed ghost-food burst when the target history sample is unavailable", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.setRng(() => 0.5);
+    scene.enterPhase("playing");
+
+    const snake = scene.getSnake()!;
+    const foodPos = scene.getFood()!.getPosition();
+    const moveDirection = foodPos.col > 0 ? "right" : "left";
+    const startCol = moveDirection === "right" ? foodPos.col - 1 : foodPos.col + 1;
+    snake.reset({ col: startCol, row: foodPos.row }, moveDirection, 1);
+
+    const particlesAdd = (
+      scene as unknown as { add: { particles: ReturnType<typeof vi.fn> } }
+    ).add.particles;
+    particlesAdd.mockClear();
+    mockTimeDelayedCall.mockClear();
+
+    const interval = snake.getTicker().interval;
+    scene.update(0, interval);
+
+    expect(particlesAdd).toHaveBeenCalledTimes(1);
+    const delayedGhostBurstCall = mockTimeDelayedCall.mock.calls.find(
+      (call) => call[0] === 5_000,
+    );
+    expect(delayedGhostBurstCall).toBeDefined();
+
+    scene.getEchoGhost()!.reset();
+    const delayedGhostBurstCallback = delayedGhostBurstCall![1] as () => void;
+    delayedGhostBurstCallback();
+
+    expect(particlesAdd).toHaveBeenCalledTimes(1);
   });
 
   it("destroys old entities on replay (entering 'playing' again)", () => {

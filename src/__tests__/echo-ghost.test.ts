@@ -107,4 +107,31 @@ describe("EchoGhost", () => {
     expect(liveState.playbackSegments[0].col).toBe(7);
     expect(liveState.samples[0].segments[0].row).toBe(3);
   });
+
+  it("returns head positions from history at or before a timestamp", () => {
+    const ghost = new EchoGhost({ delayMs: 5_000, maxSamples: 16 });
+
+    ghost.recordPath([{ col: 2, row: 4 }]); // t = 0
+    ghost.advance(120);
+    ghost.recordPath([{ col: 3, row: 4 }]); // t = 120
+
+    expect(ghost.getHeadAtOrBefore(-1)).toBeNull();
+    expect(ghost.getHeadAtOrBefore(0)).toEqual({ col: 2, row: 4 });
+    expect(ghost.getHeadAtOrBefore(119)).toEqual({ col: 2, row: 4 });
+    expect(ghost.getHeadAtOrBefore(120)).toEqual({ col: 3, row: 4 });
+    expect(ghost.getHeadAtOrBefore(9999)).toEqual({ col: 3, row: 4 });
+  });
+
+  it("returns null when the requested timestamp sample is unavailable", () => {
+    const ghost = new EchoGhost({ delayMs: 0, maxSamples: 2 });
+
+    ghost.recordPath([{ col: 1, row: 0 }]); // t = 0
+    ghost.advance(50);
+    ghost.recordPath([{ col: 2, row: 0 }]); // t = 50
+    ghost.advance(50);
+    ghost.recordPath([{ col: 3, row: 0 }]); // t = 100; overwrites t=0 sample
+
+    expect(ghost.getHeadAtOrBefore(0)).toBeNull();
+    expect(ghost.getHeadAtOrBefore(50)).toEqual({ col: 2, row: 0 });
+  });
 });
