@@ -370,8 +370,8 @@ export class MainScene extends Phaser.Scene {
     }
 
     gameBridge.setElapsedTime(gameBridge.getState().elapsedTime + delta);
-    this.updateBiomeState(delta);
     this.parasiteManager.advanceTimers(delta);
+    this.updateBiomeState(delta);
 
     if (!this.snake || !this.food || !this.echoGhost) return;
     this.echoGhost.advance(delta);
@@ -953,9 +953,10 @@ export class MainScene extends Phaser.Scene {
     const ghostDelayMs = this.echoGhost.getDelayMs();
     const runIdAtEat = this.activeRunId;
     const activeParasitePickupPos = this.getActiveParasitePickupPosition();
+    const blockedRespawnCells = this.getFoodRespawnBlockedCells(activeParasitePickupPos);
     const eaten = this.food.checkEat(this.snake, (points) =>
       this.addScore(points, "food"),
-      activeParasitePickupPos ? [activeParasitePickupPos] : [],
+      blockedRespawnCells,
     );
     if (eaten) {
       emitFoodParticles(this, fx, fy);
@@ -993,6 +994,12 @@ export class MainScene extends Phaser.Scene {
       return;
     }
 
+    this.parasiteManager.updateSplitterObstacleSpawn({
+      snakeSegments: this.snake.getSegments(),
+      foodPosition: this.food.getPosition(),
+      obstaclePositions: this.getSplitterObstacleBlockedCells(),
+      rng: this.rng,
+    });
     this.parasiteManager.updatePickupSpawn({
       snakeSegments: this.snake.getSegments(),
       foodPosition: this.food.getPosition(),
@@ -1017,6 +1024,25 @@ export class MainScene extends Phaser.Scene {
 
   private getParasitePickupBlockedCells(): GridPos[] {
     return Array.from(this.moltenLavaPools.values(), (pool) => ({ ...pool }));
+  }
+
+  private getSplitterObstacleBlockedCells(): GridPos[] {
+    const blocked = this.getParasitePickupBlockedCells();
+    const activePickupPos = this.getActiveParasitePickupPosition();
+    if (activePickupPos) {
+      blocked.push(activePickupPos);
+    }
+    return blocked;
+  }
+
+  private getFoodRespawnBlockedCells(activePickupPos: GridPos | null): GridPos[] {
+    const blocked = this.parasiteManager.getState().splitterObstacles.map((obstacle) => ({
+      ...obstacle.position,
+    }));
+    if (activePickupPos) {
+      blocked.push({ ...activePickupPos });
+    }
+    return blocked;
   }
 
   private getActiveParasitePickupPosition(): GridPos | null {

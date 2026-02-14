@@ -177,6 +177,45 @@ export class ParasiteManager {
   }
 
   /**
+   * Splitter obstacle spawn hook.
+   *
+   * While at least one Splitter segment is attached, place one stationary
+   * obstacle every fixed interval on a random empty cell.
+   */
+  updateSplitterObstacleSpawn(context: ParasitePickupSpawnContext): void {
+    if (this.getSplitterSegmentCount() <= 0) {
+      // Only count attached time toward the splitter cadence.
+      this.state.timers.splitterObstacleElapsedMs = 0;
+      return;
+    }
+
+    const spawnAttempts = Math.floor(
+      this.state.timers.splitterObstacleElapsedMs / SPLITTER_OBSTACLE_INTERVAL_MS,
+    );
+    if (spawnAttempts <= 0) {
+      return;
+    }
+
+    this.state.timers.splitterObstacleElapsedMs -=
+      spawnAttempts * SPLITTER_OBSTACLE_INTERVAL_MS;
+
+    const rng = context.rng ?? Math.random;
+    for (let attempt = 0; attempt < spawnAttempts; attempt++) {
+      const position = this.pickRandomObstacleCell(context, rng);
+      if (!position) {
+        return;
+      }
+
+      this.state.splitterObstacles.push({
+        id: `obstacle-${this.state.nextEntityId}`,
+        position,
+        spawnedAtMs: this.state.timers.glowPulseElapsedMs,
+      });
+      this.state.nextEntityId += 1;
+    }
+  }
+
+  /**
    * Pickup-contact seam:
    * - consume parasite pickup on snake contact
    * - attach a new active segment
@@ -325,11 +364,11 @@ export class ParasiteManager {
 
   onBiomeTransition(transition: ParasiteBiomeTransitionContext): void {
     void transition;
-    // Task #7 will clear Splitter obstacles on biome transitions.
+    this.clearSplitterObstacles();
   }
 
   onRunEnd(): void {
-    // Hook reserved for run-finalization behavior.
+    this.clearSplitterObstacles();
   }
 
   getMagnetSegmentCount(): number {
@@ -362,24 +401,22 @@ export class ParasiteManager {
     context: ParasitePickupSpawnContext,
     rng: () => number,
   ): GridPos | null {
-    const occupied = new Set<string>();
+    return this.pickRandomEmptyCell(context, rng, false);
+  }
 
-    for (const segment of context.snakeSegments) {
-      occupied.add(this.gridPosKey(segment));
-    }
-    if (context.foodPosition) {
-      occupied.add(this.gridPosKey(context.foodPosition));
-    }
+  private pickRandomObstacleCell(
+    context: ParasitePickupSpawnContext,
+    rng: () => number,
+  ): GridPos | null {
+    return this.pickRandomEmptyCell(context, rng, true);
+  }
 
-    for (const obstacle of this.state.splitterObstacles) {
-      occupied.add(this.gridPosKey(obstacle.position));
-    }
-
-    const externalObstacles = context.obstaclePositions ?? [];
-    for (const obstacle of externalObstacles) {
-      occupied.add(this.gridPosKey(obstacle));
-    }
-
+  private pickRandomEmptyCell(
+    context: ParasitePickupSpawnContext,
+    rng: () => number,
+    includeActivePickup: boolean,
+  ): GridPos | null {
+    const occupied = this.collectOccupiedCells(context, includeActivePickup);
     const freeCells: GridPos[] = [];
     for (let col = 0; col < GRID_COLS; col++) {
       for (let row = 0; row < GRID_ROWS; row++) {
@@ -396,6 +433,39 @@ export class ParasiteManager {
 
     const cellIndex = Math.floor(this.sampleUnit(rng) * freeCells.length);
     return freeCells[cellIndex];
+  }
+
+  private collectOccupiedCells(
+    context: ParasitePickupSpawnContext,
+    includeActivePickup: boolean,
+  ): Set<string> {
+    const occupied = new Set<string>();
+
+    for (const segment of context.snakeSegments) {
+      occupied.add(this.gridPosKey(segment));
+    }
+    if (context.foodPosition) {
+      occupied.add(this.gridPosKey(context.foodPosition));
+    }
+    if (includeActivePickup && this.state.pickup) {
+      occupied.add(this.gridPosKey(this.state.pickup.position));
+    }
+
+    for (const obstacle of this.state.splitterObstacles) {
+      occupied.add(this.gridPosKey(obstacle.position));
+    }
+
+    const externalObstacles = context.obstaclePositions ?? [];
+    for (const obstacle of externalObstacles) {
+      occupied.add(this.gridPosKey(obstacle));
+    }
+
+    return occupied;
+  }
+
+  private clearSplitterObstacles(): void {
+    this.state.splitterObstacles = [];
+    this.state.timers.splitterObstacleElapsedMs = 0;
   }
 
   private pickRandomParasiteType(rng: () => number): ParasiteType {

@@ -4,6 +4,7 @@ import { GRID_COLS, GRID_ROWS, RENDER_DEPTH, TEXTURE_KEYS } from "@/game/config"
 import {
   PARASITE_COLORS,
   PARASITE_PICKUP_SPAWN_INTERVAL_MS,
+  SPLITTER_OBSTACLE_INTERVAL_MS,
   ParasiteType,
   createParasiteRuntimeState,
 } from "@/game/entities/Parasite";
@@ -381,5 +382,60 @@ describe("MainScene parasite hook wiring", () => {
     expect(RENDER_DEPTH.PARASITE_SEGMENT_ICON).toBeGreaterThan(
       RENDER_DEPTH.PARASITE_SEGMENT_GLOW,
     );
+  });
+
+  it("spawns splitter obstacles every 10 seconds while splitter is attached", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.setRng(() => 0);
+    scene.enterPhase("playing");
+
+    const parasiteState = createParasiteRuntimeState();
+    parasiteState.activeSegments.push({
+      id: "segment-splitter",
+      type: ParasiteType.Splitter,
+      attachedAtMs: 0,
+    });
+    scene.getParasiteManager().restoreState(parasiteState);
+
+    scene.update(0, SPLITTER_OBSTACLE_INTERVAL_MS - 1);
+    expect(scene.getParasiteManager().getState().splitterObstacles).toHaveLength(0);
+
+    scene.update(0, 1);
+    const afterFirst = scene.getParasiteManager().getState().splitterObstacles;
+    expect(afterFirst).toHaveLength(1);
+    expect(scene.getSnake()!.isOnSnake(afterFirst[0]!.position)).toBe(false);
+    expect(afterFirst[0]!.position).not.toEqual(scene.getFood()!.getPosition());
+
+    scene.update(0, SPLITTER_OBSTACLE_INTERVAL_MS);
+    expect(scene.getParasiteManager().getState().splitterObstacles).toHaveLength(2);
+  });
+
+  it("clears splitter obstacles on biome change and on run end", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.enterPhase("playing");
+
+    const parasiteState = createParasiteRuntimeState();
+    parasiteState.splitterObstacles.push({
+      id: "obstacle-existing",
+      position: { col: 2, row: 2 },
+      spawnedAtMs: 500,
+    });
+    scene.getParasiteManager().restoreState(parasiteState);
+
+    scene.getSnake()!.getTicker().setInterval(60_000);
+    scene.update(0, 45_000);
+    expect(scene.getParasiteManager().getState().splitterObstacles).toEqual([]);
+
+    const withObstacle = createParasiteRuntimeState();
+    withObstacle.splitterObstacles.push({
+      id: "obstacle-existing-2",
+      position: { col: 3, row: 3 },
+      spawnedAtMs: 650,
+    });
+    scene.getParasiteManager().restoreState(withObstacle);
+    scene.endRun();
+    expect(scene.getParasiteManager().getState().splitterObstacles).toEqual([]);
   });
 });
