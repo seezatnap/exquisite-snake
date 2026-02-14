@@ -824,3 +824,247 @@ describe("MainScene – update integration", () => {
     }
   });
 });
+
+// ── Echo ghost integration ────────────────────────────────────────
+
+describe("MainScene – echo ghost integration", () => {
+  it("echoGhost is null before entering 'playing'", () => {
+    const scene = new MainScene();
+    scene.create();
+    expect(scene.getEchoGhost()).toBeNull();
+  });
+
+  it("creates echoGhost when entering 'playing'", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.enterPhase("playing");
+    expect(scene.getEchoGhost()).not.toBeNull();
+  });
+
+  it("echoGhost starts with zero ticks recorded", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.enterPhase("playing");
+    const ghost = scene.getEchoGhost()!;
+    expect(ghost.getCurrentTick()).toBe(0);
+    expect(ghost.isActive()).toBe(false);
+  });
+
+  it("records snake segments into echoGhost each tick", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.enterPhase("playing");
+
+    const snake = scene.getSnake()!;
+    // Reset to center with length 1 to avoid self-collision during steps
+    snake.reset({ col: 10, row: 15 }, "right", 1);
+
+    const interval = snake.getTicker().interval;
+    const ghost = scene.getEchoGhost()!;
+
+    // Advance 3 ticks
+    scene.update(0, interval);
+    scene.update(0, interval);
+    scene.update(0, interval);
+
+    expect(ghost.getCurrentTick()).toBe(3);
+    expect(ghost.getCount()).toBe(3);
+  });
+
+  it("ghost is inactive before 5 seconds (40 ticks at 125ms)", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.enterPhase("playing");
+
+    const snake = scene.getSnake()!;
+    snake.reset({ col: 0, row: 15 }, "right", 1);
+
+    const interval = snake.getTicker().interval;
+    const ghost = scene.getEchoGhost()!;
+
+    // Advance 39 ticks — just under the 5-second delay
+    for (let i = 0; i < 39; i++) {
+      scene.update(0, interval);
+    }
+
+    expect(ghost.getCurrentTick()).toBe(39);
+    expect(ghost.isActive()).toBe(false);
+    expect(ghost.getGhostTrail()).toBeNull();
+  });
+
+  it("ghost becomes active after exactly 40 ticks (5 seconds at 125ms)", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.enterPhase("playing");
+
+    const snake = scene.getSnake()!;
+    const ghost = scene.getEchoGhost()!;
+    const interval = snake.getTicker().interval;
+
+    // Snake zig-zags to stay in bounds for 40+ ticks.
+    // Start at col=1 going right, length 1. After 37 steps right,
+    // we'll be at col=38. Turn down, then left to stay in bounds.
+    snake.reset({ col: 1, row: 1 }, "right", 1);
+
+    // 37 steps right (col 1 → 38)
+    for (let i = 0; i < 37; i++) {
+      scene.update(0, interval);
+    }
+    expect(ghost.getCurrentTick()).toBe(37);
+    expect(ghost.isActive()).toBe(false);
+
+    // Turn down for 3 more steps to reach 40 total
+    snake.bufferDirection("down");
+    scene.update(0, interval); // tick 38
+    scene.update(0, interval); // tick 39
+    scene.update(0, interval); // tick 40
+
+    expect(ghost.getCurrentTick()).toBe(40);
+    expect(ghost.isActive()).toBe(true);
+    expect(ghost.getGhostTrail()).not.toBeNull();
+  });
+
+  it("ghost trail contains the snake position from 40 ticks ago", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.enterPhase("playing");
+
+    const snake = scene.getSnake()!;
+    const ghost = scene.getEchoGhost()!;
+    const interval = snake.getTicker().interval;
+
+    // Start at col=1 going right, length 1
+    snake.reset({ col: 1, row: 15 }, "right", 1);
+
+    // 37 steps right (col 1 → 38)
+    for (let i = 0; i < 37; i++) {
+      scene.update(0, interval);
+    }
+
+    // Turn down for remaining ticks
+    snake.bufferDirection("down");
+    for (let i = 0; i < 3; i++) {
+      scene.update(0, interval);
+    }
+
+    // Ghost has 40 ticks recorded, trail shows tick 0
+    const trail = ghost.getGhostTrail()!;
+    expect(trail).not.toBeNull();
+    // Tick 0 recorded the snake at col=2 (started at col=1, stepped right)
+    expect(trail[0].col).toBe(2);
+    expect(trail[0].row).toBe(15);
+  });
+
+  it("does not record when game is not in playing phase", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.enterPhase("playing");
+
+    const ghost = scene.getEchoGhost()!;
+    scene.endRun(); // game over
+
+    const tickBefore = ghost.getCurrentTick();
+    scene.update(0, 1000);
+    expect(ghost.getCurrentTick()).toBe(tickBefore);
+  });
+
+  it("echoGhost is null after endRun and new enterPhase('playing')", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.enterPhase("playing");
+
+    const firstGhost = scene.getEchoGhost();
+    expect(firstGhost).not.toBeNull();
+
+    scene.endRun();
+    scene.enterPhase("playing");
+
+    const secondGhost = scene.getEchoGhost();
+    expect(secondGhost).not.toBeNull();
+    expect(secondGhost).not.toBe(firstGhost);
+    expect(secondGhost!.getCurrentTick()).toBe(0);
+  });
+
+  it("does not affect existing movement logic", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.enterPhase("playing");
+
+    const snake = scene.getSnake()!;
+    snake.reset({ col: 10, row: 15 }, "right", 1);
+
+    const interval = snake.getTicker().interval;
+    scene.update(0, interval);
+
+    // Snake should have moved right
+    expect(snake.getHeadPosition().col).toBe(11);
+    expect(snake.getHeadPosition().row).toBe(15);
+    expect(scene.getPhase()).toBe("playing");
+  });
+
+  it("does not affect existing food logic", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.setRng(() => 0.5);
+    scene.enterPhase("playing");
+
+    const food = scene.getFood()!;
+    const foodPos = food.getPosition();
+
+    // Food should exist and be at a valid position
+    expect(foodPos.col).toBeGreaterThanOrEqual(0);
+    expect(foodPos.col).toBeLessThan(GRID_COLS);
+    expect(foodPos.row).toBeGreaterThanOrEqual(0);
+    expect(foodPos.row).toBeLessThan(GRID_ROWS);
+  });
+
+  it("echoGhost uses default tick interval matching snake movement", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.enterPhase("playing");
+
+    const ghost = scene.getEchoGhost()!;
+    // Default delay should be 40 ticks (5000ms / 125ms)
+    expect(ghost.delayInTicks).toBe(40);
+  });
+
+  it("shutdown cleans up echoGhost", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.enterPhase("playing");
+    expect(scene.getEchoGhost()).not.toBeNull();
+
+    scene.shutdown();
+    expect(scene.getEchoGhost()).toBeNull();
+  });
+});
+
+// ── Source-level checks for echo ghost integration ──────────────
+
+describe("MainScene source – echo ghost integration", () => {
+  const source = fs.readFileSync(
+    path.join(ROOT, "src/game/scenes/MainScene.ts"),
+    "utf-8",
+  );
+
+  it("imports EchoGhost from entities", () => {
+    expect(source).toContain("EchoGhost");
+    expect(source).toContain("entities/EchoGhost");
+  });
+
+  it("has an echoGhost field", () => {
+    expect(source).toMatch(/private\s+echoGhost/);
+  });
+
+  it("creates EchoGhost in createEntities", () => {
+    expect(source).toContain("new EchoGhost()");
+  });
+
+  it("records segments in update loop", () => {
+    expect(source).toContain("this.echoGhost.record");
+  });
+
+  it("exposes getEchoGhost accessor", () => {
+    expect(source).toContain("getEchoGhost()");
+  });
+});
