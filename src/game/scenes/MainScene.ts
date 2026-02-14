@@ -742,6 +742,11 @@ export class MainScene extends Phaser.Scene {
       return true;
     }
 
+    if (this.hasSplitterObstacleCollision(head)) {
+      this.endRun();
+      return true;
+    }
+
     if (this.hasEchoGhostCollision(head)) {
       this.endRun();
       return true;
@@ -775,6 +780,15 @@ export class MainScene extends Phaser.Scene {
 
     this.snake.rewindLastStep();
     return true;
+  }
+
+  private hasSplitterObstacleCollision(head: GridPos): boolean {
+    for (const obstacle of this.parasiteManager.getState().splitterObstacles) {
+      if (gridEquals(obstacle.position, head)) {
+        return true;
+      }
+    }
+    return false;
   }
 
   private hasEchoGhostCollision(head: GridPos): boolean {
