@@ -539,6 +539,25 @@ export class MainScene extends Phaser.Scene {
     return Array.from(this.moltenLavaPools.values(), (pool) => ({ ...pool }));
   }
 
+  private getFoodRespawnBlockedCells(): GridPos[] {
+    const parasiteState = this.parasiteManager.getState();
+    const blockedByCell = new Map<string, GridPos>();
+
+    for (const pickup of parasiteState.pickups) {
+      blockedByCell.set(this.gridPosKey(pickup.position), { ...pickup.position });
+    }
+
+    for (const obstacle of parasiteState.splitterObstacles) {
+      blockedByCell.set(this.gridPosKey(obstacle.position), { ...obstacle.position });
+    }
+
+    for (const lavaPool of this.moltenLavaPools.values()) {
+      blockedByCell.set(this.gridPosKey(lavaPool), { ...lavaPool });
+    }
+
+    return Array.from(blockedByCell.values());
+  }
+
   private renderSpawnedParasitePickup(spawn: ParasiteSpawnedPickup): void {
     if (this.parasitePickupSprites.has(spawn.pickup.id)) {
       return;
@@ -1181,13 +1200,9 @@ export class MainScene extends Phaser.Scene {
     const ghostSampleTimestampMs = this.echoGhost.getElapsedMs();
     const ghostDelayMs = this.echoGhost.getDelayMs();
     const runIdAtEat = this.activeRunId;
-    const blockedRespawnCells = this.parasiteManager
-      .getState()
-      .pickups
-      .map((pickup) => pickup.position);
     const eaten = this.food.checkEat(this.snake, (points) =>
       this.addScore(points),
-      blockedRespawnCells,
+      this.getFoodRespawnBlockedCells(),
     );
     if (eaten) {
       emitFoodParticles(this, fx, fy);
