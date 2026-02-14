@@ -123,6 +123,10 @@ vi.mock("phaser", () => {
 // Import after mock
 import { MainScene } from "@/game/scenes/MainScene";
 import { Snake } from "@/game/entities/Snake";
+import {
+  createActiveGhostSnapshotFixture,
+  expectCollisionGameOverSignal,
+} from "@/__tests__/echo-ghost-harness";
 
 // Spy on gameBridge methods
 const spySetPhase = vi.spyOn(gameBridge, "setPhase");
@@ -2023,23 +2027,12 @@ describe("MainScene – echo ghost collision", () => {
     ghostSegments: { col: number; row: number }[],
   ): void {
     const ghost = scene.getEchoGhost()!;
-    // Build a buffer with many copies of the same segments
-    // so record()/advancePlayback() keeps showing these segments.
-    const bufferSize = 50;
-    const buffer = Array.from({ length: bufferSize }, () => ({
-      segments: ghostSegments.map((s) => ({ ...s })),
-    }));
-    ghost.restore({
-      buffer,
-      head: 0,
-      count: bufferSize,
-      writeIndex: 0,
-      readIndex: 0,
-      active: true,
-      opacity: 1,
-      currentSegments: ghostSegments.map((s) => ({ ...s })),
-      ticksSinceStart: 100,
-    });
+    ghost.restore(
+      createActiveGhostSnapshotFixture(ghostSegments, {
+        bufferSize: 50,
+        ticksSinceStart: 100,
+      }),
+    );
   }
 
   it("ends the run when snake head collides with the echo ghost", () => {
@@ -2058,8 +2051,7 @@ describe("MainScene – echo ghost collision", () => {
     // Step the snake — head moves to (11, 10) which overlaps ghost
     scene.update(0, interval);
 
-    expect(scene.getPhase()).toBe("gameOver");
-    expect(snake.isAlive()).toBe(false);
+    expectCollisionGameOverSignal(scene);
   });
 
   it("triggers the same game-over path as self-collision (camera shake, phase change)", () => {
@@ -2077,9 +2069,7 @@ describe("MainScene – echo ghost collision", () => {
     scene.update(0, interval);
 
     // Same side effects as self-collision
-    expect(scene.getPhase()).toBe("gameOver");
-    expect(snake.isAlive()).toBe(false);
-    expect(mockCameraShake).toHaveBeenCalled();
+    expectCollisionGameOverSignal(scene, { cameraShakeSpy: mockCameraShake });
   });
 
   it("does not end the run when ghost is inactive", () => {

@@ -1,39 +1,19 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import fs from "fs";
 import path from "path";
-import {
-  EchoGhost,
-  ECHO_DELAY_MS,
-} from "@/game/entities/EchoGhost";
+import { EchoGhost } from "@/game/entities/EchoGhost";
 import { GhostFoodBurstQueue } from "@/game/systems/GhostFoodBurstQueue";
 import { EchoRewindHook } from "@/game/systems/RewindHook";
 import type { EchoStateSnapshot } from "@/game/systems/RewindHook";
 import type { GridPos } from "@/game/utils/grid";
 import { DEFAULT_MOVE_INTERVAL_MS } from "@/game/utils/grid";
+import {
+  DELAY_TICKS,
+  makeSegments,
+  recordNTicks,
+} from "@/__tests__/echo-ghost-harness";
 
 const ROOT = path.resolve(__dirname, "../..");
-
-// ── Helpers ──────────────────────────────────────────────────────
-
-const DELAY_TICKS = Math.round(ECHO_DELAY_MS / DEFAULT_MOVE_INTERVAL_MS);
-
-function makeSegments(headCol: number, length = 3): GridPos[] {
-  return Array.from({ length }, (_, i) => ({
-    col: headCol - i,
-    row: 10,
-  }));
-}
-
-function recordNTicks(
-  ghost: EchoGhost,
-  n: number,
-  startCol = 10,
-  length = 3,
-): void {
-  for (let i = 0; i < n; i++) {
-    ghost.record(makeSegments(startCol + i, length));
-  }
-}
 
 // ── GhostFoodBurstQueue snapshot/restore ─────────────────────────
 
