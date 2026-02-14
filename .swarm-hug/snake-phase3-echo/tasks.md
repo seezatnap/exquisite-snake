@@ -29,3 +29,6 @@
 
 ## Follow-up tasks (from sprint review)
 - [x] (#11) Wire `advancePlayhead()` into the game loop so the ghost actually drains and fades after `stopRecording()` is called during game-over (the update loop currently exits early when phase is not `"playing"`, so the fade-out never runs) (blocked by #3) (A)
+
+## Follow-up tasks (from sprint review)
+- [ ] (#12) Update `MainScene.update()` to call `echoGhostRenderer.update()` during the `"gameOver"` phase so the ghost fade-out animation is actually rendered (currently the renderer is only updated during `"playing"`, so the drain/fade-out computed by `advancePlayhead()` is never visible) (blocked by #11)
