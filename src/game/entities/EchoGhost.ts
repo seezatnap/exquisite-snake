@@ -44,6 +44,36 @@ export interface BufferSnapshot {
   readonly fadeOutDuration: number;
 }
 
+/**
+ * Events emitted to rewind hook listeners.
+ *
+ * Phase 6 can register a listener to be notified of rewind-relevant
+ * state changes without reaching into EchoGhost internals.
+ */
+export type RewindEvent =
+  | { type: "tick"; tickIndex: number }
+  | { type: "lifecycleChange"; from: GhostLifecycleState; to: GhostLifecycleState }
+  | { type: "restore"; snapshot: BufferSnapshot };
+
+/** Callback type for rewind hook listeners. */
+export type RewindHookListener = (event: RewindEvent) => void;
+
+/**
+ * Interface that Phase 6 (Temporal Rewind) will consume to manage
+ * ghost rewind state. Provides snapshot/restore plus event hooks so
+ * the rewind system can coordinate without coupling to EchoGhost internals.
+ */
+export interface RewindStateProvider extends RewindableBuffer {
+  /** Register a listener for rewind-relevant events. Returns an unsubscribe function. */
+  onRewindEvent(listener: RewindHookListener): () => void;
+  /** Whether the ghost has any recorded state to rewind. */
+  canRewind(): boolean;
+  /** Current tick index (number of ticks recorded). */
+  getTickIndex(): number;
+  /** Current lifecycle state. */
+  getLifecycleState(): GhostLifecycleState;
+}
+
 // ── CircularBuffer ───────────────────────────────────────────────
 
 /**
@@ -143,11 +173,14 @@ export class CircularBuffer<T> {
  * deterministic read/write APIs. Rendering and collision detection
  * are handled by other systems that consume the ghost trail.
  */
-export class EchoGhost implements RewindableBuffer {
+export class EchoGhost implements RewindStateProvider {
   private readonly buffer: CircularBuffer<SnakeSnapshot>;
   private readonly delayTicks: number;
   private readonly trailWindow: number;
   private ticksWritten = 0;
+
+  /** Registered rewind hook listeners. */
+  private rewindListeners: Set<RewindHookListener> = new Set();
 
   /** Lifecycle state tracks ghost visibility phases. */
   private lifecycleState: GhostLifecycleState = "inactive";
@@ -241,8 +274,12 @@ export class EchoGhost implements RewindableBuffer {
 
     // Transition inactive → active once enough ticks have been recorded
     if (this.lifecycleState === "inactive" && this.ticksWritten >= this.delayTicks) {
+      const from = "inactive" as GhostLifecycleState;
       this.lifecycleState = "active";
+      this.emitRewindEvent({ type: "lifecycleChange", from, to: "active" });
     }
+
+    this.emitRewindEvent({ type: "tick", tickIndex: this.ticksWritten });
   }
 
   // ── Read API ────────────────────────────────────────────────────
@@ -393,9 +430,11 @@ export class EchoGhost implements RewindableBuffer {
   stopRecording(): void {
     if (this.lifecycleState !== "active") return;
 
+    const from = this.lifecycleState;
     this.lifecycleState = "fadingOut";
     this.fadeOutTick = 0;
     this.fadeOutDuration = this.trailWindow;
+    this.emitRewindEvent({ type: "lifecycleChange", from, to: "fadingOut" });
   }
 
   /**
@@ -411,6 +450,7 @@ export class EchoGhost implements RewindableBuffer {
     this.fadeOutTick++;
     if (this.fadeOutTick >= this.fadeOutDuration) {
       this.lifecycleState = "expired";
+      this.emitRewindEvent({ type: "lifecycleChange", from: "fadingOut", to: "expired" });
       return false;
     }
     return true;
@@ -453,5 +493,36 @@ export class EchoGhost implements RewindableBuffer {
     this.lifecycleState = snap.lifecycleState;
     this.fadeOutTick = snap.fadeOutTick;
     this.fadeOutDuration = snap.fadeOutDuration;
+    this.emitRewindEvent({ type: "restore", snapshot: snap });
+  }
+
+  // ── Rewind hook listener API (Phase 6) ────────────────────────
+
+  /**
+   * Register a listener for rewind-relevant events.
+   * Returns an unsubscribe function.
+   */
+  onRewindEvent(listener: RewindHookListener): () => void {
+    this.rewindListeners.add(listener);
+    return () => {
+      this.rewindListeners.delete(listener);
+    };
+  }
+
+  /** Whether the ghost has any recorded state that can be rewound. */
+  canRewind(): boolean {
+    return this.ticksWritten > 0;
+  }
+
+  /** Current tick index (number of ticks recorded so far). */
+  getTickIndex(): number {
+    return this.ticksWritten;
+  }
+
+  /** Emit a rewind event to all registered listeners. */
+  private emitRewindEvent(event: RewindEvent): void {
+    for (const listener of this.rewindListeners) {
+      listener(event);
+    }
   }
 }

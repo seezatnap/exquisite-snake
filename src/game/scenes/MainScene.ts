@@ -12,7 +12,7 @@ import { loadHighScore, saveHighScore } from "../utils/storage";
 import { isInBounds, type GridPos } from "../utils/grid";
 import { Snake } from "../entities/Snake";
 import { Food } from "../entities/Food";
-import { EchoGhost } from "../entities/EchoGhost";
+import { EchoGhost, type RewindStateProvider } from "../entities/EchoGhost";
 import { emitFoodParticles, shakeCamera } from "../systems/effects";
 
 // ── Default spawn configuration ─────────────────────────────────
@@ -263,6 +263,15 @@ export class MainScene extends Phaser.Scene {
   }
 
   getGhost(): EchoGhost | null {
+    return this.ghost;
+  }
+
+  /**
+   * Get the rewind state provider for Phase 6 integration.
+   * Returns the ghost's RewindStateProvider interface, or null if
+   * no ghost is active (e.g., between runs).
+   */
+  getRewindStateProvider(): RewindStateProvider | null {
     return this.ghost;
   }
 
