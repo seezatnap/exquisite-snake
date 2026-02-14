@@ -53,6 +53,17 @@ export class Boot extends Phaser.Scene {
       foodGfx.destroy();
     }
 
+    // ── Parasite pickup: squared glyph with core cutout ─────────
+    if (!this.textures.exists(TEXTURE_KEYS.PARASITE_PICKUP)) {
+      const parasiteGfx = this.make.graphics({ x: 0, y: 0 }, false);
+      parasiteGfx.fillStyle(0xf5c542, 1);
+      parasiteGfx.fillRoundedRect(2, 2, size - 4, size - 4, 5);
+      parasiteGfx.fillStyle(COLORS.BACKGROUND, 1);
+      parasiteGfx.fillCircle(half, half, size * 0.17);
+      parasiteGfx.generateTexture(TEXTURE_KEYS.PARASITE_PICKUP, size, size);
+      parasiteGfx.destroy();
+    }
+
     // ── Particle: small neon-pink dot for burst effects ──────────
     if (!this.textures.exists(TEXTURE_KEYS.PARTICLE)) {
       const particleSize = 6;

@@ -1,20 +1,39 @@
 import { beforeEach, describe, expect, it } from "vitest";
+import { GRID_COLS, GRID_ROWS, TEXTURE_KEYS } from "@/game/config";
 import {
   PARASITE_ECHO_GHOST_POLICY,
   PARASITE_MAGNET_RADIUS_TILES,
   PARASITE_MAGNET_SPEED_BONUS_PER_SEGMENT,
   PARASITE_MAX_SEGMENTS,
+  PARASITE_PICKUP_TEXTURE_KEY,
   PARASITE_SPLITTER_INTERVAL_MS,
   Parasite,
+  getParasitePickupRenderIdentity,
   ParasiteType,
   resetParasiteIdSequenceForTests,
 } from "@/game/entities/Parasite";
 import {
+  PARASITE_PICKUP_SPAWN_INTERVAL_MS,
   ParasiteManager,
   calculateMagnetSpeedMultiplier,
   createInitialParasiteSharedState,
   validatePhase3IntegrationPoints,
 } from "@/game/systems/ParasiteManager";
+import type { GridPos } from "@/game/utils/grid";
+
+function sequenceRng(values: readonly number[]): () => number {
+  let index = 0;
+  return () => {
+    const safeIndex = Math.min(index, values.length - 1);
+    const value = values[safeIndex] ?? 0;
+    index += 1;
+    return value;
+  };
+}
+
+function toGridKey(position: GridPos): string {
+  return `${position.col}:${position.row}`;
+}
 
 describe("Parasite scaffold constants", () => {
   it("pins required balance constants", () => {
@@ -22,6 +41,7 @@ describe("Parasite scaffold constants", () => {
     expect(PARASITE_MAGNET_RADIUS_TILES).toBe(2);
     expect(PARASITE_MAGNET_SPEED_BONUS_PER_SEGMENT).toBe(0.1);
     expect(PARASITE_SPLITTER_INTERVAL_MS).toBe(10_000);
+    expect(PARASITE_PICKUP_SPAWN_INTERVAL_MS).toBe(8_000);
   });
 
   it("marks Echo Ghost as excluded from parasite interactions", () => {
@@ -61,6 +81,16 @@ describe("Parasite entity scaffold", () => {
       spawnedAtMs: 123,
       consumed: true,
     });
+  });
+
+  it("exposes pickup render identity distinct from standard food", () => {
+    const render = getParasitePickupRenderIdentity(ParasiteType.Shield);
+
+    expect(render.textureKey).toBe(PARASITE_PICKUP_TEXTURE_KEY);
+    expect(render.textureKey).toBe(TEXTURE_KEYS.PARASITE_PICKUP);
+    expect(render.textureKey).not.toBe(TEXTURE_KEYS.FOOD);
+    expect(render.shape).toBe("rounded-rect");
+    expect(render.tint).toBeGreaterThan(0);
   });
 });
 
@@ -178,5 +208,100 @@ describe("ParasiteManager scaffold", () => {
     });
 
     expect(manager.getState().inventory.segments).toEqual([]);
+  });
+
+  it("spawns a pickup only after the spawn interval is reached", () => {
+    const manager = new ParasiteManager();
+
+    manager.advanceTimers(PARASITE_PICKUP_SPAWN_INTERVAL_MS - 1);
+    const earlySpawn = manager.spawnPickupIfDue({
+      snakeSegments: [{ col: 5, row: 5 }],
+      foodPosition: { col: 6, row: 5 },
+      rng: sequenceRng([0, 0, 0]),
+    });
+    expect(earlySpawn).toBeNull();
+
+    manager.advanceTimers(1);
+    const spawn = manager.spawnPickupIfDue({
+      snakeSegments: [{ col: 5, row: 5 }],
+      foodPosition: { col: 6, row: 5 },
+      obstaclePositions: [{ col: 7, row: 5 }],
+      rng: sequenceRng([0, 0, 0]),
+      nowMs: 42_000,
+    });
+
+    expect(spawn).not.toBeNull();
+    expect(spawn?.pickup.spawnedAtMs).toBe(42_000);
+    expect(spawn?.render.textureKey).toBe(PARASITE_PICKUP_TEXTURE_KEY);
+    expect(spawn?.render.textureKey).not.toBe(TEXTURE_KEYS.FOOD);
+    expect(manager.getState().pickups).toHaveLength(1);
+  });
+
+  it("spawns only on empty cells (never on snake/food/obstacles/pickups)", () => {
+    const manager = new ParasiteManager();
+    const seeded = manager.getState();
+    seeded.pickups = [
+      {
+        id: "existing-pickup",
+        type: ParasiteType.Magnet,
+        position: { col: 0, row: 3 },
+        spawnedAtMs: 1_000,
+      },
+    ];
+    seeded.splitterObstacles = [
+      {
+        id: "existing-obstacle",
+        position: { col: 0, row: 4 },
+        spawnedAtMs: 1_500,
+        sourceSegmentId: null,
+      },
+    ];
+    manager.replaceState(seeded);
+    manager.advanceTimers(PARASITE_PICKUP_SPAWN_INTERVAL_MS);
+
+    const snakeSegments: GridPos[] = [
+      { col: 0, row: 0 },
+      { col: 0, row: 1 },
+    ];
+    const foodPosition: GridPos = { col: 0, row: 2 };
+    const obstaclePositions: GridPos[] = [{ col: 0, row: 5 }];
+    const blocked = new Set<string>([
+      ...snakeSegments.map(toGridKey),
+      toGridKey(foodPosition),
+      ...obstaclePositions.map(toGridKey),
+      "0:3",
+      "0:4",
+    ]);
+
+    const spawn = manager.spawnPickupIfDue({
+      snakeSegments,
+      foodPosition,
+      obstaclePositions,
+      rng: sequenceRng([0, 0, 0]),
+    });
+
+    expect(spawn).not.toBeNull();
+    expect(blocked.has(toGridKey(spawn!.pickup.position))).toBe(false);
+  });
+
+  it("skips spawning when no empty cell exists", () => {
+    const manager = new ParasiteManager();
+    const fullGridSnake: GridPos[] = [];
+
+    for (let col = 0; col < GRID_COLS; col++) {
+      for (let row = 0; row < GRID_ROWS; row++) {
+        fullGridSnake.push({ col, row });
+      }
+    }
+
+    manager.advanceTimers(PARASITE_PICKUP_SPAWN_INTERVAL_MS);
+    const spawn = manager.spawnPickupIfDue({
+      snakeSegments: fullGridSnake,
+      foodPosition: null,
+      rng: sequenceRng([0]),
+    });
+
+    expect(spawn).toBeNull();
+    expect(manager.getState().pickups).toEqual([]);
   });
 });
