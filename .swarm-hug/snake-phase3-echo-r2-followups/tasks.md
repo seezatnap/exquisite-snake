@@ -2,7 +2,7 @@
 
 ## Test Infrastructure
 
-- [A] (#1) Extend existing Vitest test harness in `src/__tests__/` with deterministic timer controls, reusable snake/ghost path fixtures, and assertion helpers for ghost position, fade state, collision game-over signal, food-burst events, and snapshot/restore hook invocation to support all echo ghost validation scenarios [5 pts]
+- [x] (#1) Extend existing Vitest test harness in `src/__tests__/` with deterministic timer controls, reusable snake/ghost path fixtures, and assertion helpers for ghost position, fade state, collision game-over signal, food-burst events, and snapshot/restore hook invocation to support all echo ghost validation scenarios [5 pts] (A)
 
 ## Echo Ghost Replay Timing
 
