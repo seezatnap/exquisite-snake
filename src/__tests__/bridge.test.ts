@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { GameBridge, type GamePhase } from "@/game/bridge";
+import { ParasiteType } from "@/game/entities/Parasite";
 import { Biome } from "@/game/systems/BiomeManager";
 
 describe("GameBridge", () => {
@@ -38,6 +39,14 @@ describe("GameBridge", () => {
       [Biome.MoltenCore]: 0,
       [Biome.VoidRift]: 0,
     });
+  });
+
+  it("starts with no active parasites", () => {
+    expect(bridge.getState().activeParasites).toEqual([]);
+  });
+
+  it("starts with parasites collected at 0", () => {
+    expect(bridge.getState().parasitesCollected).toBe(0);
   });
 
   // ── setPhase ───────────────────────────────────────────────
@@ -135,6 +144,35 @@ describe("GameBridge", () => {
     expect(listener).toHaveBeenCalledWith(stats);
   });
 
+  it("setActiveParasites stores a defensive copy", () => {
+    const active = [ParasiteType.Magnet, ParasiteType.Shield];
+    bridge.setActiveParasites(active);
+    expect(bridge.getState().activeParasites).toEqual(active);
+    expect(bridge.getState().activeParasites).not.toBe(active);
+  });
+
+  it("setActiveParasites emits parasiteInventoryChange", () => {
+    const listener = vi.fn();
+    bridge.on("parasiteInventoryChange", listener);
+    bridge.setActiveParasites([ParasiteType.Magnet, ParasiteType.Splitter]);
+    expect(listener).toHaveBeenCalledWith([
+      ParasiteType.Magnet,
+      ParasiteType.Splitter,
+    ]);
+  });
+
+  it("setParasitesCollected updates parasitesCollected state", () => {
+    bridge.setParasitesCollected(4);
+    expect(bridge.getState().parasitesCollected).toBe(4);
+  });
+
+  it("setParasitesCollected emits parasitesCollectedChange", () => {
+    const listener = vi.fn();
+    bridge.on("parasitesCollectedChange", listener);
+    bridge.setParasitesCollected(7);
+    expect(listener).toHaveBeenCalledWith(7);
+  });
+
   it("emits biome transition lifecycle events", () => {
     const transition = { from: Biome.NeonCity, to: Biome.IceCavern };
     const onExit = vi.fn();
@@ -166,6 +204,8 @@ describe("GameBridge", () => {
       [Biome.MoltenCore]: 1,
       [Biome.VoidRift]: 1,
     });
+    bridge.setActiveParasites([ParasiteType.Magnet, ParasiteType.Shield]);
+    bridge.setParasitesCollected(2);
 
     bridge.resetRun();
     expect(bridge.getState().score).toBe(0);
@@ -177,6 +217,8 @@ describe("GameBridge", () => {
       [Biome.MoltenCore]: 0,
       [Biome.VoidRift]: 0,
     });
+    expect(bridge.getState().activeParasites).toEqual([]);
+    expect(bridge.getState().parasitesCollected).toBe(0);
   });
 
   it("resetRun emits score/time plus biome reset events", () => {
@@ -184,10 +226,14 @@ describe("GameBridge", () => {
     const timeCb = vi.fn();
     const biomeCb = vi.fn();
     const biomeStatsCb = vi.fn();
+    const parasiteInventoryCb = vi.fn();
+    const parasitesCollectedCb = vi.fn();
     bridge.on("scoreChange", scoreCb);
     bridge.on("elapsedTimeChange", timeCb);
     bridge.on("biomeChange", biomeCb);
     bridge.on("biomeVisitStatsChange", biomeStatsCb);
+    bridge.on("parasiteInventoryChange", parasiteInventoryCb);
+    bridge.on("parasitesCollectedChange", parasitesCollectedCb);
     bridge.setScore(50);
     bridge.setElapsedTime(9999);
     bridge.setCurrentBiome(Biome.VoidRift);
@@ -197,11 +243,15 @@ describe("GameBridge", () => {
       [Biome.MoltenCore]: 3,
       [Biome.VoidRift]: 4,
     });
+    bridge.setActiveParasites([ParasiteType.Shield]);
+    bridge.setParasitesCollected(4);
 
     scoreCb.mockClear();
     timeCb.mockClear();
     biomeCb.mockClear();
     biomeStatsCb.mockClear();
+    parasiteInventoryCb.mockClear();
+    parasitesCollectedCb.mockClear();
 
     bridge.resetRun();
     expect(scoreCb).toHaveBeenCalledWith(0);
@@ -213,6 +263,8 @@ describe("GameBridge", () => {
       [Biome.MoltenCore]: 0,
       [Biome.VoidRift]: 0,
     });
+    expect(parasiteInventoryCb).toHaveBeenCalledWith([]);
+    expect(parasitesCollectedCb).toHaveBeenCalledWith(0);
   });
 
   it("resetRun does not affect highScore", () => {

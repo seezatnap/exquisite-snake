@@ -46,6 +46,9 @@ export default function GameOver() {
   const [biomeVisitStats, setBiomeVisitStats] = useState<BiomeVisitStats>(
     () => gameBridge.getState().biomeVisitStats,
   );
+  const [parasitesCollected, setParasitesCollected] = useState<number>(
+    () => gameBridge.getState().parasitesCollected,
+  );
 
   const playAgainRef = useRef<HTMLButtonElement | null>(null);
 
@@ -56,12 +59,15 @@ export default function GameOver() {
     const onElapsedTime = (t: number) => setElapsedTime(t);
     const onBiomeVisitStats = (stats: BiomeVisitStats) =>
       setBiomeVisitStats(stats);
+    const onParasitesCollected = (count: number) =>
+      setParasitesCollected(count);
 
     gameBridge.on("phaseChange", onPhase);
     gameBridge.on("scoreChange", onScore);
     gameBridge.on("highScoreChange", onHighScore);
     gameBridge.on("elapsedTimeChange", onElapsedTime);
     gameBridge.on("biomeVisitStatsChange", onBiomeVisitStats);
+    gameBridge.on("parasitesCollectedChange", onParasitesCollected);
 
     return () => {
       gameBridge.off("phaseChange", onPhase);
@@ -69,6 +75,7 @@ export default function GameOver() {
       gameBridge.off("highScoreChange", onHighScore);
       gameBridge.off("elapsedTimeChange", onElapsedTime);
       gameBridge.off("biomeVisitStatsChange", onBiomeVisitStats);
+      gameBridge.off("parasitesCollectedChange", onParasitesCollected);
     };
   }, []);
 
@@ -177,6 +184,16 @@ export default function GameOver() {
           </span>
           <p className="font-mono text-lg tabular-nums text-foreground/80">
             {formatTime(elapsedTime)}
+          </p>
+        </div>
+
+        {/* Parasites collected */}
+        <div className="text-center" data-testid="parasites-collected">
+          <span className="font-mono text-xs tracking-wide text-foreground/50">
+            PARASITES COLLECTED
+          </span>
+          <p className="font-mono text-lg tabular-nums text-foreground/80">
+            {parasitesCollected}
           </p>
         </div>
 

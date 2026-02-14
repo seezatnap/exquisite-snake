@@ -322,6 +322,7 @@ export class MainScene extends Phaser.Scene {
   create(): void {
     this.applyBiomeCycleOrderOverrideFromUrl();
     this.syncBiomeRuntimeToBridge();
+    this.syncParasiteRuntimeToBridge();
     this.applyBiomeVisualTheme(this.biomeManager.getCurrentBiome());
     gameBridge.setHighScore(loadHighScore());
 
@@ -434,6 +435,7 @@ export class MainScene extends Phaser.Scene {
       biomeVisitStats: this.biomeManager.getVisitStats(),
     });
     this.parasiteManager.resetRun();
+    this.syncParasiteRuntimeToBridge();
     this.destroyParasitePickupSprites();
     this.resetMoltenCoreState();
     this.clearBiomeTransitionEffect();
@@ -458,6 +460,7 @@ export class MainScene extends Phaser.Scene {
     if (this.snake?.isAlive()) {
       this.snake.kill();
     }
+    this.syncParasiteRuntimeToBridge();
     const { score, highScore } = gameBridge.getState();
     if (score > highScore) {
       gameBridge.setHighScore(score);
@@ -774,6 +777,7 @@ export class MainScene extends Phaser.Scene {
     }
 
     this.snake.rewindLastStep();
+    this.syncParasiteInventoryToBridge(shieldCollision.activeSegments);
     return true;
   }
 
@@ -1084,6 +1088,17 @@ export class MainScene extends Phaser.Scene {
     gameBridge.setBiomeVisitStats(this.biomeManager.getVisitStats());
   }
 
+  private syncParasiteRuntimeToBridge(): void {
+    this.syncParasiteInventoryToBridge(this.parasiteManager.getActiveSegments());
+    gameBridge.setParasitesCollected(this.parasiteManager.getParasitesCollectedCount());
+  }
+
+  private syncParasiteInventoryToBridge(
+    activeSegments: readonly ParasiteSegmentState[],
+  ): void {
+    gameBridge.setActiveParasites(activeSegments.map((segment) => segment.type));
+  }
+
   private applyBiomeMovementMechanics(biome: Biome): void {
     if (!this.snake) {
       return;
@@ -1169,6 +1184,8 @@ export class MainScene extends Phaser.Scene {
     }
 
     this.destroyParasitePickupSprite(consumed.consumedPickup.id);
+    this.syncParasiteInventoryToBridge(consumed.activeSegments);
+    gameBridge.setParasitesCollected(consumed.parasitesCollected);
   }
 
   private destroyParasitePickupSprite(pickupId: string): void {
