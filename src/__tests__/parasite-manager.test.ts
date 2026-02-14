@@ -264,6 +264,112 @@ describe("Parasite pickup consumption", () => {
   });
 });
 
+describe("Splitter obstacle spawning", () => {
+  it("spawns every 10 seconds while a splitter segment is attached", () => {
+    const manager = new ParasiteManager();
+    const snapshot = createParasiteRuntimeState();
+    snapshot.activeSegments.push({
+      id: "segment-splitter",
+      type: ParasiteType.Splitter,
+      attachedAtMs: 10,
+    });
+    manager.restoreState(snapshot);
+
+    manager.advanceTimers(SPLITTER_OBSTACLE_INTERVAL_MS - 1);
+    manager.updateSplitterObstacleSpawn({
+      snakeSegments: [],
+      foodPosition: null,
+      rng: () => 0,
+    });
+    expect(manager.getState().splitterObstacles).toEqual([]);
+
+    manager.advanceTimers(1);
+    manager.updateSplitterObstacleSpawn({
+      snakeSegments: [],
+      foodPosition: null,
+      rng: () => 0,
+    });
+    expect(manager.getState().splitterObstacles).toHaveLength(1);
+    expect(manager.getState().splitterObstacles[0]?.position).toEqual({
+      col: 0,
+      row: 0,
+    });
+
+    manager.advanceTimers(SPLITTER_OBSTACLE_INTERVAL_MS);
+    manager.updateSplitterObstacleSpawn({
+      snakeSegments: [],
+      foodPosition: null,
+      rng: () => 0,
+    });
+    expect(manager.getState().splitterObstacles).toHaveLength(2);
+    expect(manager.getState().splitterObstacles[1]?.position).toEqual({
+      col: 0,
+      row: 1,
+    });
+  });
+
+  it("places splitter obstacles on random empty cells only", () => {
+    const manager = new ParasiteManager();
+    const snapshot = createParasiteRuntimeState();
+    snapshot.activeSegments.push({
+      id: "segment-splitter",
+      type: ParasiteType.Splitter,
+      attachedAtMs: 0,
+    });
+    snapshot.pickup = {
+      id: "pickup-2",
+      type: ParasiteType.Magnet,
+      position: { col: 0, row: 0 },
+      spawnedAtMs: 5,
+    };
+    manager.restoreState(snapshot);
+    manager.advanceTimers(SPLITTER_OBSTACLE_INTERVAL_MS);
+
+    manager.updateSplitterObstacleSpawn({
+      snakeSegments: [{ col: 0, row: 1 }],
+      foodPosition: { col: 0, row: 2 },
+      obstaclePositions: [{ col: 0, row: 3 }],
+      rng: () => 0,
+    });
+
+    expect(manager.getState().splitterObstacles[0]?.position).toEqual({
+      col: 0,
+      row: 4,
+    });
+  });
+
+  it("keeps existing obstacles when splitter is detached and clears elapsed spawn time", () => {
+    const manager = new ParasiteManager();
+    const snapshot = createParasiteRuntimeState();
+    snapshot.activeSegments.push({
+      id: "segment-splitter",
+      type: ParasiteType.Splitter,
+      attachedAtMs: 0,
+    });
+    manager.restoreState(snapshot);
+    manager.advanceTimers(SPLITTER_OBSTACLE_INTERVAL_MS);
+    manager.updateSplitterObstacleSpawn({
+      snakeSegments: [],
+      foodPosition: null,
+      rng: () => 0,
+    });
+
+    const detached = manager.getState();
+    detached.activeSegments = [];
+    manager.restoreState(detached);
+    manager.advanceTimers(SPLITTER_OBSTACLE_INTERVAL_MS);
+    manager.updateSplitterObstacleSpawn({
+      snakeSegments: [],
+      foodPosition: null,
+      rng: () => 0,
+    });
+
+    const finalState = manager.getState();
+    expect(finalState.splitterObstacles).toHaveLength(1);
+    expect(finalState.timers.splitterObstacleElapsedMs).toBe(0);
+  });
+});
+
 describe("ParasiteManager integration hooks", () => {
   it("advances shared parasite timers on each update frame", () => {
     const manager = new ParasiteManager();
@@ -404,6 +510,14 @@ describe("ParasiteManager integration hooks", () => {
 
   it("exposes biome lifecycle hooks and config constants for MainScene integration", () => {
     const manager = new ParasiteManager();
+    const snapshot = createParasiteRuntimeState();
+    snapshot.splitterObstacles.push({
+      id: "obstacle-1",
+      position: { col: 2, row: 2 },
+      spawnedAtMs: 100,
+    });
+    snapshot.timers.splitterObstacleElapsedMs = 3_000;
+    manager.restoreState(snapshot);
 
     expect(() => manager.onBiomeEnter(Biome.NeonCity)).not.toThrow();
     expect(() => manager.onBiomeExit(Biome.NeonCity)).not.toThrow();
@@ -413,6 +527,18 @@ describe("ParasiteManager integration hooks", () => {
         to: Biome.IceCavern,
       })
     ).not.toThrow();
+    expect(manager.getState().splitterObstacles).toEqual([]);
+    expect(manager.getState().timers.splitterObstacleElapsedMs).toBe(0);
+
+    const withRunEndObstacle = createParasiteRuntimeState();
+    withRunEndObstacle.splitterObstacles.push({
+      id: "obstacle-2",
+      position: { col: 3, row: 3 },
+      spawnedAtMs: 200,
+    });
+    manager.restoreState(withRunEndObstacle);
+    manager.onRunEnd();
+    expect(manager.getState().splitterObstacles).toEqual([]);
 
     expect(manager.getConstants()).toEqual({
       maxSegments: 3,
