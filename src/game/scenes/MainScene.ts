@@ -254,6 +254,9 @@ export class MainScene extends Phaser.Scene {
   /** Last ghost head position used to detect movement for trail spawning. */
   private lastEchoGhostHead: GridPos | null = null;
 
+  /** Monotonic token used to ignore delayed callbacks from older runs. */
+  private activeRunId = 0;
+
   /** Number of snake steps elapsed since entering Void Rift. */
   private voidGravityStepCounter = 0;
 
@@ -374,6 +377,7 @@ export class MainScene extends Phaser.Scene {
 
   /** Reset per-run state and begin a new game. */
   private startRun(): void {
+    this.activeRunId += 1;
     this.biomeManager.startRun();
     gameBridge.resetRun({
       currentBiome: this.biomeManager.getCurrentBiome(),
@@ -807,19 +811,58 @@ export class MainScene extends Phaser.Scene {
   }
 
   private resolveFoodConsumption(): void {
-    if (!this.snake || !this.food) {
+    if (!this.snake || !this.food || !this.echoGhost) {
       return;
     }
 
     const foodSprite = this.food.getSprite();
     const fx = foodSprite.x;
     const fy = foodSprite.y;
+    const ghostSampleTimestampMs = this.echoGhost.getElapsedMs();
+    const ghostDelayMs = this.echoGhost.getDelayMs();
+    const runIdAtEat = this.activeRunId;
     const eaten = this.food.checkEat(this.snake, (points) =>
       this.addScore(points),
     );
     if (eaten) {
       emitFoodParticles(this, fx, fy);
+      this.queueDelayedEchoGhostFoodBurst(
+        ghostSampleTimestampMs,
+        ghostDelayMs,
+        runIdAtEat,
+      );
     }
+  }
+
+  private queueDelayedEchoGhostFoodBurst(
+    targetSampleTimestampMs: number,
+    delayMs: number,
+    runIdAtEat: number,
+  ): void {
+    const safeDelayMs = Number.isFinite(delayMs) ? Math.max(0, Math.floor(delayMs)) : 0;
+
+    this.time.delayedCall(safeDelayMs, () => {
+      if (runIdAtEat !== this.activeRunId) {
+        return;
+      }
+
+      if (gameBridge.getState().phase !== "playing") {
+        return;
+      }
+
+      const ghost = this.echoGhost;
+      if (!ghost) {
+        return;
+      }
+
+      const ghostHead = ghost.getHeadAtOrBefore(targetSampleTimestampMs);
+      if (!ghostHead) {
+        return;
+      }
+
+      const ghostPixel = gridToPixel(ghostHead);
+      emitFoodParticles(this, ghostPixel.x, ghostPixel.y);
+    });
   }
 
   private applyVoidRiftGravityNudgeIfDue(): boolean {
