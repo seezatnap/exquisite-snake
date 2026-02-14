@@ -24,6 +24,10 @@ import { EchoGhost } from "../entities/EchoGhost";
 import { emitFoodParticles, shakeCamera } from "../systems/effects";
 import { GhostFoodBurstQueue } from "../systems/GhostFoodBurstQueue";
 import {
+  EchoRewindHook,
+  type EchoStateSnapshot,
+} from "../systems/RewindHook";
+import {
   Biome,
   BIOME_CONFIG,
   BiomeManager,
@@ -185,6 +189,9 @@ export class MainScene extends Phaser.Scene {
 
   /** Queue for delayed ghost-food cosmetic bursts. */
   private ghostFoodBurstQueue: GhostFoodBurstQueue | null = null;
+
+  /** Aggregated rewind hook for all echo-ghost-related state (Phase 6). */
+  private echoRewindHook = new EchoRewindHook(null, null);
 
   /** Biome rotation/timing owner for the current run. */
   private readonly biomeManager = new BiomeManager();
@@ -400,6 +407,7 @@ export class MainScene extends Phaser.Scene {
     this.food = new Food(this, this.snake, this.rng);
     this.echoGhost = new EchoGhost();
     this.ghostFoodBurstQueue = new GhostFoodBurstQueue();
+    this.echoRewindHook.setEntities(this.echoGhost, this.ghostFoodBurstQueue);
   }
 
   /** Destroy existing snake and food entities. */
@@ -420,6 +428,7 @@ export class MainScene extends Phaser.Scene {
       this.ghostFoodBurstQueue.reset();
       this.ghostFoodBurstQueue = null;
     }
+    this.echoRewindHook.setEntities(null, null);
   }
 
   // ── Collision detection ───────────────────────────────────────
@@ -562,6 +571,21 @@ export class MainScene extends Phaser.Scene {
 
   getGhostFoodBurstQueue(): GhostFoodBurstQueue | null {
     return this.ghostFoodBurstQueue;
+  }
+
+  /** Phase 6 integration point: get the aggregated echo rewind hook. */
+  getEchoRewindHook(): EchoRewindHook {
+    return this.echoRewindHook;
+  }
+
+  /** Convenience: snapshot all echo-ghost-related state for rewind. */
+  snapshotEchoState(): EchoStateSnapshot {
+    return this.echoRewindHook.snapshot();
+  }
+
+  /** Convenience: restore all echo-ghost-related state from a snapshot. */
+  restoreEchoState(snap: EchoStateSnapshot): void {
+    this.echoRewindHook.restore(snap);
   }
 
   // ── Arena grid ──────────────────────────────────────────────

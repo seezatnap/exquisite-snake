@@ -1,6 +1,7 @@
 import { type GridPos, gridToPixel, DEFAULT_MOVE_INTERVAL_MS } from "../utils/grid";
 import { ECHO_DELAY_MS } from "../entities/EchoGhost";
 import type { EchoGhost } from "../entities/EchoGhost";
+import type { GhostFoodBurstQueueSnapshot } from "./rewindTypes";
 
 // ── Constants ─────────────────────────────────────────────────────
 
@@ -111,6 +112,22 @@ export class GhostFoodBurstQueue {
   /** The delay in ticks for bursts. */
   getDelayTicks(): number {
     return this.delayTicks;
+  }
+
+  // ── Rewind support (Phase 6 hook) ─────────────────────────────
+
+  /** Capture the complete internal state for deterministic rewind. */
+  snapshot(): GhostFoodBurstQueueSnapshot {
+    return {
+      queue: this.queue.map((b) => ({ fireTick: b.fireTick })),
+      currentTick: this.currentTick,
+    };
+  }
+
+  /** Restore internal state from a previously captured snapshot. */
+  restore(snap: GhostFoodBurstQueueSnapshot): void {
+    this.queue = snap.queue.map((b) => ({ fireTick: b.fireTick }));
+    this.currentTick = snap.currentTick;
   }
 
   /** Reset all state (e.g. on game restart). */
