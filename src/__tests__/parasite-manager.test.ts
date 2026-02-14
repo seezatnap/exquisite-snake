@@ -590,6 +590,20 @@ describe("ParasiteManager integration hooks", () => {
 
   it("enforces Echo Ghost exclusions in parasite hooks", () => {
     const manager = new ParasiteManager();
+    const snapshot = createParasiteRuntimeState();
+    snapshot.activeSegments = [
+      { id: "segment-magnet", type: ParasiteType.Magnet, attachedAtMs: 10 },
+      { id: "segment-shield", type: ParasiteType.Shield, attachedAtMs: 20 },
+      { id: "segment-splitter", type: ParasiteType.Splitter, attachedAtMs: 30 },
+    ];
+    snapshot.pickup = {
+      id: "pickup-echo",
+      type: ParasiteType.Magnet,
+      position: { col: 1, row: 0 },
+      spawnedAtMs: 40,
+    };
+    snapshot.flags.blockNextFoodPickup = true;
+    manager.restoreState(snapshot);
 
     const movement = manager.onMovementTick({
       actor: "echo-ghost",
@@ -599,6 +613,29 @@ describe("ParasiteManager integration hooks", () => {
       foodPosition: { col: 1, row: 0 },
     });
     expect(movement.nextMoveIntervalMs).toBe(125);
+    expect(movement.pulledFoodPosition).toBeNull();
+    expect(movement.magnetSegments).toBe(0);
+
+    const pickupContact = manager.onPickupContact({
+      actor: "echo-ghost",
+      headPosition: { col: 1, row: 0 },
+    });
+    expect(pickupContact).toEqual({
+      consumed: false,
+      attachedSegmentId: null,
+      shedSegmentId: null,
+    });
+
+    const collision = manager.onCollisionCheck({
+      actor: "echo-ghost",
+      kind: "splitter-obstacle",
+      headPosition: { col: 4, row: 4 },
+    });
+    expect(collision).toEqual({
+      cancelGameOver: false,
+      absorbedByShield: false,
+      consumedShieldSegmentId: null,
+    });
 
     const foodContact = manager.onFoodContact({
       actor: "echo-ghost",
@@ -619,6 +656,11 @@ describe("ParasiteManager integration hooks", () => {
       awardedPoints: 0,
       multiplier: 1,
     });
+
+    const state = manager.getState();
+    expect(state.pickup?.id).toBe("pickup-echo");
+    expect(state.activeSegments).toEqual(snapshot.activeSegments);
+    expect(state.flags.blockNextFoodPickup).toBe(true);
   });
 
   it("applies stacked magnet speed bonuses from base movement interval", () => {
