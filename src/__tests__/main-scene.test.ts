@@ -12,7 +12,6 @@ import {
   PARASITE_PICKUP_SPAWN_INTERVAL_MS,
   ParasiteManager,
 } from "@/game/systems/ParasiteManager";
-import { ParasiteType } from "@/game/entities/Parasite";
 import { gridToPixel } from "@/game/utils/grid";
 
 const ROOT = path.resolve(__dirname, "../..");
@@ -522,6 +521,127 @@ describe("MainScene", () => {
       "parasite-pickup",
     );
     expect(getParasitePickupSpriteMap(scene).size).toBe(1);
+  });
+
+  it("consumes a parasite pickup when the snake head enters its cell and removes the pickup sprite", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.enterPhase("playing");
+
+    const snake = scene.getSnake()!;
+    snake.reset({ col: 5, row: 5 }, "right", 4);
+    snake.getTicker().setInterval(100);
+    scene.getFood()!.setPosition({ col: 0, row: 0 });
+
+    const parasiteManager = getParasiteManager(scene);
+    const seeded = parasiteManager.getState();
+    seeded.pickups = [
+      {
+        id: "pickup-1",
+        type: ParasiteType.Shield,
+        position: { col: 6, row: 5 },
+        spawnedAtMs: 50,
+      },
+    ];
+    parasiteManager.replaceState(seeded);
+
+    const pickupSpriteDestroy = vi.fn();
+    getParasitePickupSpriteMap(scene).set("pickup-1", {
+      destroy: pickupSpriteDestroy,
+    });
+
+    scene.update(0, 100);
+
+    const after = parasiteManager.getState();
+    expect(after.pickups).toEqual([]);
+    expect(after.inventory.segments).toEqual([
+      {
+        id: "segment-pickup-1",
+        type: ParasiteType.Shield,
+        attachedAtMs: 100,
+        sourcePickupId: "pickup-1",
+      },
+    ]);
+    expect(after.parasitesCollected).toBe(1);
+    expect(getParasitePickupSpriteMap(scene).has("pickup-1")).toBe(false);
+    expect(pickupSpriteDestroy).toHaveBeenCalledTimes(1);
+  });
+
+  it("applies runtime FIFO shedding and parasites-collected updates when consuming a fourth pickup", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.enterPhase("playing");
+
+    const snake = scene.getSnake()!;
+    snake.reset({ col: 5, row: 5 }, "right", 4);
+    snake.getTicker().setInterval(100);
+    scene.getFood()!.setPosition({ col: 0, row: 0 });
+
+    const parasiteManager = getParasiteManager(scene);
+    const seeded = parasiteManager.getState();
+    seeded.parasitesCollected = 3;
+    seeded.inventory.segments = [
+      {
+        id: "seg-1",
+        type: ParasiteType.Magnet,
+        attachedAtMs: 10,
+        sourcePickupId: "pickup-1",
+      },
+      {
+        id: "seg-2",
+        type: ParasiteType.Shield,
+        attachedAtMs: 20,
+        sourcePickupId: "pickup-2",
+      },
+      {
+        id: "seg-3",
+        type: ParasiteType.Splitter,
+        attachedAtMs: 30,
+        sourcePickupId: "pickup-3",
+      },
+    ];
+    seeded.pickups = [
+      {
+        id: "pickup-4",
+        type: ParasiteType.Magnet,
+        position: { col: 6, row: 5 },
+        spawnedAtMs: 999,
+      },
+    ];
+    parasiteManager.replaceState(seeded);
+
+    const pickupSpriteDestroy = vi.fn();
+    getParasitePickupSpriteMap(scene).set("pickup-4", {
+      destroy: pickupSpriteDestroy,
+    });
+
+    scene.update(0, 100);
+
+    const after = parasiteManager.getState();
+    expect(after.pickups).toEqual([]);
+    expect(after.inventory.segments).toEqual([
+      {
+        id: "seg-2",
+        type: ParasiteType.Shield,
+        attachedAtMs: 20,
+        sourcePickupId: "pickup-2",
+      },
+      {
+        id: "seg-3",
+        type: ParasiteType.Splitter,
+        attachedAtMs: 30,
+        sourcePickupId: "pickup-3",
+      },
+      {
+        id: "segment-pickup-4",
+        type: ParasiteType.Magnet,
+        attachedAtMs: 100,
+        sourcePickupId: "pickup-4",
+      },
+    ]);
+    expect(after.parasitesCollected).toBe(4);
+    expect(getParasitePickupSpriteMap(scene).has("pickup-4")).toBe(false);
+    expect(pickupSpriteDestroy).toHaveBeenCalledTimes(1);
   });
 
   it("pulls food one tile per stepped tick when a magnet segment is in range", () => {
