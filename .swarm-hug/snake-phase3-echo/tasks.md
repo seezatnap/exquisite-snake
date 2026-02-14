@@ -27,3 +27,6 @@
 ## Follow-up tasks (from sprint review)
 - [x] (#10) Wire the ghost fade lifecycle into `MainScene` rendering/collision so the replay trail remains represented with decreasing opacity through the fade window instead of disappearing immediately when replay enters `fading` (currently `readDelayedTrail()` returns `[]` in that state). (blocked by #3, #6) (A)
 - [x] (#11) Track and clear scheduled delayed ghost-food burst callbacks on run reset/end/scene shutdown so callbacks from a prior run cannot fire during a later run and emit stale particle bursts at stale coordinates. (blocked by #5) (B)
+
+## Follow-up tasks (from sprint review)
+- [ ] (#12) Cache and reuse the last non-empty ghost trail state so fading ghost rendering remains visible on frames where `snake.update(delta)` does not advance movement (currently `readDelayedTrail(replayState === "fading")` only renders fading on stepped frames, so the trail can disappear between ticks). (blocked by #10)
