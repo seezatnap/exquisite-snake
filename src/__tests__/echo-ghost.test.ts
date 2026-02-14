@@ -4,7 +4,7 @@ import {
   ECHO_DELAY_MS,
   delayTicks,
 } from "@/game/entities/EchoGhost";
-import { DEFAULT_MOVE_INTERVAL_MS } from "@/game/utils/grid";
+import { DEFAULT_MOVE_INTERVAL_MS, type GridPos } from "@/game/utils/grid";
 
 // ── Helpers ──────────────────────────────────────────────────────
 
