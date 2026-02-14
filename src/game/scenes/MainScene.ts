@@ -21,7 +21,7 @@ import {
 } from "../utils/grid";
 import { Snake } from "../entities/Snake";
 import { Food } from "../entities/Food";
-import { EchoGhost } from "../entities/EchoGhost";
+import { EchoGhost, type EchoGhostSnapshot } from "../entities/EchoGhost";
 import { emitFoodParticles, shakeCamera } from "../systems/effects";
 import {
   Biome,
@@ -595,6 +595,24 @@ export class MainScene extends Phaser.Scene {
 
   getEchoGhost(): EchoGhost | null {
     return this.echoGhost;
+  }
+
+  /**
+   * Rewind integration hook: capture the active EchoGhost buffer/timing snapshot.
+   */
+  createEchoGhostSnapshot(): EchoGhostSnapshot | null {
+    return this.echoGhost?.createSnapshot() ?? null;
+  }
+
+  /**
+   * Rewind integration hook: restore a previously captured EchoGhost snapshot.
+   */
+  restoreEchoGhostSnapshot(snapshot: EchoGhostSnapshot | null): void {
+    if (!this.echoGhost || !snapshot) {
+      return;
+    }
+    this.echoGhost.restoreSnapshot(snapshot);
+    this.clearEchoGhostVisualState();
   }
 
   // ── Arena grid ──────────────────────────────────────────────
