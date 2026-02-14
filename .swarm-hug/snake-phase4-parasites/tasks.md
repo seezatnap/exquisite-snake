@@ -26,7 +26,7 @@
 ## Testing and QA
 
 - [x] (#12) Add automated tests for ParasiteManager and ability rules: spawn-on-empty validation, FIFO cap behavior, magnet pull and speed stacking, shield absorb plus blocked-food state transitions, and splitter score multiplier [5 pts] (blocked by #4, #5, #6) (B)
-- [A] (#13) Add integration/regression tests and QA checklist for splitter obstacle lifecycle and lethal collisions, Echo Ghost exclusion rules, HUD inventory updates, and Game Over parasites-collected display [5 pts] (blocked by #8, #10, #11)
+- [x] (#13) Add integration/regression tests and QA checklist for splitter obstacle lifecycle and lethal collisions, Echo Ghost exclusion rules, HUD inventory updates, and Game Over parasites-collected display [5 pts] (blocked by #8, #10, #11) (A)
 
 ## Follow-up tasks (from sprint review)
 - [x] (#14) Prevent post-spawn overlap regressions by excluding the active parasite pickup tile from `Food.respawn()` and Molten Core lava-pool spawn candidate selection. (B)
