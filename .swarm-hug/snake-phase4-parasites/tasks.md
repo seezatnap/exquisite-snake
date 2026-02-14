@@ -15,17 +15,17 @@
 
 ## Integration and Rendering
 
-- [ ] (#8) Integrate collision handling for parasite effects: splitter obstacles kill on contact, shield absorption resolves before game-over finalization, and collision ordering remains deterministic with existing wall/self checks [5 pts] (blocked by #5, #7)
+- [x] (#8) Integrate collision handling for parasite effects: splitter obstacles kill on contact, shield absorption resolves before game-over finalization, and collision ordering remains deterministic with existing wall/self checks [5 pts] (blocked by #5, #7) (A)
 - [x] (#9) Add parasite segment visuals on the snake with pulsing glow and tiny type icon overlays (Magnet/Shield/Splitter), ensuring proper layering with existing snake and ghost rendering [5 pts] (blocked by #3) (C)
-- [ ] (#10) Enforce Echo Ghost exclusions so ghost entities neither collide with parasite pickups/obstacles nor receive parasite-driven effects (magnet pull, shield absorb, splitter multiplier) [5 pts] (blocked by #4, #5, #6, #7)
+- [x] (#10) Enforce Echo Ghost exclusions so ghost entities neither collide with parasite pickups/obstacles nor receive parasite-driven effects (magnet pull, shield absorb, splitter multiplier) [5 pts] (blocked by #4, #5, #6, #7) (A)
 
 ## HUD and End Screen
 
-- [ ] (#11) Update HUD parasite inventory to display up to 3 active parasite icons with type indicators and live updates on attach/shed/break events, and add parasites-collected to Game Over stats output [5 pts] (blocked by #3, #9)
+- [x] (#11) Update HUD parasite inventory to display up to 3 active parasite icons with type indicators and live updates on attach/shed/break events, and add parasites-collected to Game Over stats output [5 pts] (blocked by #3, #9) (B)
 
 ## Testing and QA
 
-- [ ] (#12) Add automated tests for ParasiteManager and ability rules: spawn-on-empty validation, FIFO cap behavior, magnet pull and speed stacking, shield absorb plus blocked-food state transitions, and splitter score multiplier [5 pts] (blocked by #4, #5, #6)
+- [x] (#12) Add automated tests for ParasiteManager and ability rules: spawn-on-empty validation, FIFO cap behavior, magnet pull and speed stacking, shield absorb plus blocked-food state transitions, and splitter score multiplier [5 pts] (blocked by #4, #5, #6) (B)
 - [ ] (#13) Add integration/regression tests and QA checklist for splitter obstacle lifecycle and lethal collisions, Echo Ghost exclusion rules, HUD inventory updates, and Game Over parasites-collected display [5 pts] (blocked by #8, #10, #11)
 
 ## Follow-up tasks (from sprint review)

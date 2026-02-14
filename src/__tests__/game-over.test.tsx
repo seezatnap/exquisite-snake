@@ -17,6 +17,7 @@ const { bridge } = vi.hoisted(() => {
     highScore: number;
     elapsedTime: number;
     biomeVisitStats: BiomeVisitStats;
+    parasitesCollected: number;
   }
   type Listener = (v: unknown) => void;
 
@@ -34,6 +35,7 @@ const { bridge } = vi.hoisted(() => {
       highScore: 0,
       elapsedTime: 0,
       biomeVisitStats: createInitialBiomeVisitStats(),
+      parasitesCollected: 0,
     };
     private listeners = new Map<string, Set<Listener>>();
 
@@ -47,13 +49,19 @@ const { bridge } = vi.hoisted(() => {
       this.state.biomeVisitStats = { ...stats };
       this.emit("biomeVisitStatsChange", this.state.biomeVisitStats);
     }
+    setParasitesCollected(parasitesCollected: number) {
+      this.state.parasitesCollected = parasitesCollected;
+      this.emit("parasitesCollectedChange", parasitesCollected);
+    }
     resetRun() {
       this.state.score = 0;
       this.state.elapsedTime = 0;
       this.state.biomeVisitStats = createInitialBiomeVisitStats();
+      this.state.parasitesCollected = 0;
       this.emit("scoreChange", 0);
       this.emit("elapsedTimeChange", 0);
       this.emit("biomeVisitStatsChange", this.state.biomeVisitStats);
+      this.emit("parasitesCollectedChange", 0);
     }
 
     on(event: string, fn: Listener) {
@@ -88,6 +96,7 @@ describe("GameOver component", () => {
     bridge.setScore(0);
     bridge.setHighScore(0);
     bridge.setElapsedTime(0);
+    bridge.setParasitesCollected(0);
     bridge.setBiomeVisitStats({
       "neon-city": 1,
       "ice-cavern": 0,
@@ -224,6 +233,14 @@ describe("GameOver component", () => {
     expect(getByTestId("time-survived").textContent).toContain("0s");
   });
 
+  it("displays parasites collected stat from bridge state", () => {
+    bridge.setParasitesCollected(6);
+    bridge.setPhase("gameOver");
+    const { getByTestId } = render(<GameOver />);
+    expect(getByTestId("parasites-collected").textContent).toContain("PARASITES COLLECTED");
+    expect(getByTestId("parasites-collected").textContent).toContain("6");
+  });
+
   // ── Biomes visited ───────────────────────────────────────
 
   it("displays biomes visited label and unique visited count", () => {
@@ -347,6 +364,14 @@ describe("GameOver component", () => {
     expect(getByTestId("time-survived").textContent).toContain("1m 30s");
   });
 
+  it("updates parasites collected when bridge emits parasitesCollectedChange", () => {
+    bridge.setPhase("gameOver");
+    const { getByTestId } = render(<GameOver />);
+
+    act(() => bridge.setParasitesCollected(3));
+    expect(getByTestId("parasites-collected").textContent).toContain("3");
+  });
+
   // ── Phase transitions ─────────────────────────────────────
 
   it("shows content when transitioning from playing to gameOver", () => {
@@ -398,13 +423,14 @@ describe("GameOver component", () => {
     const offSpy = vi.spyOn(bridge, "off");
     unmount();
 
-    expect(offSpy).toHaveBeenCalledTimes(5);
+    expect(offSpy).toHaveBeenCalledTimes(6);
     const events = offSpy.mock.calls.map((c) => c[0]);
     expect(events).toContain("phaseChange");
     expect(events).toContain("scoreChange");
     expect(events).toContain("highScoreChange");
     expect(events).toContain("elapsedTimeChange");
     expect(events).toContain("biomeVisitStatsChange");
+    expect(events).toContain("parasitesCollectedChange");
 
     offSpy.mockRestore();
   });

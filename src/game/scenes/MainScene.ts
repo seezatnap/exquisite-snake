@@ -28,6 +28,7 @@ import {
   PARASITE_COLORS,
   ParasiteType,
   type ParasitePickup,
+  type ParasiteRuntimeState,
   type ParasiteSegment,
 } from "../entities/Parasite";
 import { emitFoodParticles, shakeCamera } from "../systems/effects";
@@ -452,6 +453,7 @@ export class MainScene extends Phaser.Scene {
     shakeCamera(this);
     this.biomeManager.stopRun();
     this.parasiteManager.onRunEnd();
+    this.syncParasiteBridgeState(this.parasiteManager.getState());
     this.resetMoltenCoreState();
     this.clearBiomeTransitionEffect();
     this.clearBiomeShiftCountdown();
@@ -514,7 +516,8 @@ export class MainScene extends Phaser.Scene {
   // ── Collision detection ───────────────────────────────────────
 
   /**
-   * Check wall-collision, self-collision, and echo-ghost collision.
+   * Check collisions in deterministic order:
+   * wall -> self -> splitter obstacle -> echo/biome hazards.
    * If a collision is detected, ends the run and returns true.
    */
   private checkCollisions(): boolean {
@@ -530,6 +533,10 @@ export class MainScene extends Phaser.Scene {
     // Self-collision: head occupies a body segment
     if (this.snake.hasSelfCollision()) {
       return this.resolveSnakeCollision("self", head);
+    }
+
+    if (this.hasSplitterObstacleCollision(head)) {
+      return this.resolveSnakeCollision("splitter-obstacle", head);
     }
 
     if (this.hasEchoGhostCollision(head)) {
@@ -565,6 +572,16 @@ export class MainScene extends Phaser.Scene {
 
     this.endRun();
     return true;
+  }
+
+  private hasSplitterObstacleCollision(head: GridPos): boolean {
+    const splitterObstacles = this.parasiteManager.getState().splitterObstacles;
+    for (const obstacle of splitterObstacles) {
+      if (gridEquals(obstacle.position, head)) {
+        return true;
+      }
+    }
+    return false;
   }
 
   private hasEchoGhostCollision(head: GridPos): boolean {
@@ -1028,6 +1045,7 @@ export class MainScene extends Phaser.Scene {
     });
 
     const parasiteState = this.parasiteManager.getState();
+    this.syncParasiteBridgeState(parasiteState);
     this.syncParasitePickupSprite(
       parasiteState.pickup,
       parasiteState.timers.glowPulseElapsedMs,
@@ -1036,6 +1054,15 @@ export class MainScene extends Phaser.Scene {
       parasiteState.activeSegments,
       parasiteState.timers.glowPulseElapsedMs,
     );
+  }
+
+  private syncParasiteBridgeState(
+    parasiteState: ParasiteRuntimeState,
+  ): void {
+    gameBridge.setActiveParasites(
+      parasiteState.activeSegments.map((segment) => segment.type),
+    );
+    gameBridge.setParasitesCollected(parasiteState.counters.collected);
   }
 
   private getParasitePickupBlockedCells(): GridPos[] {

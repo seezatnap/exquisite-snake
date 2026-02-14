@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { GameBridge, type GamePhase } from "@/game/bridge";
+import { ParasiteType } from "@/game/entities/Parasite";
 import { Biome } from "@/game/systems/BiomeManager";
 
 describe("GameBridge", () => {
@@ -38,6 +39,14 @@ describe("GameBridge", () => {
       [Biome.MoltenCore]: 0,
       [Biome.VoidRift]: 0,
     });
+  });
+
+  it("starts with no active parasites", () => {
+    expect(bridge.getState().activeParasites).toEqual([]);
+  });
+
+  it("starts with parasitesCollected = 0", () => {
+    expect(bridge.getState().parasitesCollected).toBe(0);
   });
 
   // ── setPhase ───────────────────────────────────────────────
@@ -135,6 +144,51 @@ describe("GameBridge", () => {
     expect(listener).toHaveBeenCalledWith(stats);
   });
 
+  it("setActiveParasites updates state.activeParasites", () => {
+    bridge.setActiveParasites([
+      ParasiteType.Magnet,
+      ParasiteType.Shield,
+    ]);
+    expect(bridge.getState().activeParasites).toEqual([
+      ParasiteType.Magnet,
+      ParasiteType.Shield,
+    ]);
+  });
+
+  it("setActiveParasites emits activeParasitesChange", () => {
+    const listener = vi.fn();
+    bridge.on("activeParasitesChange", listener);
+    const parasites = [ParasiteType.Splitter, ParasiteType.Magnet];
+    bridge.setActiveParasites(parasites);
+    expect(listener).toHaveBeenCalledWith(parasites);
+  });
+
+  it("setActiveParasites enforces the max 3-slot HUD cap", () => {
+    bridge.setActiveParasites([
+      ParasiteType.Magnet,
+      ParasiteType.Shield,
+      ParasiteType.Splitter,
+      ParasiteType.Magnet,
+    ]);
+    expect(bridge.getState().activeParasites).toEqual([
+      ParasiteType.Magnet,
+      ParasiteType.Shield,
+      ParasiteType.Splitter,
+    ]);
+  });
+
+  it("setParasitesCollected updates state.parasitesCollected", () => {
+    bridge.setParasitesCollected(7);
+    expect(bridge.getState().parasitesCollected).toBe(7);
+  });
+
+  it("setParasitesCollected emits parasitesCollectedChange", () => {
+    const listener = vi.fn();
+    bridge.on("parasitesCollectedChange", listener);
+    bridge.setParasitesCollected(5);
+    expect(listener).toHaveBeenCalledWith(5);
+  });
+
   it("emits biome transition lifecycle events", () => {
     const transition = { from: Biome.NeonCity, to: Biome.IceCavern };
     const onExit = vi.fn();
@@ -160,6 +214,8 @@ describe("GameBridge", () => {
     bridge.setScore(50);
     bridge.setElapsedTime(9999);
     bridge.setCurrentBiome(Biome.VoidRift);
+    bridge.setActiveParasites([ParasiteType.Splitter]);
+    bridge.setParasitesCollected(4);
     bridge.setBiomeVisitStats({
       [Biome.NeonCity]: 1,
       [Biome.IceCavern]: 1,
@@ -177,6 +233,8 @@ describe("GameBridge", () => {
       [Biome.MoltenCore]: 0,
       [Biome.VoidRift]: 0,
     });
+    expect(bridge.getState().activeParasites).toEqual([]);
+    expect(bridge.getState().parasitesCollected).toBe(0);
   });
 
   it("resetRun emits score/time plus biome reset events", () => {
@@ -184,13 +242,19 @@ describe("GameBridge", () => {
     const timeCb = vi.fn();
     const biomeCb = vi.fn();
     const biomeStatsCb = vi.fn();
+    const activeParasitesCb = vi.fn();
+    const parasitesCollectedCb = vi.fn();
     bridge.on("scoreChange", scoreCb);
     bridge.on("elapsedTimeChange", timeCb);
     bridge.on("biomeChange", biomeCb);
     bridge.on("biomeVisitStatsChange", biomeStatsCb);
+    bridge.on("activeParasitesChange", activeParasitesCb);
+    bridge.on("parasitesCollectedChange", parasitesCollectedCb);
     bridge.setScore(50);
     bridge.setElapsedTime(9999);
     bridge.setCurrentBiome(Biome.VoidRift);
+    bridge.setActiveParasites([ParasiteType.Magnet]);
+    bridge.setParasitesCollected(9);
     bridge.setBiomeVisitStats({
       [Biome.NeonCity]: 1,
       [Biome.IceCavern]: 2,
@@ -202,6 +266,8 @@ describe("GameBridge", () => {
     timeCb.mockClear();
     biomeCb.mockClear();
     biomeStatsCb.mockClear();
+    activeParasitesCb.mockClear();
+    parasitesCollectedCb.mockClear();
 
     bridge.resetRun();
     expect(scoreCb).toHaveBeenCalledWith(0);
@@ -213,6 +279,8 @@ describe("GameBridge", () => {
       [Biome.MoltenCore]: 0,
       [Biome.VoidRift]: 0,
     });
+    expect(activeParasitesCb).toHaveBeenCalledWith([]);
+    expect(parasitesCollectedCb).toHaveBeenCalledWith(0);
   });
 
   it("resetRun does not affect highScore", () => {
