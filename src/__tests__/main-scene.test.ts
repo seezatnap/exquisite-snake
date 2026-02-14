@@ -30,6 +30,7 @@ function createMockSprite() {
     setPosition: mockSetPosition,
     setAlpha: vi.fn(),
     setVisible: vi.fn(),
+    setTint: vi.fn(),
     visible: true,
     x: 0,
     y: 0,
@@ -50,6 +51,7 @@ vi.mock("phaser", () => {
         setPosition: vi.fn(),
         emitting: true,
         particleAlpha: 1,
+        particleTint: 0xffffff,
       })),
     };
     input = {
