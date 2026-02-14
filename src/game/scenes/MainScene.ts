@@ -836,6 +836,7 @@ export class MainScene extends Phaser.Scene {
     const foodSprite = this.food.getSprite();
     const fx = foodSprite.x;
     const fy = foodSprite.y;
+    const eatGridPos = this.snake.getHeadPosition();
     const ghostSampleTimestampMs = this.echoGhost.getElapsedMs();
     const ghostDelayMs = this.echoGhost.getDelayMs();
     const runIdAtEat = this.activeRunId;
@@ -848,6 +849,7 @@ export class MainScene extends Phaser.Scene {
         ghostSampleTimestampMs,
         ghostDelayMs,
         runIdAtEat,
+        eatGridPos,
       );
     }
   }
@@ -856,8 +858,10 @@ export class MainScene extends Phaser.Scene {
     targetSampleTimestampMs: number,
     delayMs: number,
     runIdAtEat: number,
+    burstGridPos: GridPos,
   ): void {
     const safeDelayMs = Number.isFinite(delayMs) ? Math.max(0, Math.floor(delayMs)) : 0;
+    const queuedBurstGridPos: GridPos = { ...burstGridPos };
 
     this.time.delayedCall(safeDelayMs, () => {
       if (runIdAtEat !== this.activeRunId) {
@@ -873,12 +877,11 @@ export class MainScene extends Phaser.Scene {
         return;
       }
 
-      const ghostHead = ghost.getHeadAtOrBefore(targetSampleTimestampMs);
-      if (!ghostHead) {
+      if (!ghost.getHeadAtOrBefore(targetSampleTimestampMs)) {
         return;
       }
 
-      const ghostPixel = gridToPixel(ghostHead);
+      const ghostPixel = gridToPixel(queuedBurstGridPos);
       emitFoodParticles(this, ghostPixel.x, ghostPixel.y);
     });
   }

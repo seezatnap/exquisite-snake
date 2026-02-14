@@ -1663,6 +1663,57 @@ describe("MainScene – entity management", () => {
     expect(delayedBurstArgs[1]).toBe(expectedGhostBurstPixel.y);
   });
 
+  it("QA-DEFECT-02: delayed ghost-food burst in Void Rift uses the pre-nudge eat cell", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.setBiomeCycleOrder([
+      Biome.VoidRift,
+      Biome.NeonCity,
+      Biome.IceCavern,
+      Biome.MoltenCore,
+    ]);
+    scene.setBiomeMechanicsConfig({
+      voidRift: { gravityPullCadenceSteps: 1 },
+    });
+    scene.enterPhase("playing");
+    expect(scene.getCurrentBiome()).toBe(Biome.VoidRift);
+
+    const food = scene.getFood()!;
+    const forcedFoodPos = { col: 10, row: 10 };
+    const forcedFoodPixel = gridToPixel(forcedFoodPos);
+    (food as unknown as { position: { col: number; row: number } }).position = {
+      ...forcedFoodPos,
+    };
+    food.getSprite().setPosition(forcedFoodPixel.x, forcedFoodPixel.y);
+
+    const snake = scene.getSnake()!;
+    snake.reset({ col: forcedFoodPos.col - 1, row: forcedFoodPos.row }, "right", 1);
+
+    const particlesAdd = (
+      scene as unknown as { add: { particles: ReturnType<typeof vi.fn> } }
+    ).add.particles;
+    particlesAdd.mockClear();
+    mockTimeDelayedCall.mockClear();
+
+    const interval = snake.getTicker().interval;
+    scene.update(0, interval);
+
+    expect(snake.getHeadPosition()).toEqual({ col: 11, row: 10 });
+    const delayedGhostBurstCall = mockTimeDelayedCall.mock.calls.find(
+      (call) => call[0] === 5_000,
+    );
+    expect(delayedGhostBurstCall).toBeDefined();
+
+    const delayedGhostBurstCallback = delayedGhostBurstCall![1] as () => void;
+    delayedGhostBurstCallback();
+
+    const delayedBurstArgs = particlesAdd.mock.calls.at(-1);
+    expect(delayedBurstArgs).toBeDefined();
+    const expectedGhostBurstPixel = gridToPixel(forcedFoodPos);
+    expect(delayedBurstArgs![0]).toBe(expectedGhostBurstPixel.x);
+    expect(delayedBurstArgs![1]).toBe(expectedGhostBurstPixel.y);
+  });
+
   it("skips delayed ghost-food burst when the target history sample is unavailable", () => {
     const scene = new MainScene();
     scene.create();
