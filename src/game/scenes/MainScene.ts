@@ -12,6 +12,7 @@ import { gameBridge, type GamePhase } from "../bridge";
 import { loadHighScore, saveHighScore } from "../utils/storage";
 import {
   isInBounds,
+  gridEquals,
   gridToPixel,
   oppositeDirection,
   stepInDirection,
@@ -448,7 +449,7 @@ export class MainScene extends Phaser.Scene {
   // ── Collision detection ───────────────────────────────────────
 
   /**
-   * Check wall-collision and self-collision.
+   * Check wall-collision, self-collision, and echo-ghost collision.
    * If a collision is detected, ends the run and returns true.
    */
   private checkCollisions(): boolean {
@@ -468,6 +469,11 @@ export class MainScene extends Phaser.Scene {
       return true;
     }
 
+    if (this.hasEchoGhostCollision(head)) {
+      this.endRun();
+      return true;
+    }
+
     if (this.isVoidRiftCenterHazard(head)) {
       this.endRun();
       return true;
@@ -477,6 +483,20 @@ export class MainScene extends Phaser.Scene {
       return true;
     }
 
+    return false;
+  }
+
+  private hasEchoGhostCollision(head: GridPos): boolean {
+    if (!this.echoGhost || !this.echoGhost.isActive()) {
+      return false;
+    }
+
+    const playbackSegments = this.echoGhost.getPlaybackSegments();
+    for (const segment of playbackSegments) {
+      if (gridEquals(segment, head)) {
+        return true;
+      }
+    }
     return false;
   }
 

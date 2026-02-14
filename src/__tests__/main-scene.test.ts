@@ -742,8 +742,10 @@ describe("MainScene", () => {
     const scene = new MainScene();
     scene.create();
     scene.enterPhase("playing");
+    scene.setMoltenLavaConfig({ spawnChancePerInterval: 0 });
 
     const snake = scene.getSnake()!;
+    const echoGhost = scene.getEchoGhost()!;
     snake.getTicker().setInterval(60_000); // isolate biome timing from movement
     scene.update(0, 45_000); // Neon -> Ice
     scene.update(0, 45_000); // Ice -> Molten
@@ -752,6 +754,7 @@ describe("MainScene", () => {
     snake.reset({ col: 10, row: 10 }, "right", 1);
     snake.getTicker().setInterval(100);
     snake.bufferDirection("up");
+    vi.spyOn(echoGhost, "isActive").mockReturnValue(false);
 
     scene.update(0, 100);
     expect(scene.getPhase()).toBe("playing");
@@ -1751,6 +1754,57 @@ describe("MainScene – self collision", () => {
     scene.update(0, interval);
     expect(scene.getPhase()).toBe("gameOver");
     expect(snake.isAlive()).toBe(false);
+  });
+});
+
+describe("MainScene – echo ghost collision", () => {
+  it("ends the run via endRun side effects when snake head hits an active echo segment", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.enterPhase("playing");
+
+    const snake = scene.getSnake()!;
+    const echoGhost = scene.getEchoGhost()!;
+    const endRunSpy = vi.spyOn(scene, "endRun");
+    snake.reset({ col: 10, row: 10 }, "right", 1);
+
+    mockCameraShake.mockClear();
+
+    vi.spyOn(echoGhost, "isActive").mockReturnValue(true);
+    vi.spyOn(echoGhost, "getPlaybackSegments").mockReturnValue([
+      { col: 11, row: 10 },
+    ]);
+
+    const interval = snake.getTicker().interval;
+    scene.update(0, interval);
+
+    expect(endRunSpy).toHaveBeenCalledTimes(1);
+    expect(scene.getPhase()).toBe("gameOver");
+    expect(snake.isAlive()).toBe(false);
+    expect(mockCameraShake).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not collide with playback segments while echo ghost is inactive", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.enterPhase("playing");
+
+    const snake = scene.getSnake()!;
+    const echoGhost = scene.getEchoGhost()!;
+    snake.reset({ col: 10, row: 10 }, "right", 1);
+
+    mockCameraShake.mockClear();
+    vi.spyOn(echoGhost, "isActive").mockReturnValue(false);
+    vi.spyOn(echoGhost, "getPlaybackSegments").mockReturnValue([
+      { col: 11, row: 10 },
+    ]);
+
+    const interval = snake.getTicker().interval;
+    scene.update(0, interval);
+
+    expect(scene.getPhase()).toBe("playing");
+    expect(snake.isAlive()).toBe(true);
+    expect(mockCameraShake).not.toHaveBeenCalled();
   });
 });
 
