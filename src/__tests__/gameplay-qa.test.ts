@@ -14,7 +14,7 @@ const mockDelayedCall = vi.fn();
 const mockTexturesExists = vi.fn().mockReturnValue(true);
 
 function createMockEmitter() {
-  return { explode: mockExplode, destroy: mockEmitterDestroy };
+  return { explode: mockExplode, destroy: mockEmitterDestroy, stop: vi.fn(), start: vi.fn(), setPosition: vi.fn(), emitting: true, particleAlpha: 1, particleTint: 0xffffff };
 }
 
 const mockAddParticles = vi.fn(() => createMockEmitter());
@@ -31,7 +31,7 @@ const mockSetPosition = vi.fn();
 const mockKeyboardOn = vi.fn();
 
 function createMockSprite() {
-  return { destroy: mockDestroy, setPosition: mockSetPosition, x: 0, y: 0 };
+  return { destroy: mockDestroy, setPosition: mockSetPosition, setAlpha: vi.fn(), setVisible: vi.fn(), setTint: vi.fn(), visible: true, x: 0, y: 0 };
 }
 
 vi.mock("phaser", () => {

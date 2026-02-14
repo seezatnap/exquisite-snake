@@ -18,6 +18,7 @@ import { RewindManager } from "../systems/RewindManager";
 import { GhostFoodScheduler } from "../systems/ghostFoodBurst";
 import { MoveTicker } from "../utils/grid";
 import { EchoGhostRenderer } from "../systems/echoGhostRenderer";
+import { BiomeManager } from "../systems/BiomeManager";
 
 // ── Default spawn configuration ─────────────────────────────────
 
@@ -59,6 +60,9 @@ export class MainScene extends Phaser.Scene {
 
   /** Visual renderer for the echo ghost trail. */
   private echoGhostRenderer: EchoGhostRenderer | null = null;
+
+  /** Biome manager — tracks current biome and provides tint colors. */
+  private biomeManager: BiomeManager = new BiomeManager();
 
   /**
    * Ticker used to advance the ghost playhead at the same rate as the
@@ -168,6 +172,9 @@ export class MainScene extends Phaser.Scene {
       }
     }
 
+    // Advance biome state each frame for smooth transitions
+    this.biomeManager.update(delta);
+
     // Update ghost renderer every frame for smooth opacity transitions
     if (this.echoGhost && this.echoGhostRenderer) {
       this.echoGhostRenderer.update(this.echoGhost);
@@ -236,6 +243,8 @@ export class MainScene extends Phaser.Scene {
     this.food = new Food(this, this.snake, this.rng);
     this.echoGhost = new EchoGhost();
     this.echoGhostRenderer = new EchoGhostRenderer(this);
+    this.biomeManager.reset();
+    this.echoGhostRenderer.setBiomeManager(this.biomeManager);
     this.rewindManager.register("echoGhost", this.echoGhost);
     this.ghostFoodScheduler = new GhostFoodScheduler();
   }
@@ -362,6 +371,10 @@ export class MainScene extends Phaser.Scene {
 
   getEchoGhostRenderer(): EchoGhostRenderer | null {
     return this.echoGhostRenderer;
+  }
+
+  getBiomeManager(): BiomeManager {
+    return this.biomeManager;
   }
 
   // ── Arena grid ──────────────────────────────────────────────
