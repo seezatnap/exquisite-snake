@@ -299,6 +299,41 @@ describe("MainScene parasite hook wiring", () => {
     );
   });
 
+  it("does not allow shield absorption on echo ghost collisions", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.enterPhase("playing");
+
+    const parasiteState = createParasiteRuntimeState();
+    parasiteState.activeSegments.push({
+      id: "segment-shield",
+      type: ParasiteType.Shield,
+      attachedAtMs: 0,
+    });
+    scene.getParasiteManager().restoreState(parasiteState);
+
+    const snake = scene.getSnake()!;
+    const echoGhost = scene.getEchoGhost()!;
+    snake.reset({ col: 10, row: 10 }, "right", 1);
+    vi.spyOn(echoGhost, "isActive").mockReturnValue(true);
+    vi.spyOn(echoGhost, "getPlaybackSegments").mockReturnValue([
+      { col: 11, row: 10 },
+    ]);
+    const collisionSpy = vi.spyOn(
+      scene.getParasiteManager(),
+      "onCollisionCheck",
+    );
+
+    scene.update(0, snake.getTicker().interval);
+
+    expect(scene.getPhase()).toBe("gameOver");
+    expect(collisionSpy).not.toHaveBeenCalled();
+    expect(scene.getParasiteManager().getShieldSegmentCount()).toBe(1);
+    expect(scene.getParasiteManager().getState().flags.blockNextFoodPickup).toBe(
+      false,
+    );
+  });
+
   it("keeps existing wall/self collision priority over splitter obstacles", () => {
     const scene = new MainScene();
     scene.create();
