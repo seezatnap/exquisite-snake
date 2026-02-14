@@ -390,20 +390,33 @@ describe("MainScene", () => {
     expect(spySetElapsedTime).not.toHaveBeenCalled();
   });
 
-  it("spawns parasite pickups during gameplay using live snake/food/obstacle occupancy", () => {
+  it("advances parasite pickup timers and renders safe spawns away from snake, food, and obstacles", () => {
     const scene = new MainScene();
     scene.create();
     scene.setRng(() => 0);
     scene.enterPhase("playing");
     scene.getSnake()!.getTicker().setInterval(1_000_000);
     injectMoltenLavaPool(scene, { col: 0, row: 1 });
+    const parasiteManager = getParasiteManager(scene);
 
     const spriteFactory = (scene as unknown as {
       add: { sprite: ReturnType<typeof vi.fn> };
     }).add.sprite;
     spriteFactory.mockClear();
 
-    scene.update(0, PARASITE_PICKUP_SPAWN_INTERVAL_MS);
+    expect(parasiteManager.getState().timers.pickupSpawnElapsedMs).toBe(0);
+
+    const halfInterval = PARASITE_PICKUP_SPAWN_INTERVAL_MS / 2;
+    scene.update(0, halfInterval);
+
+    expect(parasiteManager.getState().timers.pickupSpawnElapsedMs).toBe(
+      halfInterval,
+    );
+    expect(parasiteManager.getState().pickups).toHaveLength(0);
+    expect(spriteFactory).not.toHaveBeenCalled();
+    expect(getParasitePickupSpriteMap(scene).size).toBe(0);
+
+    scene.update(halfInterval, halfInterval);
 
     const snakePositions = scene
       .getSnake()!
@@ -415,8 +428,10 @@ describe("MainScene", () => {
       `${food.col}:${food.row}`,
       "0:1",
     ]);
-    const pickups = getParasiteManager(scene).getState().pickups;
+    const parasiteState = parasiteManager.getState();
+    const pickups = parasiteState.pickups;
 
+    expect(parasiteState.timers.pickupSpawnElapsedMs).toBe(0);
     expect(pickups).toHaveLength(1);
     expect(blocked.has(`${pickups[0]!.position.col}:${pickups[0]!.position.row}`)).toBe(false);
     expect(spriteFactory).toHaveBeenCalledWith(
