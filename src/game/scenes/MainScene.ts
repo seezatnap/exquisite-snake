@@ -9,7 +9,7 @@ import {
 } from "../config";
 import { gameBridge, type GamePhase } from "../bridge";
 import { loadHighScore, saveHighScore } from "../utils/storage";
-import { isInBounds, type GridPos } from "../utils/grid";
+import { isInBounds, gridEquals, type GridPos } from "../utils/grid";
 import { Snake } from "../entities/Snake";
 import { Food } from "../entities/Food";
 import {
@@ -129,11 +129,10 @@ export class MainScene extends Phaser.Scene {
         this.isGhostReplayActive = false;
       }
 
-      // Ensure replay output is being generated only from the recorded path.
-      this.echoGhost?.readDelayedTrail();
+      const ghostTrail = this.echoGhost?.readDelayedTrail() ?? [];
 
       // Check collisions after the snake moved to its new grid position
-      if (this.checkCollisions()) {
+      if (this.checkCollisions(ghostTrail)) {
         return; // Game over — stop processing this frame
       }
 
@@ -229,7 +228,7 @@ export class MainScene extends Phaser.Scene {
    * Check wall-collision and self-collision.
    * If a collision is detected, ends the run and returns true.
    */
-  private checkCollisions(): boolean {
+  private checkCollisions(ghostTrail: readonly GridPos[] = []): boolean {
     if (!this.snake) return false;
 
     const head = this.snake.getHeadPosition();
@@ -246,6 +245,25 @@ export class MainScene extends Phaser.Scene {
       return true;
     }
 
+    // Ghost collision: head overlaps any trail segment in replay
+    if (this.isGhostCollision(head, ghostTrail)) {
+      this.endRun();
+      return true;
+    }
+
+    return false;
+  }
+
+  /** Check whether the snake head overlaps any segment of the echo ghost trail. */
+  private isGhostCollision(
+    head: GridPos,
+    ghostTrail: readonly GridPos[],
+  ): boolean {
+    for (const segment of ghostTrail) {
+      if (gridEquals(head, segment)) {
+        return true;
+      }
+    }
     return false;
   }
 

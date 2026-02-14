@@ -649,6 +649,32 @@ describe("MainScene – self collision", () => {
     expect(scene.getPhase()).toBe("gameOver");
     expect(snake.isAlive()).toBe(false);
   });
+
+  it("ends the run when snake collides with delayed echo ghost trail", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.enterPhase("playing");
+
+    const snake = scene.getSnake()!;
+    snake.reset({ col: 20, row: 15 }, "right", 2);
+    const interval = snake.getTicker().interval;
+    const moveCycle = ["right", "down", "left", "up"] as const;
+
+    for (let step = 1; step <= 40; step++) {
+      if (step > 1) {
+        snake.bufferDirection(moveCycle[(step - 1) % moveCycle.length]);
+      }
+
+      scene.update(0, interval);
+
+      if (step < 40) {
+        expect(scene.getPhase()).toBe("playing");
+      }
+    }
+
+    expect(scene.getPhase()).toBe("gameOver");
+    expect(snake.isAlive()).toBe(false);
+  });
 });
 
 // ── endRun kills the snake ──────────────────────────────────────
@@ -875,7 +901,7 @@ describe("MainScene – update integration", () => {
     const snake = scene.getSnake()!;
     const ghost = getEchoGhost(scene)!;
 
-    snake.reset({ col: 20, row: 15 }, "right", 3);
+    snake.reset({ col: 20, row: 15 }, "right", 1);
     const firstRecordedTrail: GridPos[] = [];
     const delayTicks = ghost.getDelayTicks();
 
