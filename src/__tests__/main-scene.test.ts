@@ -3,6 +3,10 @@ import fs from "fs";
 import path from "path";
 import { gameBridge } from "@/game/bridge";
 import { GRID_COLS, GRID_ROWS, RENDER_DEPTH } from "@/game/config";
+import {
+  ParasiteType,
+  createParasiteRuntimeState,
+} from "@/game/entities/Parasite";
 import { Biome } from "@/game/systems/BiomeManager";
 import { gridToPixel } from "@/game/utils/grid";
 
@@ -793,6 +797,55 @@ describe("MainScene", () => {
       expect(snake.isOnSnake(pool)).toBe(false);
       expect(pool).not.toEqual(foodPos);
     }
+  });
+
+  it("Molten Core excludes the active parasite pickup tile from lava spawn candidates", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.enterPhase("playing");
+    scene.setMoltenLavaConfig({
+      spawnIntervalMs: 45_000,
+      spawnChancePerInterval: 1,
+      maxPools: 1,
+    });
+    scene.setRng(() => 0);
+
+    const snake = scene.getSnake()!;
+    snake.getTicker().setInterval(200_000);
+    const foodPos = scene.getFood()!.getPosition();
+
+    let pickupPos: { col: number; row: number } | null = null;
+    for (let col = 0; col < GRID_COLS && !pickupPos; col++) {
+      for (let row = 0; row < GRID_ROWS; row++) {
+        const candidate = { col, row };
+        if (snake.isOnSnake(candidate)) {
+          continue;
+        }
+        if (candidate.col === foodPos.col && candidate.row === foodPos.row) {
+          continue;
+        }
+        pickupPos = candidate;
+        break;
+      }
+    }
+    expect(pickupPos).not.toBeNull();
+
+    const parasiteState = createParasiteRuntimeState();
+    parasiteState.pickup = {
+      id: "pickup-1",
+      type: ParasiteType.Magnet,
+      position: pickupPos!,
+      spawnedAtMs: 0,
+    };
+    scene.getParasiteManager().restoreState(parasiteState);
+
+    scene.update(0, 45_000); // Neon -> Ice
+    scene.update(0, 45_000); // Ice -> Molten + lava spawn
+
+    const pools = scene.getMoltenLavaPools();
+    expect(scene.getCurrentBiome()).toBe(Biome.MoltenCore);
+    expect(pools).toHaveLength(1);
+    expect(pools).not.toContainEqual(pickupPos);
   });
 
   it("Molten Core renders lava pool visuals from active mechanic pools", () => {

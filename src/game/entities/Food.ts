@@ -48,21 +48,32 @@ export class Food {
   // ── Spawn logic ─────────────────────────────────────────────────
 
   /**
-   * Find a random grid position that does not overlap any snake segment.
+   * Find a random grid position that does not overlap snake segments or
+   * caller-provided blocked tiles.
    *
    * Strategy: collect all free cells and pick one at random.
    * If the grid is completely full (snake fills every cell), falls back to
    * (0, 0) — in practice this should never happen in normal gameplay.
    */
-  findSafePosition(snake: Snake): GridPos {
+  findSafePosition(
+    snake: Snake,
+    blockedPositions: readonly GridPos[] = [],
+  ): GridPos {
+    const blocked = new Set(
+      blockedPositions.map((pos) => `${pos.col}:${pos.row}`),
+    );
     const freeCells: GridPos[] = [];
 
     for (let col = 0; col < GRID_COLS; col++) {
       for (let row = 0; row < GRID_ROWS; row++) {
         const pos: GridPos = { col, row };
-        if (!snake.isOnSnake(pos)) {
-          freeCells.push(pos);
+        if (snake.isOnSnake(pos)) {
+          continue;
         }
+        if (blocked.has(`${col}:${row}`)) {
+          continue;
+        }
+        freeCells.push(pos);
       }
     }
 
@@ -78,8 +89,11 @@ export class Food {
   /**
    * Respawn the food at a new safe position and update the sprite.
    */
-  respawn(snake: Snake): void {
-    this.position = this.findSafePosition(snake);
+  respawn(
+    snake: Snake,
+    blockedPositions: readonly GridPos[] = [],
+  ): void {
+    this.position = this.findSafePosition(snake, blockedPositions);
     const px = gridToPixel(this.position);
     this.sprite.setPosition(px.x, px.y);
   }
@@ -97,6 +111,7 @@ export class Food {
   checkEat(
     snake: Snake,
     onScore: (points: number) => void,
+    blockedRespawnPositions: readonly GridPos[] = [],
   ): boolean {
     if (!gridEquals(snake.getHeadPosition(), this.position)) {
       return false;
@@ -109,7 +124,7 @@ export class Food {
     onScore(POINTS_PER_FOOD);
 
     // Respawn at a new safe location
-    this.respawn(snake);
+    this.respawn(snake, blockedRespawnPositions);
 
     return true;
   }

@@ -231,6 +231,16 @@ describe("Food respawn", () => {
       expect.any(Number),
     );
   });
+
+  it("excludes caller-provided blocked tiles when respawning", () => {
+    const snake = createSnake({ col: 10, row: 10 }, "right", 3);
+    const scene = createScene();
+    const food = new Food(scene, snake, fixedRng(0));
+
+    food.respawn(snake, [{ col: 0, row: 0 }]);
+
+    expect(food.getPosition()).toEqual({ col: 0, row: 1 });
+  });
 });
 
 // ── Eat detection ────────────────────────────────────────────────
