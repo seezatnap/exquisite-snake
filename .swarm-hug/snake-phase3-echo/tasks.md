@@ -14,7 +14,7 @@
 ## Rendering & Biome
 
 - [x] (#6) Render the ghost as a distinct translucent hazard (40% opacity, dashed outline) with trailing particles, using current renderer systems and matching existing segment geometry. [5 pts] (blocked by #2, #3) (B)
-- [ ] (#7) Apply biome-aware tinting to ghost visuals so trail and particles are colored by the current biome while preserving opacity and dashed styling, including smooth transitions if the biome changes during replay. [5 pts] (blocked by #6)
+- [A] (#7) Apply biome-aware tinting to ghost visuals so trail and particles are colored by the current biome while preserving opacity and dashed styling, including smooth transitions if the biome changes during replay. [5 pts] (blocked by #6)
 
 ## Rewind Preparation
 
@@ -31,4 +31,4 @@
 - [x] (#11) Wire `advancePlayhead()` into the game loop so the ghost actually drains and fades after `stopRecording()` is called during game-over (the update loop currently exits early when phase is not `"playing"`, so the fade-out never runs) (blocked by #3) (A)
 
 ## Follow-up tasks (from sprint review)
-- [ ] (#12) Update `MainScene.update()` to call `echoGhostRenderer.update()` during the `"gameOver"` phase so the ghost fade-out animation is actually rendered (currently the renderer is only updated during `"playing"`, so the drain/fade-out computed by `advancePlayhead()` is never visible) (blocked by #11)
+- [A] (#12) Update `MainScene.update()` to call `echoGhostRenderer.update()` during the `"gameOver"` phase so the ghost fade-out animation is actually rendered (currently the renderer is only updated during `"playing"`, so the drain/fade-out computed by `advancePlayhead()` is never visible) (blocked by #11)
