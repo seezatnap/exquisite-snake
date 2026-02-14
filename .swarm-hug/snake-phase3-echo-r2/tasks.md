@@ -7,14 +7,14 @@
 ## Gameplay Integration
 
 - [x] (#2) Integrate `EchoGhost` into the game runtime lifecycle (spawn, per-tick update, reset/restart cleanup) and feed current snake positions into the ghost buffer on each tick [5 pts] (blocked by #1) (A)
-- [ ] (#3) Add echo ghost collision checks to the existing collision pipeline so contact with the ghost is treated as self-collision/game-over using the same failure path and side effects [5 pts] (blocked by #1, #2)
-- [ ] (#4) Implement delayed ghost-food burst behavior: when food is eaten, queue a cosmetic burst at the corresponding ghost path position exactly 5 seconds later, including handling if the target history sample is unavailable [5 pts] (blocked by #1, #2)
+- [A] (#3) Add echo ghost collision checks to the existing collision pipeline so contact with the ghost is treated as self-collision/game-over using the same failure path and side effects [5 pts] (blocked by #1, #2)
+- [B] (#4) Implement delayed ghost-food burst behavior: when food is eaten, queue a cosmetic burst at the corresponding ghost path position exactly 5 seconds later, including handling if the target history sample is unavailable [5 pts] (blocked by #1, #2)
 
 ## Rendering & Visuals
 
-- [ ] (#5) Implement ghost visual rendering with a dashed outline, 40% opacity, and trailing particle effects; ensure the ghost is tinted to match the active biome at render time [5 pts] (blocked by #1, #2)
+- [B] (#5) Implement ghost visual rendering with a dashed outline, 40% opacity, and trailing particle effects; ensure the ghost is tinted to match the active biome at render time [5 pts] (blocked by #1, #2)
 
 ## Rewind Support & Safety
 
-- [ ] (#6) Add a rewind-ready interface/hook for `EchoGhost` buffer state (snapshot/restore hooks and integration points) so Phase 6 rewind can rewind ghost history without implementing rewind timing in this phase [5 pts] (blocked by #1, #2)
+- [A] (#6) Add a rewind-ready interface/hook for `EchoGhost` buffer state (snapshot/restore hooks and integration points) so Phase 6 rewind can rewind ghost history without implementing rewind timing in this phase [5 pts] (blocked by #1, #2)
 - [ ] (#7) Add validation coverage and test plan artifacts for key echo ghost behavior: 5-second delay accuracy, fade-out/replay completion, collision fatality parity, delayed burst timing, and rewind hook availability [5 pts] (blocked by #1, #2, #3, #4, #5, #6)
