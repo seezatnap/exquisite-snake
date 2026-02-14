@@ -146,6 +146,122 @@ describe("Parasite pickup spawning", () => {
   });
 });
 
+describe("Parasite pickup consumption", () => {
+  it("consumes snake-contacted pickups into active segments and increments collected count", () => {
+    const manager = new ParasiteManager();
+    const snapshot = createParasiteRuntimeState();
+    snapshot.pickup = {
+      id: "pickup-9",
+      type: ParasiteType.Shield,
+      position: { col: 4, row: 7 },
+      spawnedAtMs: 250,
+    };
+    snapshot.timers.glowPulseElapsedMs = 777;
+    snapshot.nextEntityId = 10;
+    manager.restoreState(snapshot);
+
+    const result = manager.onPickupContact({
+      actor: "snake",
+      headPosition: { col: 4, row: 7 },
+    });
+    expect(result).toEqual({
+      consumed: true,
+      attachedSegmentId: "segment-10",
+      shedSegmentId: null,
+    });
+
+    const state = manager.getState();
+    expect(state.pickup).toBeNull();
+    expect(state.activeSegments).toEqual([
+      {
+        id: "segment-10",
+        type: ParasiteType.Shield,
+        attachedAtMs: 777,
+      },
+    ]);
+    expect(state.counters.collected).toBe(1);
+    expect(state.nextEntityId).toBe(11);
+  });
+
+  it("enforces FIFO shedding when a 4th parasite pickup is consumed", () => {
+    const manager = new ParasiteManager();
+    const snapshot = createParasiteRuntimeState();
+    snapshot.activeSegments = [
+      { id: "segment-a", type: ParasiteType.Magnet, attachedAtMs: 100 },
+      { id: "segment-b", type: ParasiteType.Shield, attachedAtMs: 200 },
+      { id: "segment-c", type: ParasiteType.Splitter, attachedAtMs: 300 },
+    ];
+    snapshot.pickup = {
+      id: "pickup-7",
+      type: ParasiteType.Shield,
+      position: { col: 8, row: 8 },
+      spawnedAtMs: 400,
+    };
+    snapshot.nextEntityId = 8;
+    snapshot.counters.collected = 2;
+    manager.restoreState(snapshot);
+
+    const result = manager.onPickupContact({
+      actor: "snake",
+      headPosition: { col: 8, row: 8 },
+    });
+    expect(result).toEqual({
+      consumed: true,
+      attachedSegmentId: "segment-8",
+      shedSegmentId: "segment-a",
+    });
+
+    const state = manager.getState();
+    expect(state.activeSegments).toEqual([
+      { id: "segment-b", type: ParasiteType.Shield, attachedAtMs: 200 },
+      { id: "segment-c", type: ParasiteType.Splitter, attachedAtMs: 300 },
+      { id: "segment-8", type: ParasiteType.Shield, attachedAtMs: 0 },
+    ]);
+    expect(state.counters.collected).toBe(3);
+    expect(manager.getMagnetSegmentCount()).toBe(0);
+    expect(manager.getShieldSegmentCount()).toBe(2);
+    expect(manager.getSplitterSegmentCount()).toBe(1);
+  });
+
+  it("does not consume pickups for non-snake actors or non-matching positions", () => {
+    const manager = new ParasiteManager();
+    const snapshot = createParasiteRuntimeState();
+    snapshot.pickup = {
+      id: "pickup-3",
+      type: ParasiteType.Magnet,
+      position: { col: 5, row: 5 },
+      spawnedAtMs: 50,
+    };
+    manager.restoreState(snapshot);
+
+    expect(
+      manager.onPickupContact({
+        actor: "echo-ghost",
+        headPosition: { col: 5, row: 5 },
+      }),
+    ).toEqual({
+      consumed: false,
+      attachedSegmentId: null,
+      shedSegmentId: null,
+    });
+    expect(
+      manager.onPickupContact({
+        actor: "snake",
+        headPosition: { col: 5, row: 6 },
+      }),
+    ).toEqual({
+      consumed: false,
+      attachedSegmentId: null,
+      shedSegmentId: null,
+    });
+
+    const state = manager.getState();
+    expect(state.pickup?.id).toBe("pickup-3");
+    expect(state.activeSegments).toEqual([]);
+    expect(state.counters.collected).toBe(0);
+  });
+});
+
 describe("ParasiteManager integration hooks", () => {
   it("advances shared parasite timers on each update frame", () => {
     const manager = new ParasiteManager();

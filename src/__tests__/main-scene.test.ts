@@ -3,6 +3,10 @@ import fs from "fs";
 import path from "path";
 import { gameBridge } from "@/game/bridge";
 import { GRID_COLS, GRID_ROWS, RENDER_DEPTH } from "@/game/config";
+import {
+  ParasiteType,
+  createParasiteRuntimeState,
+} from "@/game/entities/Parasite";
 import { Biome } from "@/game/systems/BiomeManager";
 import { gridToPixel } from "@/game/utils/grid";
 
@@ -793,6 +797,84 @@ describe("MainScene", () => {
       expect(snake.isOnSnake(pool)).toBe(false);
       expect(pool).not.toEqual(foodPos);
     }
+  });
+
+  it("Molten Core excludes the active parasite pickup tile from lava spawn candidates", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.enterPhase("playing");
+    scene.setMoltenLavaConfig({
+      spawnIntervalMs: 45_000,
+      spawnChancePerInterval: 1,
+      maxPools: 1,
+    });
+    scene.setRng(() => 0);
+
+    const snake = scene.getSnake()!;
+    const food = scene.getFood()!;
+    snake.getTicker().setInterval(200_000);
+    snake.reset({ col: 2, row: 0 }, "right", 1);
+
+    const forcedFoodPos = { col: 3, row: 0 };
+    (food as unknown as { position: { col: number; row: number } }).position = {
+      ...forcedFoodPos,
+    };
+    const forcedFoodPixel = gridToPixel(forcedFoodPos);
+    food.getSprite().setPosition(forcedFoodPixel.x, forcedFoodPixel.y);
+
+    const pickupPos = { col: 0, row: 0 };
+
+    const parasiteState = createParasiteRuntimeState();
+    parasiteState.pickup = {
+      id: "pickup-1",
+      type: ParasiteType.Magnet,
+      position: pickupPos,
+      spawnedAtMs: 0,
+    };
+    scene.getParasiteManager().restoreState(parasiteState);
+
+    scene.update(0, 45_000); // Neon -> Ice
+    scene.update(0, 45_000); // Ice -> Molten + lava spawn
+
+    const pools = scene.getMoltenLavaPools();
+    expect(scene.getCurrentBiome()).toBe(Biome.MoltenCore);
+    expect(pools).toHaveLength(1);
+    expect(pools).not.toContainEqual(pickupPos);
+    expect(pools).toContainEqual({ col: 0, row: 1 });
+  });
+
+  it("food respawn excludes the active parasite pickup tile after consumption", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.setRng(() => 0);
+    scene.enterPhase("playing");
+
+    const snake = scene.getSnake()!;
+    const food = scene.getFood()!;
+
+    snake.reset({ col: 0, row: 0 }, "right", 1);
+
+    const forcedFoodPos = { col: 1, row: 0 };
+    (food as unknown as { position: { col: number; row: number } }).position = {
+      ...forcedFoodPos,
+    };
+    const forcedFoodPixel = gridToPixel(forcedFoodPos);
+    food.getSprite().setPosition(forcedFoodPixel.x, forcedFoodPixel.y);
+
+    const pickupPos = { col: 0, row: 0 };
+    const parasiteState = createParasiteRuntimeState();
+    parasiteState.pickup = {
+      id: "pickup-food-block",
+      type: ParasiteType.Shield,
+      position: pickupPos,
+      spawnedAtMs: 0,
+    };
+    scene.getParasiteManager().restoreState(parasiteState);
+
+    scene.update(0, snake.getTicker().interval);
+
+    expect(food.getPosition()).toEqual({ col: 0, row: 1 });
+    expect(food.getPosition()).not.toEqual(pickupPos);
   });
 
   it("Molten Core renders lava pool visuals from active mechanic pools", () => {

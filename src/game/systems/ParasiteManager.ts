@@ -87,11 +87,22 @@ export interface ParasitePickupSpawnContext {
   rng?: () => number;
 }
 
+export interface ParasitePickupContactContext {
+  actor: ParasiteActor;
+  headPosition: GridPos;
+}
+
+export interface ParasitePickupContactResult {
+  consumed: boolean;
+  attachedSegmentId: string | null;
+  shedSegmentId: string | null;
+}
+
 /**
  * Parasite system orchestrator.
  *
- * Task #1 intentionally provides integration seams and shared state shape
- * without implementing Phase 4 ability behavior yet.
+ * Phase 4 integration surface for parasite pickup/state mechanics.
+ * Behavior is implemented incrementally across task slices.
  */
 export class ParasiteManager {
   private state: ParasiteRuntimeState = createParasiteRuntimeState();
@@ -162,6 +173,58 @@ export class ParasiteManager {
       this.state.nextEntityId += 1;
       return;
     }
+  }
+
+  /**
+   * Pickup-contact seam:
+   * - consume parasite pickup on snake contact
+   * - attach a new active segment
+   * - enforce max-segment FIFO shedding
+   * - increment run-level collection counter
+   */
+  onPickupContact(
+    context: ParasitePickupContactContext,
+  ): ParasitePickupContactResult {
+    const pickup = this.state.pickup;
+    if (context.actor !== "snake" || !pickup) {
+      return {
+        consumed: false,
+        attachedSegmentId: null,
+        shedSegmentId: null,
+      };
+    }
+
+    if (
+      pickup.position.col !== context.headPosition.col ||
+      pickup.position.row !== context.headPosition.row
+    ) {
+      return {
+        consumed: false,
+        attachedSegmentId: null,
+        shedSegmentId: null,
+      };
+    }
+
+    this.state.pickup = null;
+    const attachedSegmentId = `segment-${this.state.nextEntityId}`;
+    this.state.nextEntityId += 1;
+    this.state.activeSegments.push({
+      id: attachedSegmentId,
+      type: pickup.type,
+      attachedAtMs: this.state.timers.glowPulseElapsedMs,
+    });
+
+    let shedSegmentId: string | null = null;
+    if (this.state.activeSegments.length > PARASITE_MAX_SEGMENTS) {
+      shedSegmentId = this.state.activeSegments.shift()?.id ?? null;
+    }
+
+    this.state.counters.collected += 1;
+    return {
+      consumed: true,
+      attachedSegmentId,
+      shedSegmentId,
+    };
   }
 
   /**

@@ -768,6 +768,7 @@ export class MainScene extends Phaser.Scene {
     }
 
     const foodPos = this.food.getPosition();
+    const activeParasitePickupPos = this.getActiveParasitePickupPosition();
     const candidates: GridPos[] = [];
 
     for (let col = 0; col < GRID_COLS; col++) {
@@ -777,6 +778,13 @@ export class MainScene extends Phaser.Scene {
           continue;
         }
         if (foodPos.col === col && foodPos.row === row) {
+          continue;
+        }
+        if (
+          activeParasitePickupPos &&
+          activeParasitePickupPos.col === col &&
+          activeParasitePickupPos.row === row
+        ) {
           continue;
         }
         if (this.moltenLavaPools.has(this.gridPosKey(pos))) {
@@ -910,8 +918,10 @@ export class MainScene extends Phaser.Scene {
     const ghostSampleTimestampMs = this.echoGhost.getElapsedMs();
     const ghostDelayMs = this.echoGhost.getDelayMs();
     const runIdAtEat = this.activeRunId;
+    const activeParasitePickupPos = this.getActiveParasitePickupPosition();
     const eaten = this.food.checkEat(this.snake, (points) =>
       this.addScore(points, "food"),
+      activeParasitePickupPos ? [activeParasitePickupPos] : [],
     );
     if (eaten) {
       emitFoodParticles(this, fx, fy);
@@ -954,6 +964,10 @@ export class MainScene extends Phaser.Scene {
       obstaclePositions: this.getParasitePickupBlockedCells(),
       rng: this.rng,
     });
+    this.parasiteManager.onPickupContact({
+      actor: "snake",
+      headPosition: this.snake.getHeadPosition(),
+    });
 
     const parasiteState = this.parasiteManager.getState();
     this.syncParasitePickupSprite(
@@ -964,6 +978,14 @@ export class MainScene extends Phaser.Scene {
 
   private getParasitePickupBlockedCells(): GridPos[] {
     return Array.from(this.moltenLavaPools.values(), (pool) => ({ ...pool }));
+  }
+
+  private getActiveParasitePickupPosition(): GridPos | null {
+    const pickup = this.parasiteManager.getState().pickup;
+    if (!pickup) {
+      return null;
+    }
+    return { ...pickup.position };
   }
 
   private ensureParasitePickupSprite(): void {

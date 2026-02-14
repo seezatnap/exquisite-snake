@@ -4,7 +4,7 @@
 
 - [x] (#1) Validate Phase 3 integration points (movement, collision, scoring, biome-change hooks, Echo Ghost behavior) and scaffold `src/game/entities/Parasite.ts` plus `src/game/systems/ParasiteManager.ts` with parasite types, shared state models, timers, and constants (max segments 3, magnet radius 2, magnet speed bonus 10%, splitter interval 10s) [5 pts] (A)
 - [x] (#2) Implement parasite pickup spawning so pickups appear occasionally on random empty cells only, never overlap snake/food/obstacles, and use a render identity visually distinct from normal food [5 pts] (blocked by #1) (A)
-- [ ] (#3) Implement parasite pickup consumption to attach parasite segments to the snake, track active segments, enforce max-3 FIFO shedding when a 4th is eaten, and increment a run-level parasites-collected counter [5 pts] (blocked by #2)
+- [x] (#3) Implement parasite pickup consumption to attach parasite segments to the snake, track active segments, enforce max-3 FIFO shedding when a 4th is eaten, and increment a run-level parasites-collected counter [5 pts] (blocked by #2) (A)
 
 ## Ability Mechanics
 
@@ -29,5 +29,5 @@
 - [ ] (#13) Add integration/regression tests and QA checklist for splitter obstacle lifecycle and lethal collisions, Echo Ghost exclusion rules, HUD inventory updates, and Game Over parasites-collected display [5 pts] (blocked by #8, #10, #11)
 
 ## Follow-up tasks (from sprint review)
-- [ ] (#14) Prevent post-spawn overlap regressions by excluding the active parasite pickup tile from `Food.respawn()` and Molten Core lava-pool spawn candidate selection.
-- [ ] (#15) Add regression tests proving food respawns and Molten Core lava spawns never occupy a tile that already contains an active parasite pickup.
+- [x] (#14) Prevent post-spawn overlap regressions by excluding the active parasite pickup tile from `Food.respawn()` and Molten Core lava-pool spawn candidate selection. (B)
+- [x] (#15) Add regression tests proving food respawns and Molten Core lava spawns never occupy a tile that already contains an active parasite pickup. (B)

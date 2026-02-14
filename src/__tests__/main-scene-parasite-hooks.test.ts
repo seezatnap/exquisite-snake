@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { gameBridge } from "@/game/bridge";
 import { TEXTURE_KEYS } from "@/game/config";
-import { GRID_COLS } from "@/game/config";
+import { GRID_COLS, GRID_ROWS } from "@/game/config";
 import { PARASITE_PICKUP_SPAWN_INTERVAL_MS } from "@/game/entities/Parasite";
 import { Biome } from "@/game/systems/BiomeManager";
 
@@ -43,6 +43,34 @@ function createMockText() {
     setText: vi.fn(),
     setPosition: vi.fn(),
     destroy: vi.fn(),
+  };
+}
+
+function getApproachVector(target: { col: number; row: number }): {
+  head: { col: number; row: number };
+  direction: "up" | "down" | "left" | "right";
+} {
+  if (target.col > 0) {
+    return {
+      head: { col: target.col - 1, row: target.row },
+      direction: "right",
+    };
+  }
+  if (target.col < GRID_COLS - 1) {
+    return {
+      head: { col: target.col + 1, row: target.row },
+      direction: "left",
+    };
+  }
+  if (target.row > 0) {
+    return {
+      head: { col: target.col, row: target.row - 1 },
+      direction: "down",
+    };
+  }
+  return {
+    head: { col: target.col, row: Math.min(GRID_ROWS - 1, target.row + 1) },
+    direction: "up",
   };
 }
 
@@ -244,5 +272,29 @@ describe("MainScene parasite hook wiring", () => {
     expect(
       spriteCalls.some(([, , texture]) => texture === TEXTURE_KEYS.FOOD),
     ).toBe(true);
+  });
+
+  it("consumes snake-contacted pickups and tracks active segments with collected count", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.setRng(() => 0);
+    scene.enterPhase("playing");
+
+    scene.update(0, PARASITE_PICKUP_SPAWN_INTERVAL_MS);
+
+    const spawnedPickup = scene.getParasiteManager().getState().pickup;
+    expect(spawnedPickup).not.toBeNull();
+
+    const snake = scene.getSnake()!;
+    const approach = getApproachVector(spawnedPickup!.position);
+    snake.reset(approach.head, approach.direction, 1);
+
+    scene.update(0, snake.getTicker().interval);
+
+    const parasiteState = scene.getParasiteManager().getState();
+    expect(parasiteState.pickup).toBeNull();
+    expect(parasiteState.activeSegments).toHaveLength(1);
+    expect(parasiteState.activeSegments[0]?.type).toBe(spawnedPickup!.type);
+    expect(parasiteState.counters.collected).toBe(1);
   });
 });
