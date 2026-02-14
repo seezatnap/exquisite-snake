@@ -41,6 +41,11 @@ import {
   normalizeRandomHook,
   sampleBiomeRandom,
 } from "../systems/biomeMechanics";
+import {
+  ParasiteManager,
+  type ParasiteCollisionKind,
+  type ParasiteScoreSource,
+} from "../systems/ParasiteManager";
 
 // ── Default spawn configuration ─────────────────────────────────
 
@@ -203,6 +208,9 @@ export class MainScene extends Phaser.Scene {
   /** Biome rotation/timing owner for the current run. */
   private readonly biomeManager = new BiomeManager();
 
+  /** Parasite runtime owner and integration hook surface (Phase 4 scaffolding). */
+  private readonly parasiteManager = new ParasiteManager();
+
   /** Shared balancing knobs for Ice, Molten, and Void biome mechanics. */
   private biomeMechanicsConfig: BiomeMechanicsConfig = cloneBiomeMechanicsConfig(
     DEFAULT_BIOME_MECHANICS_CONFIG,
@@ -327,6 +335,7 @@ export class MainScene extends Phaser.Scene {
 
     gameBridge.setElapsedTime(gameBridge.getState().elapsedTime + delta);
     this.updateBiomeState(delta);
+    this.parasiteManager.advanceTimers(delta);
 
     if (!this.snake || !this.food || !this.echoGhost) return;
     this.echoGhost.advance(delta);
@@ -337,6 +346,7 @@ export class MainScene extends Phaser.Scene {
     const stepped = this.snake.update(delta);
 
     if (stepped) {
+      this.applyParasiteMovementHooks(delta);
       if (this.checkCollisions()) {
         return; // Game over — stop processing this frame
       }
@@ -379,6 +389,7 @@ export class MainScene extends Phaser.Scene {
   private startRun(): void {
     this.activeRunId += 1;
     this.biomeManager.startRun();
+    this.parasiteManager.resetRun();
     gameBridge.resetRun({
       currentBiome: this.biomeManager.getCurrentBiome(),
       biomeVisitStats: this.biomeManager.getVisitStats(),
@@ -398,6 +409,7 @@ export class MainScene extends Phaser.Scene {
   endRun(): void {
     shakeCamera(this);
     this.biomeManager.stopRun();
+    this.parasiteManager.onRunEnd();
     this.resetMoltenCoreState();
     this.clearBiomeTransitionEffect();
     this.clearBiomeShiftCountdown();
@@ -463,14 +475,12 @@ export class MainScene extends Phaser.Scene {
 
     // Wall collision: head is outside arena bounds
     if (!isInBounds(head)) {
-      this.endRun();
-      return true;
+      return this.resolveSnakeCollision("wall", head);
     }
 
     // Self-collision: head occupies a body segment
     if (this.snake.hasSelfCollision()) {
-      this.endRun();
-      return true;
+      return this.resolveSnakeCollision("self", head);
     }
 
     if (this.hasEchoGhostCollision(head)) {
@@ -490,6 +500,24 @@ export class MainScene extends Phaser.Scene {
     return false;
   }
 
+  private resolveSnakeCollision(
+    kind: ParasiteCollisionKind,
+    headPosition: GridPos,
+  ): boolean {
+    const resolution = this.parasiteManager.onCollisionCheck({
+      actor: "snake",
+      kind,
+      headPosition,
+    });
+
+    if (resolution.cancelGameOver) {
+      return false;
+    }
+
+    this.endRun();
+    return true;
+  }
+
   private hasEchoGhostCollision(head: GridPos): boolean {
     if (!this.echoGhost || !this.echoGhost.isActive()) {
       return false;
@@ -506,8 +534,16 @@ export class MainScene extends Phaser.Scene {
 
   // ── Score helpers ───────────────────────────────────────────
 
-  addScore(points: number): void {
-    gameBridge.setScore(gameBridge.getState().score + points);
+  addScore(
+    points: number,
+    source: ParasiteScoreSource = "system",
+  ): void {
+    const scoreResolution = this.parasiteManager.onScoreEvent({
+      actor: "snake",
+      source,
+      basePoints: points,
+    });
+    gameBridge.setScore(gameBridge.getState().score + scoreResolution.awardedPoints);
   }
 
   getScore(): number {
@@ -601,6 +637,10 @@ export class MainScene extends Phaser.Scene {
     return this.echoGhost;
   }
 
+  getParasiteManager(): ParasiteManager {
+    return this.parasiteManager;
+  }
+
   /**
    * Rewind integration hook: capture the active EchoGhost buffer/timing snapshot.
    */
@@ -636,6 +676,10 @@ export class MainScene extends Phaser.Scene {
 
   private handleBiomeTransition(transition: BiomeTransition): void {
     this.handleBiomeExit(transition.from);
+    this.parasiteManager.onBiomeTransition({
+      from: transition.from,
+      to: transition.to,
+    });
     this.syncBiomeRuntimeToBridge();
     gameBridge.emitBiomeTransition(transition);
     this.handleBiomeEnter(transition.to);
@@ -653,6 +697,7 @@ export class MainScene extends Phaser.Scene {
     }
 
     const mechanics = createBiomeMechanicsState(biome);
+    this.parasiteManager.onBiomeEnter(biome);
     gameBridge.emitBiomeEnter(biome);
     this.events?.emit?.("biomeEnter", biome);
     this.events?.emit?.("biomeMechanicsChange", mechanics);
@@ -667,6 +712,7 @@ export class MainScene extends Phaser.Scene {
       this.resetMoltenCoreState();
     }
 
+    this.parasiteManager.onBiomeExit(biome);
     gameBridge.emitBiomeExit(biome);
     this.events?.emit?.("biomeExit", biome);
   }
@@ -837,11 +883,25 @@ export class MainScene extends Phaser.Scene {
     const fx = foodSprite.x;
     const fy = foodSprite.y;
     const eatGridPos = this.snake.getHeadPosition();
+    const foodPos = this.food.getPosition();
+    if (!gridEquals(eatGridPos, foodPos)) {
+      return;
+    }
+
+    const contactResult = this.parasiteManager.onFoodContact({
+      actor: "snake",
+      snakeHead: eatGridPos,
+      foodPosition: foodPos,
+    });
+    if (!contactResult.allowConsume) {
+      return;
+    }
+
     const ghostSampleTimestampMs = this.echoGhost.getElapsedMs();
     const ghostDelayMs = this.echoGhost.getDelayMs();
     const runIdAtEat = this.activeRunId;
     const eaten = this.food.checkEat(this.snake, (points) =>
-      this.addScore(points),
+      this.addScore(points, "food"),
     );
     if (eaten) {
       emitFoodParticles(this, fx, fy);
@@ -851,6 +911,24 @@ export class MainScene extends Phaser.Scene {
         runIdAtEat,
         eatGridPos,
       );
+    }
+  }
+
+  private applyParasiteMovementHooks(delta: number): void {
+    if (!this.snake || !this.food) {
+      return;
+    }
+
+    const movementResolution = this.parasiteManager.onMovementTick({
+      actor: "snake",
+      deltaMs: delta,
+      currentMoveIntervalMs: this.snake.getTicker().interval,
+      snakeSegments: this.snake.getSegments(),
+      foodPosition: this.food.getPosition(),
+    });
+
+    if (movementResolution.nextMoveIntervalMs !== this.snake.getTicker().interval) {
+      this.snake.getTicker().setInterval(movementResolution.nextMoveIntervalMs);
     }
   }
 
