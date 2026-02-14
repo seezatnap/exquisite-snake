@@ -1511,6 +1511,25 @@ describe("MainScene – entity management", () => {
     expect(scene.getEchoGhost()).not.toBeNull();
   });
 
+  it("exposes rewind hooks to snapshot/restore EchoGhost state", () => {
+    const scene = new MainScene();
+    scene.create();
+    expect(scene.createEchoGhostSnapshot()).toBeNull();
+
+    scene.enterPhase("playing");
+    const ghost = scene.getEchoGhost()!;
+    ghost.advance(5_000);
+
+    const snapshot = scene.createEchoGhostSnapshot();
+    expect(snapshot).not.toBeNull();
+
+    ghost.reset();
+    expect(ghost.getBufferedSampleCount()).toBe(0);
+
+    scene.restoreEchoGhostSnapshot(snapshot);
+    expect(ghost.createSnapshot()).toEqual(snapshot);
+  });
+
   it("snake starts alive when entering 'playing'", () => {
     const scene = new MainScene();
     scene.create();
@@ -1631,6 +1650,29 @@ describe("MainScene – entity management", () => {
 
     scene.shutdown();
     expect(scene.getEchoGhost()).toBeNull();
+  });
+
+  it("clears ghost visual trail caches when restoring an EchoGhost snapshot", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.enterPhase("playing");
+    scene.getSnake()!.getTicker().setInterval(60_000);
+    scene.update(0, 5_000);
+
+    const internals = scene as unknown as {
+      echoGhostTrailParticles: unknown[];
+      echoGhostTrailSpawnElapsedMs: number;
+      lastEchoGhostHead: { col: number; row: number } | null;
+    };
+    expect(internals.echoGhostTrailParticles.length).toBeGreaterThan(0);
+    expect(internals.lastEchoGhostHead).not.toBeNull();
+
+    const snapshot = scene.createEchoGhostSnapshot();
+    scene.restoreEchoGhostSnapshot(snapshot);
+
+    expect(internals.echoGhostTrailParticles).toEqual([]);
+    expect(internals.echoGhostTrailSpawnElapsedMs).toBe(0);
+    expect(internals.lastEchoGhostHead).toBeNull();
   });
 });
 

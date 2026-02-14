@@ -6,6 +6,19 @@ export interface EchoGhostOptions {
   maxSamples: number;
 }
 
+export interface EchoGhostSnapshotSample {
+  timestampMs: number;
+  segments: GridPos[];
+}
+
+export interface EchoGhostSnapshot {
+  elapsedMs: number;
+  recording: boolean;
+  opacity: number;
+  playbackSegments: GridPos[];
+  samples: EchoGhostSnapshotSample[];
+}
+
 interface EchoGhostSample {
   timestampMs: number;
   segments: GridPos[];
@@ -117,6 +130,64 @@ export class EchoGhost {
   /** Number of buffered history samples currently retained. */
   getBufferedSampleCount(): number {
     return this.sampleCount;
+  }
+
+  /**
+   * Snapshot the current timing/buffer/playback state for future rewind integration.
+   */
+  createSnapshot(): EchoGhostSnapshot {
+    const samples: EchoGhostSnapshotSample[] = [];
+    for (let i = 0; i < this.sampleCount; i++) {
+      const sample = this.peek(i);
+      if (!sample) continue;
+      samples.push({
+        timestampMs: sample.timestampMs,
+        segments: cloneSegments(sample.segments),
+      });
+    }
+
+    return {
+      elapsedMs: this.elapsedMs,
+      recording: this.recording,
+      opacity: this.opacity,
+      playbackSegments: cloneSegments(this.playbackSegments),
+      samples,
+    };
+  }
+
+  /**
+   * Restore state captured by `createSnapshot()` without applying rewind timing rules.
+   */
+  restoreSnapshot(snapshot: EchoGhostSnapshot): void {
+    this.samples.fill(null);
+    this.startIndex = 0;
+    this.sampleCount = 0;
+
+    this.elapsedMs = Number.isFinite(snapshot.elapsedMs)
+      ? Math.max(0, snapshot.elapsedMs)
+      : 0;
+    this.recording = Boolean(snapshot.recording);
+    this.opacity = Number.isFinite(snapshot.opacity)
+      ? Math.max(0, Math.min(1, snapshot.opacity))
+      : 0;
+    this.playbackSegments = cloneSegments(snapshot.playbackSegments);
+
+    const snapshotSamples = snapshot.samples.slice(-this.maxSamples);
+    for (const sample of snapshotSamples) {
+      if (sample.segments.length === 0) {
+        continue;
+      }
+      this.pushSample({
+        timestampMs: Number.isFinite(sample.timestampMs)
+          ? Math.max(0, sample.timestampMs)
+          : this.elapsedMs,
+        segments: cloneSegments(sample.segments),
+      });
+    }
+
+    if (this.playbackSegments.length === 0) {
+      this.opacity = 0;
+    }
   }
 
   private updatePlayback(deltaMs: number): void {
