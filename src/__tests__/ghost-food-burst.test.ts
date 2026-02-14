@@ -5,36 +5,15 @@ import {
   GhostFoodBurstQueue,
   GHOST_FOOD_BURST_DELAY_TICKS,
 } from "@/game/systems/GhostFoodBurstQueue";
-import { EchoGhost, ECHO_DELAY_MS } from "@/game/entities/EchoGhost";
+import { EchoGhost } from "@/game/entities/EchoGhost";
 import { DEFAULT_MOVE_INTERVAL_MS } from "@/game/utils/grid";
-import type { GridPos } from "@/game/utils/grid";
+import {
+  DELAY_TICKS,
+  makeSegments,
+  recordNTicks,
+} from "@/__tests__/echo-ghost-harness";
 
 const ROOT = path.resolve(__dirname, "../..");
-
-// ── Helpers ──────────────────────────────────────────────────────
-
-/** Number of ticks for the 5-second delay at default tick rate. */
-const DELAY_TICKS = Math.round(ECHO_DELAY_MS / DEFAULT_MOVE_INTERVAL_MS);
-
-/** Build a simple snake segment list at a given head column. */
-function makeSegments(headCol: number, length = 3): GridPos[] {
-  return Array.from({ length }, (_, i) => ({
-    col: headCol - i,
-    row: 10,
-  }));
-}
-
-/** Record `n` ticks into the ghost. */
-function recordNTicks(
-  ghost: EchoGhost,
-  n: number,
-  startCol = 10,
-  length = 3,
-): void {
-  for (let i = 0; i < n; i++) {
-    ghost.record(makeSegments(startCol + i, length));
-  }
-}
 
 // ── GhostFoodBurstQueue unit tests ───────────────────────────────
 
