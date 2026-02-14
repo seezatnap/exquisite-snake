@@ -11,6 +11,7 @@ import {
 import { gameBridge, type GamePhase } from "../bridge";
 import { loadHighScore, saveHighScore } from "../utils/storage";
 import {
+  DEFAULT_MOVE_INTERVAL_MS,
   isInBounds,
   gridEquals,
   gridToPixel,
@@ -205,6 +206,12 @@ export class MainScene extends Phaser.Scene {
   /** Runtime state/timers for parasite pickups and attached segment systems. */
   private readonly parasiteManager = new ParasiteManager();
 
+  /** Baseline snake movement interval before magnet speed modifiers. */
+  private snakeBaseMoveIntervalMs = DEFAULT_MOVE_INTERVAL_MS;
+
+  /** Last applied magnet speed multiplier used for interval restoration. */
+  private appliedMagnetSpeedMultiplier = 1;
+
   /** Rendered parasite pickup sprites keyed by pickup id. */
   private parasitePickupSprites = new Map<string, Phaser.GameObjects.Sprite>();
 
@@ -346,6 +353,7 @@ export class MainScene extends Phaser.Scene {
     this.updateMoltenCoreMechanics(delta);
     this.updateParasitePickupSpawning(delta);
     this.updateBiomeMechanicVisuals(delta);
+    this.syncMagnetSpeedWithActiveSegments();
 
     const stepped = this.snake.update(delta);
 
@@ -365,6 +373,7 @@ export class MainScene extends Phaser.Scene {
         this.resolveFoodConsumption();
       }
 
+      this.applyMagnetFoodPull();
       this.echoGhost.recordPath(this.snake.getSegments());
     }
   }
@@ -446,6 +455,7 @@ export class MainScene extends Phaser.Scene {
     this.echoGhost.recordPath(this.snake.getSegments());
     this.ensureEchoGhostGraphics();
     this.clearEchoGhostVisualState();
+    this.resetMagnetSpeedState(this.snake.getTicker().interval);
   }
 
   /** Destroy existing snake and food entities. */
@@ -464,6 +474,7 @@ export class MainScene extends Phaser.Scene {
     }
     this.destroyEchoGhostVisuals();
     this.destroyParasitePickupSprites();
+    this.resetMagnetSpeedState();
   }
 
   private updateParasitePickupSpawning(delta: number): void {
@@ -917,6 +928,73 @@ export class MainScene extends Phaser.Scene {
         eatGridPos,
       );
     }
+  }
+
+  private applyMagnetFoodPull(): void {
+    if (!this.snake || !this.food) {
+      return;
+    }
+
+    const pulledFoodPosition = this.parasiteManager.resolveMagnetFoodPull({
+      snakeSegments: this.snake.getSegments(),
+      foodPosition: this.food.getPosition(),
+      obstaclePositions: this.getLiveObstaclePositions(),
+    });
+    if (!pulledFoodPosition) {
+      return;
+    }
+
+    this.food.setPosition(pulledFoodPosition);
+  }
+
+  private resetMagnetSpeedState(
+    baseMoveIntervalMs: number = DEFAULT_MOVE_INTERVAL_MS,
+  ): void {
+    this.snakeBaseMoveIntervalMs = Math.max(1, baseMoveIntervalMs);
+    this.appliedMagnetSpeedMultiplier = 1;
+  }
+
+  private syncMagnetSpeedWithActiveSegments(): void {
+    if (!this.snake) {
+      return;
+    }
+
+    const ticker = this.snake.getTicker();
+    const currentInterval = ticker.interval;
+    const magnetSpeedMultiplier = this.parasiteManager.getMagnetSpeedMultiplier();
+    const hasMagnetBoost = magnetSpeedMultiplier > 1;
+
+    if (!hasMagnetBoost) {
+      if (this.appliedMagnetSpeedMultiplier > 1) {
+        const restoredInterval = Math.max(1, this.snakeBaseMoveIntervalMs);
+        if (Math.abs(restoredInterval - currentInterval) > 1e-6) {
+          ticker.setInterval(restoredInterval);
+        }
+      } else {
+        this.snakeBaseMoveIntervalMs = Math.max(1, currentInterval);
+      }
+
+      this.appliedMagnetSpeedMultiplier = 1;
+      return;
+    }
+
+    if (this.appliedMagnetSpeedMultiplier > 1) {
+      this.snakeBaseMoveIntervalMs = Math.max(
+        1,
+        currentInterval * this.appliedMagnetSpeedMultiplier,
+      );
+    } else {
+      this.snakeBaseMoveIntervalMs = Math.max(1, currentInterval);
+    }
+
+    const boostedInterval = Math.max(
+      1,
+      this.snakeBaseMoveIntervalMs / magnetSpeedMultiplier,
+    );
+    if (Math.abs(boostedInterval - currentInterval) > 1e-6) {
+      ticker.setInterval(boostedInterval);
+    }
+    this.appliedMagnetSpeedMultiplier = magnetSpeedMultiplier;
   }
 
   private queueDelayedEchoGhostFoodBurst(
