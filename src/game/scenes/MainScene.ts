@@ -22,6 +22,7 @@ import { Snake } from "../entities/Snake";
 import { Food } from "../entities/Food";
 import { EchoGhost } from "../entities/EchoGhost";
 import { emitFoodParticles, shakeCamera } from "../systems/effects";
+import { GhostFoodBurstQueue } from "../systems/GhostFoodBurstQueue";
 import {
   Biome,
   BIOME_CONFIG,
@@ -182,6 +183,9 @@ export class MainScene extends Phaser.Scene {
   /** The echo ghost for the current run (null when not playing). */
   private echoGhost: EchoGhost | null = null;
 
+  /** Queue for delayed ghost-food cosmetic bursts. */
+  private ghostFoodBurstQueue: GhostFoodBurstQueue | null = null;
+
   /** Biome rotation/timing owner for the current run. */
   private readonly biomeManager = new BiomeManager();
 
@@ -305,6 +309,9 @@ export class MainScene extends Phaser.Scene {
         this.echoGhost.record(this.snake.getSegments());
       }
 
+      // Process any queued ghost-food bursts that are now due
+      this.processGhostFoodBursts();
+
       if (this.checkCollisions()) {
         return; // Game over — stop processing this frame
       }
@@ -392,6 +399,7 @@ export class MainScene extends Phaser.Scene {
     this.snake.setupTouchInput();
     this.food = new Food(this, this.snake, this.rng);
     this.echoGhost = new EchoGhost();
+    this.ghostFoodBurstQueue = new GhostFoodBurstQueue();
   }
 
   /** Destroy existing snake and food entities. */
@@ -407,6 +415,10 @@ export class MainScene extends Phaser.Scene {
     if (this.echoGhost) {
       this.echoGhost.reset();
       this.echoGhost = null;
+    }
+    if (this.ghostFoodBurstQueue) {
+      this.ghostFoodBurstQueue.reset();
+      this.ghostFoodBurstQueue = null;
     }
   }
 
@@ -540,6 +552,10 @@ export class MainScene extends Phaser.Scene {
 
   getEchoGhost(): EchoGhost | null {
     return this.echoGhost;
+  }
+
+  getGhostFoodBurstQueue(): GhostFoodBurstQueue | null {
+    return this.ghostFoodBurstQueue;
   }
 
   // ── Arena grid ──────────────────────────────────────────────
@@ -764,6 +780,16 @@ export class MainScene extends Phaser.Scene {
     );
     if (eaten) {
       emitFoodParticles(this, fx, fy);
+      this.ghostFoodBurstQueue?.enqueue();
+    }
+  }
+
+  private processGhostFoodBursts(): void {
+    if (!this.ghostFoodBurstQueue) return;
+
+    const bursts = this.ghostFoodBurstQueue.processTick(this.echoGhost);
+    for (const burst of bursts) {
+      emitFoodParticles(this, burst.x, burst.y);
     }
   }
 
