@@ -142,6 +142,23 @@ describe("EchoGhost", () => {
     }
   });
 
+  it("optionally reveals fading ghost trail output", () => {
+    const ghost = new EchoGhost(100, 200, 200); // 2 delay ticks, 2 fade ticks
+
+    for (let step = 1; step <= 3; step++) {
+      ghost.writePositions([makePos(step, 0)]);
+      ghost.advanceReplayProgress();
+    }
+
+    ghost.writePositions([makePos(4, 0)]);
+    ghost.advanceReplayProgress();
+
+    expect(ghost.getReplayState()).toBe("fading");
+    expect(ghost.readDelayedTrail()).toEqual([]);
+    expect(ghost.readDelayedTrail(true)).toEqual([makePos(3, 0)]);
+    expect(ghost.getReplayOpacity()).toBe(0.5);
+  });
+
   it("captures rewind snapshots with immutable copied buffers", () => {
     const ghost = new EchoGhost(100, 300); // 3 ticks delay
     const trail = (step: number): GridPos[] => [makePos(step, 0)];

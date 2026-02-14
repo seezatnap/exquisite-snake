@@ -657,6 +657,54 @@ describe("MainScene – ghost rendering", () => {
     expect(colors[colors.length - 1]).toBe(COLORS.NEON_CYAN);
     expect(scene.getEchoGhostBiomeTint()).toBe(COLORS.NEON_CYAN);
   });
+
+  it("renders the fading ghost trail with reduced opacity", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.enterPhase("playing");
+
+    const snake = scene.getSnake();
+    const ghost = getEchoGhost(scene);
+    expect(snake).not.toBeNull();
+    expect(ghost).not.toBeNull();
+
+    const fastFadeGhost = new EchoGhost(
+      snake!.getTicker().interval,
+      250, // 2 tick delay
+      500, // 4 tick fade
+    );
+    (scene as unknown as { echoGhost: EchoGhost }).echoGhost = fastFadeGhost;
+
+    snake!.reset({ col: 20, row: 15 }, "right", 1);
+
+    mockLineStyle.mockClear();
+    mockMoveTo.mockClear();
+    mockLineTo.mockClear();
+    mockStrokePath.mockClear();
+
+    // Delay window
+    scene.update(0, snake!.getTicker().interval);
+    expect(mockLineStyle).toHaveBeenCalledTimes(0);
+
+    // Active replay
+    scene.update(0, snake!.getTicker().interval);
+    expect(mockLineStyle).toHaveBeenCalledTimes(1);
+
+    // Still active
+    scene.update(0, snake!.getTicker().interval);
+    expect(mockLineStyle).toHaveBeenCalledTimes(2);
+
+    mockLineStyle.mockClear();
+    // Entering fade: should still render with opacity < full.
+    scene.update(0, snake!.getTicker().interval);
+    expect(mockLineStyle).toHaveBeenCalled();
+
+    const fadeAlpha = (mockLineStyle.mock.calls.at(-1)?.at(2) ?? null) as
+      | number
+      | null;
+    expect(fadeAlpha).toBeGreaterThan(0);
+    expect(fadeAlpha).toBeLessThan(0.4);
+  });
 });
 
 describe("MainScene source file", () => {
@@ -924,6 +972,32 @@ describe("MainScene – self collision", () => {
         expect(scene.getPhase()).toBe("playing");
       }
     }
+
+    expect(scene.getPhase()).toBe("gameOver");
+    expect(snake.isAlive()).toBe(false);
+  });
+
+  it("ends the run when snake collides with the fading ghost trail", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.enterPhase("playing");
+
+    const snake = scene.getSnake()!;
+
+    const ghostTrailCollision = [{ col: 20, row: 15 }];
+    const fadingGhost = {
+      readDelayedTrail: (includeFading = false) =>
+        includeFading ? ghostTrailCollision : [],
+      getReplayState: () => "fading" as const,
+      getReplayOpacity: () => 0.5,
+      writePositions: vi.fn(),
+      advanceReplayProgress: vi.fn(),
+    } as unknown as EchoGhost;
+
+    (scene as unknown as { echoGhost: EchoGhost }).echoGhost = fadingGhost;
+    snake.reset({ col: 21, row: 15 }, "left", 1);
+
+    scene.update(0, snake.getTicker().interval);
 
     expect(scene.getPhase()).toBe("gameOver");
     expect(snake.isAlive()).toBe(false);
