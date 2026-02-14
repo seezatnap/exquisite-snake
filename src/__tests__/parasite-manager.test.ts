@@ -170,6 +170,90 @@ describe("ParasiteManager scaffold", () => {
     expect(manager.getState().timers.splitterObstacleElapsedMs).toBe(0);
   });
 
+  it("spawns one splitter obstacle per due tick on random empty cells", () => {
+    const manager = new ParasiteManager();
+    const seeded = manager.getState();
+    seeded.inventory.segments.push({
+      id: "segment-splitter-1",
+      type: ParasiteType.Splitter,
+      attachedAtMs: 0,
+      sourcePickupId: null,
+    });
+    seeded.pickups = [
+      {
+        id: "pickup-existing",
+        type: ParasiteType.Magnet,
+        position: { col: 0, row: 3 },
+        spawnedAtMs: 10,
+      },
+    ];
+    seeded.splitterObstacles = [
+      {
+        id: "splitter-existing",
+        position: { col: 0, row: 4 },
+        spawnedAtMs: 20,
+        sourceSegmentId: null,
+      },
+    ];
+    manager.replaceState(seeded);
+
+    const timerTick = manager.advanceTimers(
+      PARASITE_SPLITTER_INTERVAL_MS * 2 + 500,
+    );
+    expect(timerTick.splitterTicksDue).toBe(2);
+
+    const snakeSegments: GridPos[] = [
+      { col: 0, row: 0 },
+      { col: 0, row: 1 },
+    ];
+    const foodPosition: GridPos = { col: 0, row: 2 };
+    const obstaclePositions: GridPos[] = [{ col: 0, row: 5 }];
+    const blocked = new Set<string>([
+      ...snakeSegments.map(toGridKey),
+      toGridKey(foodPosition),
+      ...obstaclePositions.map(toGridKey),
+      "0:3",
+      "0:4",
+    ]);
+
+    const spawned = manager.spawnSplitterObstaclesForDueTicks(
+      {
+        snakeSegments,
+        foodPosition,
+        obstaclePositions,
+        rng: sequenceRng([0, 0]),
+        nowMs: 9_999,
+      },
+      timerTick.splitterTicksDue,
+    );
+
+    expect(spawned).toHaveLength(2);
+    expect(manager.getState().splitterObstacles).toHaveLength(3);
+    expect(new Set(spawned.map((obstacle) => toGridKey(obstacle.position))).size).toBe(2);
+    for (const obstacle of spawned) {
+      expect(blocked.has(toGridKey(obstacle.position))).toBe(false);
+      expect(obstacle.spawnedAtMs).toBe(9_999);
+      expect(obstacle.sourceSegmentId).toBe("segment-splitter-1");
+    }
+  });
+
+  it("does not spawn splitter obstacles when no splitter segment is attached", () => {
+    const manager = new ParasiteManager();
+
+    const spawned = manager.spawnSplitterObstaclesForDueTicks(
+      {
+        snakeSegments: [{ col: 4, row: 4 }],
+        foodPosition: { col: 5, row: 4 },
+        obstaclePositions: [{ col: 6, row: 4 }],
+        rng: sequenceRng([0]),
+      },
+      3,
+    );
+
+    expect(spawned).toEqual([]);
+    expect(manager.getState().splitterObstacles).toEqual([]);
+  });
+
   it("derives magnet speed multiplier from attached segments", () => {
     const manager = new ParasiteManager();
     const state = manager.getState();
@@ -337,6 +421,30 @@ describe("ParasiteManager scaffold", () => {
     });
 
     expect(manager.getState().inventory.segments).toEqual([]);
+  });
+
+  it("clears persisted splitter obstacles on explicit reset call", () => {
+    const manager = new ParasiteManager();
+    const seeded = manager.getState();
+    seeded.splitterObstacles = [
+      {
+        id: "splitter-a",
+        position: { col: 10, row: 10 },
+        spawnedAtMs: 10_000,
+        sourceSegmentId: "segment-a",
+      },
+      {
+        id: "splitter-b",
+        position: { col: 12, row: 10 },
+        spawnedAtMs: 20_000,
+        sourceSegmentId: "segment-b",
+      },
+    ];
+    manager.replaceState(seeded);
+
+    manager.clearSplitterObstacles();
+
+    expect(manager.getState().splitterObstacles).toEqual([]);
   });
 
   it("spawns a pickup only after the spawn interval is reached", () => {
