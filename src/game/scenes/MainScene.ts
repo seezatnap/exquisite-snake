@@ -41,6 +41,10 @@ import {
   normalizeRandomHook,
   sampleBiomeRandom,
 } from "../systems/biomeMechanics";
+import {
+  ParasiteManager,
+  type ParasiteSpawnedPickup,
+} from "../systems/ParasiteManager";
 
 // ── Default spawn configuration ─────────────────────────────────
 
@@ -197,6 +201,12 @@ export class MainScene extends Phaser.Scene {
   /** The food entity for the current run (null when not playing). */
   private food: Food | null = null;
 
+  /** Runtime state/timers for parasite pickups and attached segment systems. */
+  private readonly parasiteManager = new ParasiteManager();
+
+  /** Rendered parasite pickup sprites keyed by pickup id. */
+  private parasitePickupSprites = new Map<string, Phaser.GameObjects.Sprite>();
+
   /** Delayed playback of historical snake path for Echo Ghost mechanics. */
   private echoGhost: EchoGhost | null = null;
 
@@ -316,6 +326,7 @@ export class MainScene extends Phaser.Scene {
     this.biomeMechanicGraphics = null;
     this.destroyEchoGhostVisuals();
     this.destroyBiomeShiftCountdown();
+    this.destroyParasitePickupSprites();
   }
 
   update(_time: number, delta: number): void {
@@ -332,6 +343,7 @@ export class MainScene extends Phaser.Scene {
     this.echoGhost.advance(delta);
     this.updateEchoGhostVisuals(delta);
     this.updateMoltenCoreMechanics(delta);
+    this.updateParasitePickupSpawning(delta);
     this.updateBiomeMechanicVisuals(delta);
 
     const stepped = this.snake.update(delta);
@@ -383,6 +395,8 @@ export class MainScene extends Phaser.Scene {
       currentBiome: this.biomeManager.getCurrentBiome(),
       biomeVisitStats: this.biomeManager.getVisitStats(),
     });
+    this.parasiteManager.resetRun();
+    this.destroyParasitePickupSprites();
     this.resetMoltenCoreState();
     this.clearBiomeTransitionEffect();
     this.clearBiomeShiftCountdown();
@@ -448,6 +462,52 @@ export class MainScene extends Phaser.Scene {
       this.echoGhost = null;
     }
     this.destroyEchoGhostVisuals();
+    this.destroyParasitePickupSprites();
+  }
+
+  private updateParasitePickupSpawning(delta: number): void {
+    if (!this.snake || !this.food) {
+      return;
+    }
+
+    this.parasiteManager.advanceTimers(delta);
+    const spawn = this.parasiteManager.spawnPickupIfDue({
+      snakeSegments: this.snake.getSegments(),
+      foodPosition: this.food.getPosition(),
+      obstaclePositions: this.getLiveObstaclePositions(),
+      rng: this.rng,
+      nowMs: gameBridge.getState().elapsedTime,
+    });
+
+    if (!spawn) {
+      return;
+    }
+
+    this.renderSpawnedParasitePickup(spawn);
+  }
+
+  private getLiveObstaclePositions(): GridPos[] {
+    return Array.from(this.moltenLavaPools.values(), (pool) => ({ ...pool }));
+  }
+
+  private renderSpawnedParasitePickup(spawn: ParasiteSpawnedPickup): void {
+    if (this.parasitePickupSprites.has(spawn.pickup.id)) {
+      return;
+    }
+
+    const pos = gridToPixel(spawn.pickup.position);
+    const sprite = this.add.sprite(pos.x, pos.y, spawn.render.textureKey);
+    sprite.setDepth?.(RENDER_DEPTH.FOOD);
+    sprite.setTint?.(spawn.render.tint);
+    this.parasitePickupSprites.set(spawn.pickup.id, sprite);
+    this.children?.depthSort?.();
+  }
+
+  private destroyParasitePickupSprites(): void {
+    for (const sprite of this.parasitePickupSprites.values()) {
+      sprite.destroy();
+    }
+    this.parasitePickupSprites.clear();
   }
 
   // ── Collision detection ───────────────────────────────────────
@@ -1085,6 +1145,9 @@ export class MainScene extends Phaser.Scene {
   private syncGameplayLayering(): void {
     this.gridGraphics?.setDepth?.(RENDER_DEPTH.BIOME_GRID);
     this.food?.getSprite()?.setDepth?.(RENDER_DEPTH.FOOD);
+    for (const pickupSprite of this.parasitePickupSprites.values()) {
+      pickupSprite.setDepth?.(RENDER_DEPTH.FOOD);
+    }
     this.echoGhostGraphics?.setDepth?.(ECHO_GHOST_RENDER_DEPTH);
     this.snake?.setRenderDepth(RENDER_DEPTH.SNAKE);
     this.children?.depthSort?.();

@@ -304,4 +304,138 @@ describe("ParasiteManager scaffold", () => {
     expect(spawn).toBeNull();
     expect(manager.getState().pickups).toEqual([]);
   });
+
+  it("ignores pickup consumption when no pickup exists at the target cell", () => {
+    const manager = new ParasiteManager();
+    const before = manager.getState();
+
+    const consumed = manager.consumePickupAt({ col: 8, row: 8 }, 1_000);
+
+    expect(consumed).toBeNull();
+    expect(manager.getState()).toEqual(before);
+  });
+
+  it("consumes pickup into an attached segment and increments run counter", () => {
+    const manager = new ParasiteManager();
+    const seeded = manager.getState();
+    seeded.pickups = [
+      {
+        id: "pickup-1",
+        type: ParasiteType.Shield,
+        position: { col: 9, row: 12 },
+        spawnedAtMs: 50,
+      },
+    ];
+    manager.replaceState(seeded);
+
+    const consumed = manager.consumePickupAt({ col: 9, row: 12 }, 12_345);
+
+    expect(consumed).toEqual({
+      consumedPickup: {
+        id: "pickup-1",
+        type: ParasiteType.Shield,
+        position: { col: 9, row: 12 },
+        spawnedAtMs: 50,
+      },
+      attachedSegment: {
+        id: "segment-pickup-1",
+        type: ParasiteType.Shield,
+        attachedAtMs: 12_345,
+        sourcePickupId: "pickup-1",
+      },
+      shedSegment: null,
+      activeSegments: [
+        {
+          id: "segment-pickup-1",
+          type: ParasiteType.Shield,
+          attachedAtMs: 12_345,
+          sourcePickupId: "pickup-1",
+        },
+      ],
+      parasitesCollected: 1,
+    });
+
+    expect(manager.getState().pickups).toEqual([]);
+    expect(manager.getActiveSegments()).toEqual([
+      {
+        id: "segment-pickup-1",
+        type: ParasiteType.Shield,
+        attachedAtMs: 12_345,
+        sourcePickupId: "pickup-1",
+      },
+    ]);
+    expect(manager.getParasitesCollectedCount()).toBe(1);
+  });
+
+  it("enforces max-3 FIFO shedding when a fourth pickup is consumed", () => {
+    const manager = new ParasiteManager();
+    const seeded = manager.getState();
+    seeded.parasitesCollected = 3;
+    seeded.inventory.segments = [
+      {
+        id: "seg-1",
+        type: ParasiteType.Magnet,
+        attachedAtMs: 10,
+        sourcePickupId: "pickup-1",
+      },
+      {
+        id: "seg-2",
+        type: ParasiteType.Shield,
+        attachedAtMs: 20,
+        sourcePickupId: "pickup-2",
+      },
+      {
+        id: "seg-3",
+        type: ParasiteType.Splitter,
+        attachedAtMs: 30,
+        sourcePickupId: "pickup-3",
+      },
+    ];
+    seeded.pickups = [
+      {
+        id: "pickup-4",
+        type: ParasiteType.Magnet,
+        position: { col: 3, row: 3 },
+        spawnedAtMs: 999,
+      },
+    ];
+    manager.replaceState(seeded);
+
+    const consumed = manager.consumePickupAt({ col: 3, row: 3 }, 40);
+
+    expect(consumed?.shedSegment).toEqual({
+      id: "seg-1",
+      type: ParasiteType.Magnet,
+      attachedAtMs: 10,
+      sourcePickupId: "pickup-1",
+    });
+    expect(consumed?.attachedSegment).toEqual({
+      id: "segment-pickup-4",
+      type: ParasiteType.Magnet,
+      attachedAtMs: 40,
+      sourcePickupId: "pickup-4",
+    });
+    expect(consumed?.activeSegments).toEqual([
+      {
+        id: "seg-2",
+        type: ParasiteType.Shield,
+        attachedAtMs: 20,
+        sourcePickupId: "pickup-2",
+      },
+      {
+        id: "seg-3",
+        type: ParasiteType.Splitter,
+        attachedAtMs: 30,
+        sourcePickupId: "pickup-3",
+      },
+      {
+        id: "segment-pickup-4",
+        type: ParasiteType.Magnet,
+        attachedAtMs: 40,
+        sourcePickupId: "pickup-4",
+      },
+    ]);
+    expect(manager.getActiveSegments()).toHaveLength(PARASITE_MAX_SEGMENTS);
+    expect(manager.getParasitesCollectedCount()).toBe(4);
+  });
 });

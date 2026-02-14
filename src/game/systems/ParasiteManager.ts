@@ -122,6 +122,14 @@ export interface ParasiteSpawnedPickup {
   render: ParasitePickupRenderIdentity;
 }
 
+export interface ParasitePickupConsumptionResult {
+  consumedPickup: ParasitePickupState;
+  attachedSegment: ParasiteSegmentState;
+  shedSegment: ParasiteSegmentState | null;
+  activeSegments: ParasiteSegmentState[];
+  parasitesCollected: number;
+}
+
 export function createInitialParasiteTimerState(): ParasiteTimerState {
   return {
     elapsedRunMs: 0,
@@ -339,6 +347,14 @@ export class ParasiteManager {
     return calculateMagnetSpeedMultiplier(magnetSegments);
   }
 
+  getActiveSegments(): ParasiteSegmentState[] {
+    return this.state.inventory.segments.map(cloneSegmentState);
+  }
+
+  getParasitesCollectedCount(): number {
+    return this.state.parasitesCollected;
+  }
+
   getPickupSpawnCandidates(context: ParasitePickupSpawnContext): GridPos[] {
     const occupied = this.collectOccupiedCellKeys(context);
     const candidates: GridPos[] = [];
@@ -398,6 +414,46 @@ export class ParasiteManager {
     }
 
     return spawned;
+  }
+
+  consumePickupAt(
+    pickupPosition: GridPos,
+    nowMs: number = this.state.timers.elapsedRunMs,
+  ): ParasitePickupConsumptionResult | null {
+    const pickupKey = gridPosKey(pickupPosition);
+    const pickupIndex = this.state.pickups.findIndex((pickup) =>
+      gridPosKey(pickup.position) === pickupKey
+    );
+    if (pickupIndex < 0) {
+      return null;
+    }
+
+    const pickup = this.state.pickups.splice(pickupIndex, 1)[0];
+    const attachedSegment: ParasiteSegmentState = {
+      id: `segment-${pickup.id}`,
+      type: pickup.type,
+      attachedAtMs: normalizeTimestampMs(nowMs),
+      sourcePickupId: pickup.id,
+    };
+    this.state.inventory.segments.push(attachedSegment);
+    this.state.parasitesCollected += 1;
+
+    let shedSegment: ParasiteSegmentState | null = null;
+    const maxSegments = Math.max(0, Math.floor(this.state.inventory.maxSegments));
+    while (this.state.inventory.segments.length > maxSegments) {
+      const removed = this.state.inventory.segments.shift();
+      if (!shedSegment && removed) {
+        shedSegment = removed;
+      }
+    }
+
+    return {
+      consumedPickup: clonePickupState(pickup),
+      attachedSegment: cloneSegmentState(attachedSegment),
+      shedSegment: shedSegment ? cloneSegmentState(shedSegment) : null,
+      activeSegments: this.getActiveSegments(),
+      parasitesCollected: this.state.parasitesCollected,
+    };
   }
 
   advanceTimers(deltaMs: number): ParasiteTimerTickResult {
