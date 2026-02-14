@@ -14,6 +14,7 @@ import { Snake } from "../entities/Snake";
 import { Food } from "../entities/Food";
 import { EchoGhost, type RewindStateProvider } from "../entities/EchoGhost";
 import { emitFoodParticles, emitGhostFoodParticles, shakeCamera } from "../systems/effects";
+import { GhostRenderer } from "../systems/GhostRenderer";
 
 // ── Default spawn configuration ─────────────────────────────────
 
@@ -46,6 +47,9 @@ export class MainScene extends Phaser.Scene {
 
   /** The echo ghost entity for the current run (null when not playing). */
   private ghost: EchoGhost | null = null;
+
+  /** Renderer for the echo ghost's translucent visuals (null when not playing). */
+  private ghostRenderer: GhostRenderer | null = null;
 
   /**
    * Injectable RNG function for deterministic replay sessions.
@@ -93,6 +97,11 @@ export class MainScene extends Phaser.Scene {
     gameBridge.setElapsedTime(gameBridge.getState().elapsedTime + delta);
 
     if (!this.snake || !this.food) return;
+
+    // Render ghost every frame for smooth visuals
+    if (this.ghost && this.ghostRenderer) {
+      this.ghostRenderer.render(this.ghost, delta);
+    }
 
     const stepped = this.snake.update(delta);
 
@@ -185,6 +194,7 @@ export class MainScene extends Phaser.Scene {
     this.snake.setupTouchInput();
     this.food = new Food(this, this.snake, this.rng);
     this.ghost = new EchoGhost();
+    this.ghostRenderer = new GhostRenderer(this);
   }
 
   /** Destroy existing snake, food, and ghost entities. */
@@ -196,6 +206,10 @@ export class MainScene extends Phaser.Scene {
     if (this.food) {
       this.food.destroy();
       this.food = null;
+    }
+    if (this.ghostRenderer) {
+      this.ghostRenderer.destroy();
+      this.ghostRenderer = null;
     }
     if (this.ghost) {
       this.ghost.reset();
@@ -281,6 +295,10 @@ export class MainScene extends Phaser.Scene {
 
   getGhost(): EchoGhost | null {
     return this.ghost;
+  }
+
+  getGhostRenderer(): GhostRenderer | null {
+    return this.ghostRenderer;
   }
 
   /**
