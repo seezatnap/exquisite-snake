@@ -1,5 +1,5 @@
 import Phaser from "phaser";
-import {
+  import {
   ARENA_WIDTH,
   ARENA_HEIGHT,
   TILE_SIZE,
@@ -9,7 +9,12 @@ import {
 } from "../config";
 import { gameBridge, type GamePhase } from "../bridge";
 import { loadHighScore, saveHighScore } from "../utils/storage";
-import { isInBounds, type GridPos } from "../utils/grid";
+import {
+  isInBounds,
+  gridEquals,
+  gridToPixel,
+  type GridPos,
+} from "../utils/grid";
 import { Snake } from "../entities/Snake";
 import { Food } from "../entities/Food";
 import {
@@ -17,7 +22,17 @@ import {
   type EchoGhostRewindState,
   type EchoGhostRewindStateHook,
 } from "../entities/EchoGhost";
-import { emitFoodParticles, shakeCamera } from "../systems/effects";
+import {
+  emitFoodParticles,
+  emitGhostTrailParticles,
+  shakeCamera,
+} from "../systems/effects";
+
+const GHOST_SEGMENT_INSET = 2;
+const GHOST_LINE_WIDTH = 2;
+const GHOST_DASH_LENGTH = 4;
+const GHOST_DASH_GAP = 4;
+const GHOST_OPACITY = 0.4;
 
 // ── Default spawn configuration ─────────────────────────────────
 
@@ -50,6 +65,9 @@ export class MainScene extends Phaser.Scene {
 
   /** The echo ghost replay entity for the current run (null when not playing). */
   private echoGhost: EchoGhost | null = null;
+
+  /** Graphics used for rendering the dashed ghost hazard trail. */
+  private echoGhostGraphics: Phaser.GameObjects.Graphics | null = null;
 
   /** Optional observer for rewind snapshots emitted by the echo ghost. */
   private echoGhostRewindStateHook: EchoGhostRewindStateHook | null = null;
@@ -129,11 +147,12 @@ export class MainScene extends Phaser.Scene {
         this.isGhostReplayActive = false;
       }
 
-      // Ensure replay output is being generated only from the recorded path.
-      this.echoGhost?.readDelayedTrail();
+      const ghostTrail = this.echoGhost?.readDelayedTrail() ?? [];
+      const ghostOpacity = this.echoGhost?.getReplayOpacity() ?? 0;
+      this.renderEchoGhost(ghostTrail, ghostOpacity);
 
       // Check collisions after the snake moved to its new grid position
-      if (this.checkCollisions()) {
+      if (this.checkCollisions(ghostTrail)) {
         return; // Game over — stop processing this frame
       }
 
@@ -145,9 +164,21 @@ export class MainScene extends Phaser.Scene {
         this.addScore(points),
       );
       if (eaten) {
+        this.scheduleGhostFoodBurst(fx, fy);
         emitFoodParticles(this, fx, fy);
       }
     }
+  }
+
+  /** Schedule a cosmetic burst at the ghost's corresponding position after delay. */
+  private scheduleGhostFoodBurst(x: number, y: number): void {
+    if (!this.echoGhost) {
+      return;
+    }
+
+    this.time.delayedCall(this.echoGhost.getDelayMs(), () => {
+      emitFoodParticles(this, x, y);
+    });
   }
 
   // ── Phase management ────────────────────────────────────────
@@ -194,6 +225,8 @@ export class MainScene extends Phaser.Scene {
 
   /** Create snake and food entities for a new run. */
   private createEntities(): void {
+    this.echoGhostGraphics = this.add.graphics();
+
     this.snake = new Snake(
       this,
       DEFAULT_HEAD_POS,
@@ -217,10 +250,101 @@ export class MainScene extends Phaser.Scene {
       this.food.destroy();
       this.food = null;
     }
+    if (this.echoGhostGraphics) {
+      this.echoGhostGraphics.destroy?.();
+      this.echoGhostGraphics = null;
+    }
     this.echoGhost = null;
     this.ghostProgressTicks = 0;
     this.ghostReplayTicks = 0;
     this.isGhostReplayActive = false;
+  }
+
+  // ── Ghost rendering ─────────────────────────────────────────
+
+  private renderEchoGhost(
+    trail: readonly GridPos[],
+    opacityMultiplier: number,
+  ): void {
+    if (!this.echoGhostGraphics) return;
+
+    this.echoGhostGraphics.clear?.();
+
+    if (trail.length === 0) {
+      return;
+    }
+
+    const alpha = GHOST_OPACITY * opacityMultiplier;
+    if (alpha <= 0) {
+      return;
+    }
+
+    const segmentSize = TILE_SIZE - GHOST_SEGMENT_INSET * 2;
+    this.echoGhostGraphics.lineStyle(GHOST_LINE_WIDTH, COLORS.NEON_PURPLE, alpha);
+
+    for (let i = 0; i < trail.length; i++) {
+      const segment = trail[i];
+      const x = segment.col * TILE_SIZE + GHOST_SEGMENT_INSET;
+      const y = segment.row * TILE_SIZE + GHOST_SEGMENT_INSET;
+      const right = x + segmentSize;
+      const bottom = y + segmentSize;
+
+      this.drawDashedRect(this.echoGhostGraphics, x, y, right, bottom);
+
+      if (i === 0 || i === trail.length - 1 || i % 3 === 0) {
+        const pixel = gridToPixel(segment);
+        emitGhostTrailParticles(this, pixel.x, pixel.y, alpha);
+      }
+    }
+  }
+
+  private drawDashedRect(
+    graphics: Phaser.GameObjects.Graphics,
+    left: number,
+    top: number,
+    right: number,
+    bottom: number,
+  ): void {
+    this.drawDashedSegment(graphics, left, top, right, top);
+    this.drawDashedSegment(graphics, right, top, right, bottom);
+    this.drawDashedSegment(graphics, right, bottom, left, bottom);
+    this.drawDashedSegment(graphics, left, bottom, left, top);
+    graphics.strokePath();
+  }
+
+  private drawDashedSegment(
+    graphics: Phaser.GameObjects.Graphics,
+    startX: number,
+    startY: number,
+    endX: number,
+    endY: number,
+  ): void {
+    const deltaX = endX - startX;
+    const deltaY = endY - startY;
+
+    if (deltaX !== 0 && deltaY !== 0) {
+      return;
+    }
+    if (deltaX === 0 && deltaY === 0) {
+      return;
+    }
+
+    const segmentLength = Math.abs(deltaX !== 0 ? deltaX : deltaY);
+    const stepX = deltaX > 0 ? 1 : deltaX < 0 ? -1 : 0;
+    const stepY = deltaY > 0 ? 1 : deltaY < 0 ? -1 : 0;
+
+    for (let cursor = 0; cursor < segmentLength; cursor += GHOST_DASH_LENGTH + GHOST_DASH_GAP) {
+      const dashEnd = Math.min(cursor + GHOST_DASH_LENGTH, segmentLength);
+
+      graphics.moveTo(
+        startX + stepX * cursor,
+        startY + stepY * cursor,
+      );
+      graphics.lineTo(
+        startX + stepX * dashEnd,
+        startY + stepY * dashEnd,
+      );
+    }
   }
 
   // ── Collision detection ───────────────────────────────────────
@@ -229,7 +353,7 @@ export class MainScene extends Phaser.Scene {
    * Check wall-collision and self-collision.
    * If a collision is detected, ends the run and returns true.
    */
-  private checkCollisions(): boolean {
+  private checkCollisions(ghostTrail: readonly GridPos[] = []): boolean {
     if (!this.snake) return false;
 
     const head = this.snake.getHeadPosition();
@@ -246,6 +370,25 @@ export class MainScene extends Phaser.Scene {
       return true;
     }
 
+    // Ghost collision: head overlaps any trail segment in replay
+    if (this.isGhostCollision(head, ghostTrail)) {
+      this.endRun();
+      return true;
+    }
+
+    return false;
+  }
+
+  /** Check whether the snake head overlaps any segment of the echo ghost trail. */
+  private isGhostCollision(
+    head: GridPos,
+    ghostTrail: readonly GridPos[],
+  ): boolean {
+    for (const segment of ghostTrail) {
+      if (gridEquals(head, segment)) {
+        return true;
+      }
+    }
     return false;
   }
 

@@ -3,8 +3,13 @@ import fs from "fs";
 import path from "path";
 import { gameBridge } from "@/game/bridge";
 import { GRID_COLS, GRID_ROWS } from "@/game/config";
-import { EchoGhost, type EchoGhostRewindState } from "@/game/entities/EchoGhost";
+import {
+  DEFAULT_ECHO_DELAY_MS,
+  EchoGhost,
+  type EchoGhostRewindState,
+} from "@/game/entities/EchoGhost";
 import type { GridPos } from "@/game/utils/grid";
+import * as effects from "@/game/systems/effects";
 
 const ROOT = path.resolve(__dirname, "../..");
 
@@ -25,6 +30,7 @@ const mockSceneStart = vi.fn();
 const mockDestroy = vi.fn();
 const mockSetPosition = vi.fn();
 const mockKeyboardOn = vi.fn();
+const mockDelayedCall = vi.fn();
 
 function createMockSprite() {
   return {
@@ -61,7 +67,7 @@ vi.mock("phaser", () => {
       exists: vi.fn().mockReturnValue(true),
     };
     time = {
-      delayedCall: vi.fn(),
+      delayedCall: mockDelayedCall,
     };
     constructor(public config?: { key: string }) {}
   }
@@ -411,6 +417,97 @@ describe("MainScene – no local state fields (single source of truth)", () => {
   });
 });
 
+describe("MainScene – ghost food burst timing", () => {
+  it("schedules a ghost-food particle burst after the ghost delay", () => {
+    const scene = new MainScene();
+    const emitFoodSpy = vi.spyOn(effects, "emitFoodParticles");
+    scene.create();
+    scene.enterPhase("playing");
+
+    const food = scene.getFood();
+    const snake = scene.getSnake();
+    expect(food).not.toBeNull();
+    expect(snake).not.toBeNull();
+
+    const foodPos = food!.getPosition();
+    const foodSprite = food!.getSprite();
+    const burstX = 123;
+    const burstY = 456;
+    foodSprite.x = burstX;
+    foodSprite.y = burstY;
+
+    const startHead =
+      foodPos.row === 0
+        ? { col: foodPos.col, row: foodPos.row + 1 }
+        : { col: foodPos.col, row: foodPos.row - 1 };
+    const startDirection = foodPos.row === 0 ? "up" : "down";
+    snake!.reset(startHead, startDirection, snake!.getLength());
+
+    emitFoodSpy.mockClear();
+    mockDelayedCall.mockClear();
+
+    scene.update(0, snake!.getTicker().interval);
+    expect(scene.getScore()).toBe(1);
+
+    expect(mockDelayedCall).toHaveBeenCalledWith(
+      DEFAULT_ECHO_DELAY_MS,
+      expect.any(Function),
+    );
+
+    const delayedCallback = mockDelayedCall.mock.calls[0][1] as () => void;
+    expect(emitFoodSpy).toHaveBeenCalledTimes(1);
+    expect(emitFoodSpy).toHaveBeenLastCalledWith(scene, burstX, burstY);
+    emitFoodSpy.mockClear();
+
+    delayedCallback();
+    expect(emitFoodSpy).toHaveBeenCalledTimes(1);
+    expect(emitFoodSpy).toHaveBeenCalledWith(scene, burstX, burstY);
+    expect(scene.getScore()).toBe(1);
+  });
+});
+
+describe("MainScene – ghost rendering", () => {
+  it("renders a dashed ghost trail with particle emissions once active", () => {
+    const scene = new MainScene();
+    const emitGhostTrailSpy = vi.spyOn(
+      effects,
+      "emitGhostTrailParticles",
+    );
+
+    scene.create();
+    scene.enterPhase("playing");
+
+    const snake = scene.getSnake();
+    expect(snake).not.toBeNull();
+    snake!.reset({ col: 20, row: 15 }, "right", 1);
+
+    mockLineStyle.mockClear();
+    mockMoveTo.mockClear();
+    mockLineTo.mockClear();
+    mockStrokePath.mockClear();
+    emitGhostTrailSpy.mockClear();
+
+    const cycle = ["down", "left", "up", "right"] as const;
+    const interval = snake!.getTicker().interval;
+
+    for (let step = 1; step <= 40; step++) {
+      if (step > 1) {
+        snake!.bufferDirection(cycle[(step - 2) % cycle.length]);
+      }
+      scene.update(0, interval);
+    }
+
+    expect(scene.getPhase()).toBe("playing");
+    expect(emitGhostTrailSpy).toHaveBeenCalled();
+    expect(mockLineStyle).toHaveBeenCalled();
+    expect(mockMoveTo).toHaveBeenCalled();
+    expect(mockLineTo).toHaveBeenCalled();
+    expect(mockStrokePath).toHaveBeenCalled();
+
+    emitGhostTrailSpy.mockRestore();
+  });
+});
+
 describe("MainScene source file", () => {
   const source = fs.readFileSync(
     path.join(ROOT, "src/game/scenes/MainScene.ts"),
@@ -449,6 +546,11 @@ describe("MainScene source file", () => {
   it("imports Snake and Food entities", () => {
     expect(source).toContain("Snake");
     expect(source).toContain("Food");
+  });
+
+  it("imports ghost trail effect helpers from effects module", () => {
+    expect(source).toContain("emitGhostTrailParticles");
+    expect(source).toContain("systems/effects");
   });
 });
 
@@ -646,6 +748,32 @@ describe("MainScene – self collision", () => {
     // Buffer up, step: head at (5,5) — this is now a body segment!
     snake.bufferDirection("up");
     scene.update(0, interval);
+    expect(scene.getPhase()).toBe("gameOver");
+    expect(snake.isAlive()).toBe(false);
+  });
+
+  it("ends the run when snake collides with delayed echo ghost trail", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.enterPhase("playing");
+
+    const snake = scene.getSnake()!;
+    snake.reset({ col: 20, row: 15 }, "right", 2);
+    const interval = snake.getTicker().interval;
+    const moveCycle = ["right", "down", "left", "up"] as const;
+
+    for (let step = 1; step <= 40; step++) {
+      if (step > 1) {
+        snake.bufferDirection(moveCycle[(step - 1) % moveCycle.length]);
+      }
+
+      scene.update(0, interval);
+
+      if (step < 40) {
+        expect(scene.getPhase()).toBe("playing");
+      }
+    }
+
     expect(scene.getPhase()).toBe("gameOver");
     expect(snake.isAlive()).toBe(false);
   });
@@ -875,7 +1003,7 @@ describe("MainScene – update integration", () => {
     const snake = scene.getSnake()!;
     const ghost = getEchoGhost(scene)!;
 
-    snake.reset({ col: 20, row: 15 }, "right", 3);
+    snake.reset({ col: 20, row: 15 }, "right", 1);
     const firstRecordedTrail: GridPos[] = [];
     const delayTicks = ghost.getDelayTicks();
 
