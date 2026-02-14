@@ -1,28 +1,27 @@
-// ── Biome Definitions ───────────────────────────────────────────
+// ── Re-export Phase 2 biome definitions ────────────────────────
+//
+// The canonical Biome enum, cycle, duration, and BiomeManager live
+// in BiomeManager.ts (Phase 2). Phase 3 re-exports them so that
+// downstream consumers can continue importing from BiomeTheme.ts.
+//
 
-/** The four biomes in deterministic cycle order. */
-export enum Biome {
-  NeonCity = "NeonCity",
-  IceCavern = "IceCavern",
-  MoltenCore = "MoltenCore",
-  VoidRift = "VoidRift",
-}
+export {
+  Biome,
+  BIOME_CYCLE,
+  BIOME_DURATION_MS,
+  BiomeManager,
+  type BiomeChangeListener,
+  type BiomeConfig,
+  BIOME_CONFIGS,
+  type BiomeVisitStats,
+} from "./BiomeManager";
 
-/** Ordered cycle — the canonical rotation sequence. */
-export const BIOME_CYCLE: readonly Biome[] = [
-  Biome.NeonCity,
-  Biome.IceCavern,
-  Biome.MoltenCore,
-  Biome.VoidRift,
-] as const;
+import { Biome, BiomeManager } from "./BiomeManager";
 
-/** Duration each biome lasts before transitioning (ms). */
-export const BIOME_DURATION_MS = 45_000;
-
-// ── Per-biome visual theme definitions ─────────────────────────
+// ── Per-biome ghost visual palette (Phase 3) ───────────────────
 
 /**
- * Visual palette for a single biome.
+ * Ghost-specific visual palette for a single biome.
  * All colour values are Phaser-compatible 0xRRGGBB integers.
  */
 export interface BiomeThemeColors {
@@ -59,7 +58,7 @@ export function getBiomeColors(biome: Biome): BiomeThemeColors {
   return BIOME_COLORS[biome];
 }
 
-// ── Color interpolation ────────────────────────────────────────
+// ── Color interpolation (Phase 3) ──────────────────────────────
 
 /**
  * Linearly interpolate between two 0xRRGGBB color values.
@@ -82,7 +81,7 @@ export function lerpColor(a: number, b: number, t: number): number {
   return (r << 16) | (g << 8) | blue;
 }
 
-// ── BiomeColorProvider ─────────────────────────────────────────
+// ── BiomeColorProvider (Phase 3) ───────────────────────────────
 
 /**
  * Interface consumed by GhostRenderer to query current biome colors.
@@ -95,43 +94,50 @@ export interface BiomeColorProvider {
   getGhostParticleColor(): number;
 }
 
-// ── BiomeManager ───────────────────────────────────────────────
+// ── Transition crossfade (Phase 3) ─────────────────────────────
 
 /** Duration of the color crossfade when biomes change (ms). */
 export const BIOME_TRANSITION_DURATION_MS = 600;
 
-/** Listener callback for biome changes. */
-export type BiomeChangeListener = (
-  newBiome: Biome,
-  previousBiome: Biome | null,
-) => void;
-
 /**
- * Manages timed biome rotation and provides smoothly-interpolated
- * ghost colors via the BiomeColorProvider interface.
+ * Wraps the Phase 2 BiomeManager to add smooth color crossfade
+ * transitions for ghost rendering via the BiomeColorProvider interface.
  *
- * - Timer-based cycling every 45 seconds.
- * - Deterministic order: Neon City → Ice Cavern → Molten Core → Void Rift → repeat.
+ * Delegates all core biome-cycling behaviour (timer, rotation,
+ * visit stats, event listeners) to the underlying BiomeManager.
+ *
  * - Smooth color crossfade over 600ms when biomes change.
  */
-export class BiomeManager implements BiomeColorProvider {
-  private currentIndex = 0;
-  private elapsedMs = 0;
-  private running = false;
+export class BiomeColorManager implements BiomeColorProvider {
+  private manager: BiomeManager;
 
   /** Transition state for smooth color crossfade. */
   private transitionProgress = 1; // 1 = fully settled, <1 = transitioning
   private previousBiome: Biome | null = null;
-  private listeners: Set<BiomeChangeListener> = new Set();
+
+  constructor(manager?: BiomeManager) {
+    this.manager = manager ?? new BiomeManager();
+
+    // Listen for biome changes to trigger crossfade
+    this.manager.onChange((newBiome, prev) => {
+      this.previousBiome = prev;
+      this.transitionProgress = 0;
+    });
+  }
+
+  /** Access the underlying BiomeManager. */
+  getBiomeManager(): BiomeManager {
+    return this.manager;
+  }
 
   /** The currently active biome. */
   getCurrentBiome(): Biome {
-    return BIOME_CYCLE[this.currentIndex];
+    return this.manager.getCurrentBiome();
   }
 
   /** Whether the manager is actively running. */
   isRunning(): boolean {
-    return this.running;
+    return this.manager.isRunning();
   }
 
   /** Whether a biome transition crossfade is currently in progress. */
@@ -145,22 +151,22 @@ export class BiomeManager implements BiomeColorProvider {
   }
 
   /** Subscribe to biome-change events. */
-  onChange(listener: BiomeChangeListener): void {
-    this.listeners.add(listener);
+  onChange(listener: (newBiome: Biome, previousBiome: Biome | null) => void): void {
+    this.manager.onChange(listener);
   }
 
   /** Unsubscribe from biome-change events. */
-  offChange(listener: BiomeChangeListener): void {
-    this.listeners.delete(listener);
+  offChange(listener: (newBiome: Biome, previousBiome: Biome | null) => void): void {
+    this.manager.offChange(listener);
   }
 
   /**
    * Start a new run. Resets state and begins from the first biome.
    */
   start(): void {
-    if (this.running) return;
-    this.resetInternal();
-    this.running = true;
+    this.transitionProgress = 1;
+    this.previousBiome = null;
+    this.manager.start();
   }
 
   /**
@@ -170,10 +176,6 @@ export class BiomeManager implements BiomeColorProvider {
    * Returns the current biome after the update.
    */
   update(deltaMs: number): Biome {
-    if (!this.running) return this.getCurrentBiome();
-
-    this.elapsedMs += deltaMs;
-
     // Advance transition crossfade
     if (this.transitionProgress < 1) {
       this.transitionProgress = Math.min(
@@ -182,23 +184,16 @@ export class BiomeManager implements BiomeColorProvider {
       );
     }
 
-    while (this.elapsedMs >= BIOME_DURATION_MS) {
-      this.elapsedMs -= BIOME_DURATION_MS;
-      this.previousBiome = this.getCurrentBiome();
-      this.currentIndex = (this.currentIndex + 1) % BIOME_CYCLE.length;
-      this.transitionProgress = 0;
-      this.emitChange(this.getCurrentBiome(), this.previousBiome);
-    }
-
-    return this.getCurrentBiome();
+    return this.manager.update(deltaMs);
   }
 
   /**
    * Stop the timer and reset all state for a fresh run.
    */
   reset(): void {
-    this.running = false;
-    this.resetInternal();
+    this.transitionProgress = 1;
+    this.previousBiome = null;
+    this.manager.reset();
   }
 
   // ── BiomeColorProvider implementation ──────────────────────────
@@ -219,18 +214,5 @@ export class BiomeManager implements BiomeColorProvider {
     }
     const prev = getBiomeColors(this.previousBiome);
     return lerpColor(prev.particle, current.particle, this.transitionProgress);
-  }
-
-  // ── Private helpers ────────────────────────────────────────────
-
-  private resetInternal(): void {
-    this.currentIndex = 0;
-    this.elapsedMs = 0;
-    this.transitionProgress = 1;
-    this.previousBiome = null;
-  }
-
-  private emitChange(newBiome: Biome, previousBiome: Biome | null): void {
-    this.listeners.forEach((fn) => fn(newBiome, previousBiome));
   }
 }

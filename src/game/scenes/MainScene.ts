@@ -15,7 +15,7 @@ import { Food } from "../entities/Food";
 import { EchoGhost, type RewindStateProvider } from "../entities/EchoGhost";
 import { emitFoodParticles, emitGhostFoodParticles, shakeCamera } from "../systems/effects";
 import { GhostRenderer } from "../systems/GhostRenderer";
-import { BiomeManager } from "../systems/BiomeTheme";
+import { BiomeColorManager } from "../systems/BiomeTheme";
 
 // ── Default spawn configuration ─────────────────────────────────
 
@@ -52,8 +52,8 @@ export class MainScene extends Phaser.Scene {
   /** Renderer for the echo ghost's translucent visuals (null when not playing). */
   private ghostRenderer: GhostRenderer | null = null;
 
-  /** Biome manager for timed biome rotation and ghost color tinting. */
-  private biomeManager: BiomeManager | null = null;
+  /** Biome color manager for timed biome rotation and ghost color tinting. */
+  private biomeManager: BiomeColorManager | null = null;
 
   /**
    * Injectable RNG function for deterministic replay sessions.
@@ -204,7 +204,7 @@ export class MainScene extends Phaser.Scene {
     this.food = new Food(this, this.snake, this.rng);
     this.ghost = new EchoGhost();
     this.ghostRenderer = new GhostRenderer(this);
-    this.biomeManager = new BiomeManager();
+    this.biomeManager = new BiomeColorManager();
     this.biomeManager.start();
     this.ghostRenderer.setBiomeColorProvider(this.biomeManager);
   }
@@ -317,7 +317,7 @@ export class MainScene extends Phaser.Scene {
     return this.ghostRenderer;
   }
 
-  getBiomeManager(): BiomeManager | null {
+  getBiomeManager(): BiomeColorManager | null {
     return this.biomeManager;
   }
 

@@ -99,7 +99,7 @@ import {
 } from "@/game/systems/GhostRenderer";
 import {
   Biome,
-  BiomeManager,
+  BiomeColorManager,
   BIOME_COLORS,
   BIOME_DURATION_MS,
   BIOME_TRANSITION_DURATION_MS,
@@ -784,16 +784,16 @@ describe("Delayed food particle burst timing", () => {
 // ═════════════════════════════════════════════════════════════════
 
 describe("Biome-tinted ghost rendering metadata", () => {
-  describe("BiomeManager color provider", () => {
+  describe("BiomeColorManager color provider", () => {
     it("provides NeonCity colors at start", () => {
-      const mgr = new BiomeManager();
+      const mgr = new BiomeColorManager();
       mgr.start();
       expect(mgr.getGhostBodyColor()).toBe(BIOME_COLORS[Biome.NeonCity].snakeBody);
       expect(mgr.getGhostParticleColor()).toBe(BIOME_COLORS[Biome.NeonCity].particle);
     });
 
     it("transitions to IceCavern colors after biome change", () => {
-      const mgr = new BiomeManager();
+      const mgr = new BiomeColorManager();
       mgr.start();
       mgr.update(BIOME_DURATION_MS);
       mgr.update(BIOME_TRANSITION_DURATION_MS);
@@ -802,7 +802,7 @@ describe("Biome-tinted ghost rendering metadata", () => {
     });
 
     it("interpolates colors smoothly during transition", () => {
-      const mgr = new BiomeManager();
+      const mgr = new BiomeColorManager();
       mgr.start();
       mgr.update(BIOME_DURATION_MS);
       mgr.update(BIOME_TRANSITION_DURATION_MS / 2);
@@ -931,12 +931,12 @@ describe("Biome-tinted ghost rendering metadata", () => {
     });
   });
 
-  describe("BiomeManager + GhostRenderer integration", () => {
+  describe("BiomeColorManager + GhostRenderer integration", () => {
     it("NeonCity ghost body color at start", () => {
       const scene = createScene();
       const renderer = new GhostRenderer(scene);
       const ghost = makeActiveGhost();
-      const mgr = new BiomeManager();
+      const mgr = new BiomeColorManager();
       mgr.start();
       renderer.setBiomeColorProvider(mgr);
 
@@ -952,7 +952,7 @@ describe("Biome-tinted ghost rendering metadata", () => {
       const scene = createScene();
       const renderer = new GhostRenderer(scene);
       const ghost = makeActiveGhost();
-      const mgr = new BiomeManager();
+      const mgr = new BiomeColorManager();
       mgr.start();
       renderer.setBiomeColorProvider(mgr);
 
@@ -972,7 +972,7 @@ describe("Biome-tinted ghost rendering metadata", () => {
       const scene = createScene();
       const renderer = new GhostRenderer(scene);
       const ghost = makeActiveGhost();
-      const mgr = new BiomeManager();
+      const mgr = new BiomeColorManager();
       mgr.start();
       renderer.setBiomeColorProvider(mgr);
 
