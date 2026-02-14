@@ -2,7 +2,11 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { gameBridge } from "@/game/bridge";
 import { TEXTURE_KEYS } from "@/game/config";
 import { GRID_COLS, GRID_ROWS } from "@/game/config";
-import { PARASITE_PICKUP_SPAWN_INTERVAL_MS } from "@/game/entities/Parasite";
+import {
+  PARASITE_PICKUP_SPAWN_INTERVAL_MS,
+  ParasiteType,
+  createParasiteRuntimeState,
+} from "@/game/entities/Parasite";
 import { Biome } from "@/game/systems/BiomeManager";
 
 function createMockGraphics() {
@@ -179,6 +183,27 @@ describe("MainScene parasite hook wiring", () => {
     expect(
       movementSpy.mock.calls.every(([context]) => context.actor === "snake"),
     ).toBe(true);
+  });
+
+  it("applies magnet pull + speed updates from movement hook results", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.enterPhase("playing");
+
+    const parasiteState = createParasiteRuntimeState();
+    parasiteState.activeSegments = [
+      { id: "segment-magnet", type: ParasiteType.Magnet, attachedAtMs: 0 },
+    ];
+    scene.getParasiteManager().restoreState(parasiteState);
+
+    const snake = scene.getSnake()!;
+    snake.reset({ col: 5, row: 5 }, "right", 3);
+    scene.getFood()!.setPosition({ col: 5, row: 6 });
+
+    scene.update(0, snake.getTicker().interval);
+
+    expect(scene.getFood()!.getPosition()).toEqual({ col: 4, row: 6 });
+    expect(snake.getTicker().interval).toBeCloseTo(125 / 1.1, 6);
   });
 
   it("checks wall collisions through parasite manager before game-over finalization", () => {
