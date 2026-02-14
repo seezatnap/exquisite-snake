@@ -124,8 +124,10 @@ vi.mock("phaser", () => {
 import { MainScene } from "@/game/scenes/MainScene";
 import { Snake } from "@/game/entities/Snake";
 import {
+  DELAY_TICKS,
   createActiveGhostSnapshotFixture,
   expectCollisionGameOverSignal,
+  makeSegments,
 } from "@/__tests__/echo-ghost-harness";
 
 // Spy on gameBridge methods
@@ -2007,6 +2009,81 @@ describe("MainScene – EchoGhost lifecycle integration", () => {
     const snap = ghost.snapshot();
     const recorded = snap.buffer[0];
     expect(recorded.segments).toEqual(snake.getSegments());
+  });
+});
+
+describe("MainScene – rewind hook integration", () => {
+  it("exposes an echo rewind hook with callable snapshot and restore methods", () => {
+    const scene = new MainScene();
+    scene.create();
+
+    const hook = scene.getEchoRewindHook();
+    expect(hook).toBeDefined();
+    expect(typeof hook.snapshot).toBe("function");
+    expect(typeof hook.restore).toBe("function");
+  });
+
+  it("supports snapshot/restore before run start with a stable empty payload", () => {
+    const scene = new MainScene();
+    scene.create();
+
+    const snap = scene.snapshotEchoState();
+    expect(snap).toEqual({
+      ghost: null,
+      burstQueue: null,
+    });
+
+    expect(() => scene.restoreEchoState(snap)).not.toThrow();
+    expect(scene.snapshotEchoState()).toEqual(snap);
+  });
+
+  it("restores active-run echo state deterministically after mutation", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.enterPhase("playing");
+
+    const ghost = scene.getEchoGhost();
+    const burstQueue = scene.getGhostFoodBurstQueue();
+    if (!ghost || !burstQueue) {
+      throw new Error("Expected echo entities to exist while playing");
+    }
+
+    for (let i = 0; i < DELAY_TICKS + 2; i++) {
+      ghost.record(makeSegments(20 + i));
+    }
+    burstQueue.enqueue();
+    burstQueue.processTick(ghost);
+    const snap = scene.snapshotEchoState();
+
+    for (let i = 0; i < 8; i++) {
+      ghost.record(makeSegments(100 + i));
+      burstQueue.processTick(ghost);
+    }
+    burstQueue.enqueue();
+    burstQueue.processTick(ghost);
+
+    scene.restoreEchoState(snap);
+    expect(scene.snapshotEchoState()).toEqual(snap);
+
+    scene.restoreEchoState(snap);
+    expect(scene.snapshotEchoState()).toEqual(snap);
+  });
+
+  it("keeps hook calls safe after shutdown by returning an empty snapshot", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.enterPhase("playing");
+
+    expect(scene.snapshotEchoState().ghost).not.toBeNull();
+
+    scene.shutdown();
+
+    const cleared = scene.snapshotEchoState();
+    expect(cleared).toEqual({
+      ghost: null,
+      burstQueue: null,
+    });
+    expect(() => scene.restoreEchoState(cleared)).not.toThrow();
   });
 });
 

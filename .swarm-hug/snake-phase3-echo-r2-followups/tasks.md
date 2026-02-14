@@ -16,4 +16,4 @@
 
 ## Rewind Hooks & Test Plan Artifacts
 
-- [A] (#6) Add automated checks in `src/__tests__/` confirming rewind snapshot/restore hooks are present and callable with stable behavior, and create/update a test plan artifact mapping all five required scenarios to setup, expected results, and execution steps for team validation [5 pts] (blocked by #2, #3, #4, #5)
+- [x] (#6) Add automated checks in `src/__tests__/` confirming rewind snapshot/restore hooks are present and callable with stable behavior, and create/update a test plan artifact mapping all five required scenarios to setup, expected results, and execution steps for team validation [5 pts] (blocked by #2, #3, #4, #5) (A)
