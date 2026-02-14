@@ -954,6 +954,10 @@ export class MainScene extends Phaser.Scene {
       obstaclePositions: this.getParasitePickupBlockedCells(),
       rng: this.rng,
     });
+    this.parasiteManager.onPickupContact({
+      actor: "snake",
+      headPosition: this.snake.getHeadPosition(),
+    });
 
     const parasiteState = this.parasiteManager.getState();
     this.syncParasitePickupSprite(
