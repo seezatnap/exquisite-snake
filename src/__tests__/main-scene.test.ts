@@ -466,6 +466,48 @@ describe("MainScene – ghost food burst timing", () => {
   });
 });
 
+describe("MainScene – ghost rendering", () => {
+  it("renders a dashed ghost trail with particle emissions once active", () => {
+    const scene = new MainScene();
+    const emitGhostTrailSpy = vi.spyOn(
+      effects,
+      "emitGhostTrailParticles",
+    );
+
+    scene.create();
+    scene.enterPhase("playing");
+
+    const snake = scene.getSnake();
+    expect(snake).not.toBeNull();
+    snake!.reset({ col: 20, row: 15 }, "right", 1);
+
+    mockLineStyle.mockClear();
+    mockMoveTo.mockClear();
+    mockLineTo.mockClear();
+    mockStrokePath.mockClear();
+    emitGhostTrailSpy.mockClear();
+
+    const cycle = ["down", "left", "up", "right"] as const;
+    const interval = snake!.getTicker().interval;
+
+    for (let step = 1; step <= 40; step++) {
+      if (step > 1) {
+        snake!.bufferDirection(cycle[(step - 2) % cycle.length]);
+      }
+      scene.update(0, interval);
+    }
+
+    expect(scene.getPhase()).toBe("playing");
+    expect(emitGhostTrailSpy).toHaveBeenCalled();
+    expect(mockLineStyle).toHaveBeenCalled();
+    expect(mockMoveTo).toHaveBeenCalled();
+    expect(mockLineTo).toHaveBeenCalled();
+    expect(mockStrokePath).toHaveBeenCalled();
+
+    emitGhostTrailSpy.mockRestore();
+  });
+});
+
 describe("MainScene source file", () => {
   const source = fs.readFileSync(
     path.join(ROOT, "src/game/scenes/MainScene.ts"),
@@ -504,6 +546,11 @@ describe("MainScene source file", () => {
   it("imports Snake and Food entities", () => {
     expect(source).toContain("Snake");
     expect(source).toContain("Food");
+  });
+
+  it("imports ghost trail effect helpers from effects module", () => {
+    expect(source).toContain("emitGhostTrailParticles");
+    expect(source).toContain("systems/effects");
   });
 });
 
