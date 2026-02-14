@@ -9,11 +9,15 @@ import {
 } from "../config";
 import { gameBridge, type GamePhase } from "../bridge";
 import { loadHighScore, saveHighScore } from "../utils/storage";
-import { isInBounds, type GridPos } from "../utils/grid";
+import { isInBounds, gridEquals, type GridPos } from "../utils/grid";
 import { Snake } from "../entities/Snake";
 import { Food } from "../entities/Food";
 import { EchoGhost } from "../entities/EchoGhost";
 import { emitFoodParticles, shakeCamera } from "../systems/effects";
+import { RewindManager } from "../systems/RewindManager";
+import { GhostFoodScheduler } from "../systems/ghostFoodBurst";
+import { MoveTicker } from "../utils/grid";
+import { EchoGhostRenderer } from "../systems/echoGhostRenderer";
 
 // ── Default spawn configuration ─────────────────────────────────
 
@@ -46,6 +50,23 @@ export class MainScene extends Phaser.Scene {
 
   /** The echo ghost entity for the current run (null when not playing). */
   private echoGhost: EchoGhost | null = null;
+
+  /** Rewind manager — Phase 6 hook for snapshotting/restoring game state. */
+  private rewindManager: RewindManager = new RewindManager();
+
+  /** Scheduler for delayed ghost-food particle bursts. */
+  private ghostFoodScheduler: GhostFoodScheduler | null = null;
+
+  /** Visual renderer for the echo ghost trail. */
+  private echoGhostRenderer: EchoGhostRenderer | null = null;
+
+  /**
+   * Ticker used to advance the ghost playhead at the same rate as the
+   * snake's movement after game-over.  This drives the drain/fade-out
+   * animation so the ghost doesn't freeze when the update loop would
+   * otherwise exit early due to the phase being "gameOver".
+   */
+  private ghostDrainTicker: MoveTicker = new MoveTicker();
 
   /**
    * Injectable RNG function for deterministic replay sessions.
@@ -88,7 +109,23 @@ export class MainScene extends Phaser.Scene {
   }
 
   update(_time: number, delta: number): void {
-    if (gameBridge.getState().phase !== "playing") return;
+    const { phase } = gameBridge.getState();
+
+    // During game-over, continue advancing the ghost playhead so it
+    // drains remaining buffered frames and fades out gracefully.
+    if (phase === "gameOver") {
+      if (
+        this.echoGhost &&
+        this.echoGhost.getLifecycleState() !== "inactive"
+      ) {
+        if (this.ghostDrainTicker.advance(delta)) {
+          this.echoGhost.advancePlayhead();
+        }
+      }
+      return;
+    }
+
+    if (phase !== "playing") return;
 
     gameBridge.setElapsedTime(gameBridge.getState().elapsedTime + delta);
 
@@ -105,6 +142,14 @@ export class MainScene extends Phaser.Scene {
       // Record the snake's current position into the echo ghost buffer
       if (this.echoGhost) {
         this.echoGhost.record(this.snake.getSegments());
+
+        // Process any pending ghost-food bursts that match the current replay tick
+        if (this.ghostFoodScheduler) {
+          const bursts = this.ghostFoodScheduler.processTick(this.echoGhost);
+          for (const burst of bursts) {
+            emitFoodParticles(this, burst.x, burst.y);
+          }
+        }
       }
 
       // Check food consumption — emit particles at the old food position on eat
@@ -116,7 +161,16 @@ export class MainScene extends Phaser.Scene {
       );
       if (eaten) {
         emitFoodParticles(this, fx, fy);
+        // Schedule a ghost-food burst at the ghost's position 5 seconds later
+        if (this.echoGhost && this.ghostFoodScheduler) {
+          this.ghostFoodScheduler.schedule(this.echoGhost.getCurrentTick() - 1);
+        }
       }
+    }
+
+    // Update ghost renderer every frame for smooth opacity transitions
+    if (this.echoGhost && this.echoGhostRenderer) {
+      this.echoGhostRenderer.update(this.echoGhost);
     }
   }
 
@@ -144,6 +198,7 @@ export class MainScene extends Phaser.Scene {
     gameBridge.resetRun();
     this.destroyEntities();
     this.createEntities();
+    this.ghostDrainTicker.reset();
   }
 
   /** End the current run: kill snake, persist high-score, transition to gameOver. */
@@ -152,10 +207,12 @@ export class MainScene extends Phaser.Scene {
     if (this.snake?.isAlive()) {
       this.snake.kill();
     }
-    // Stop recording so the ghost can drain remaining frames and fade out
+    // Stop recording so the ghost can drain remaining frames and fade out.
+    // Reset the drain ticker so advancePlayhead() ticks at the correct cadence.
     if (this.echoGhost) {
       this.echoGhost.stopRecording();
     }
+    this.ghostDrainTicker.reset();
     const { score, highScore } = gameBridge.getState();
     if (score > highScore) {
       gameBridge.setHighScore(score);
@@ -178,6 +235,9 @@ export class MainScene extends Phaser.Scene {
     this.snake.setupTouchInput();
     this.food = new Food(this, this.snake, this.rng);
     this.echoGhost = new EchoGhost();
+    this.echoGhostRenderer = new EchoGhostRenderer(this);
+    this.rewindManager.register("echoGhost", this.echoGhost);
+    this.ghostFoodScheduler = new GhostFoodScheduler();
   }
 
   /** Destroy existing snake, food, and echo ghost entities. */
@@ -190,16 +250,25 @@ export class MainScene extends Phaser.Scene {
       this.food.destroy();
       this.food = null;
     }
+    if (this.echoGhostRenderer) {
+      this.echoGhostRenderer.destroy();
+      this.echoGhostRenderer = null;
+    }
     if (this.echoGhost) {
       this.echoGhost.reset();
       this.echoGhost = null;
+    }
+    this.rewindManager.clear();
+    if (this.ghostFoodScheduler) {
+      this.ghostFoodScheduler.reset();
+      this.ghostFoodScheduler = null;
     }
   }
 
   // ── Collision detection ───────────────────────────────────────
 
   /**
-   * Check wall-collision and self-collision.
+   * Check wall-collision, self-collision, and echo ghost collision.
    * If a collision is detected, ends the run and returns true.
    */
   private checkCollisions(): boolean {
@@ -217,6 +286,19 @@ export class MainScene extends Phaser.Scene {
     if (this.snake.hasSelfCollision()) {
       this.endRun();
       return true;
+    }
+
+    // Echo ghost collision: head occupies any ghost trail segment
+    if (this.echoGhost) {
+      const trail = this.echoGhost.getGhostTrail();
+      if (trail) {
+        for (const seg of trail) {
+          if (gridEquals(head, seg)) {
+            this.endRun();
+            return true;
+          }
+        }
+      }
     }
 
     return false;
@@ -268,6 +350,18 @@ export class MainScene extends Phaser.Scene {
 
   getEchoGhost(): EchoGhost | null {
     return this.echoGhost;
+  }
+
+  getRewindManager(): RewindManager {
+    return this.rewindManager;
+  }
+
+  getGhostFoodScheduler(): GhostFoodScheduler | null {
+    return this.ghostFoodScheduler;
+  }
+
+  getEchoGhostRenderer(): EchoGhostRenderer | null {
+    return this.echoGhostRenderer;
   }
 
   // ── Arena grid ──────────────────────────────────────────────

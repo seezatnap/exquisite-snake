@@ -8,17 +8,17 @@
 
 ## Gameplay & Collision
 
-- [ ] (#4) Add echo ghost to the central collision detection flow and treat any snake/ghost contact as a fatal self-collision-equivalent event, including reuse of existing game-over outcome handling. [5 pts] (blocked by #2, #3)
-- [ ] (#5) Implement delayed ghost-food burst behavior: when the real snake eats food, schedule a cosmetic particle burst at the corresponding ghost position exactly 5 seconds later, with no impact on score/state except visuals. [5 pts] (blocked by #2, #3)
+- [x] (#4) Add echo ghost to the central collision detection flow and treat any snake/ghost contact as a fatal self-collision-equivalent event, including reuse of existing game-over outcome handling. [5 pts] (blocked by #2, #3) (A)
+- [x] (#5) Implement delayed ghost-food burst behavior: when the real snake eats food, schedule a cosmetic particle burst at the corresponding ghost position exactly 5 seconds later, with no impact on score/state except visuals. [5 pts] (blocked by #2, #3) (B)
 
 ## Rendering & Biome
 
-- [ ] (#6) Render the ghost as a distinct translucent hazard (40% opacity, dashed outline) with trailing particles, using current renderer systems and matching existing segment geometry. [5 pts] (blocked by #2, #3)
+- [x] (#6) Render the ghost as a distinct translucent hazard (40% opacity, dashed outline) with trailing particles, using current renderer systems and matching existing segment geometry. [5 pts] (blocked by #2, #3) (B)
 - [ ] (#7) Apply biome-aware tinting to ghost visuals so trail and particles are colored by the current biome while preserving opacity and dashed styling, including smooth transitions if the biome changes during replay. [5 pts] (blocked by #6)
 
 ## Rewind Preparation
 
-- [ ] (#8) Add a rewind-ready interface/hook on `EchoGhost` for future Phase 6 integration (e.g., buffer snapshot/rewind state API), and wire it to existing architecture without implementing rewind behavior now. [5 pts] (blocked by #1, #2)
+- [x] (#8) Add a rewind-ready interface/hook on `EchoGhost` for future Phase 6 integration (e.g., buffer snapshot/rewind state API), and wire it to existing architecture without implementing rewind behavior now. [5 pts] (blocked by #1, #2) (C)
 
 ## Testing
 
@@ -28,4 +28,7 @@
 - [x] (#10) Add unit tests for `EchoGhost.reset()` and constructor edge cases (zero/negative tick interval and delay) in `echo-ghost.test.ts` (blocked by #1) (A)
 
 ## Follow-up tasks (from sprint review)
-- [ ] (#11) Wire `advancePlayhead()` into the game loop so the ghost actually drains and fades after `stopRecording()` is called during game-over (the update loop currently exits early when phase is not `"playing"`, so the fade-out never runs) (blocked by #3)
+- [x] (#11) Wire `advancePlayhead()` into the game loop so the ghost actually drains and fades after `stopRecording()` is called during game-over (the update loop currently exits early when phase is not `"playing"`, so the fade-out never runs) (blocked by #3) (A)
+
+## Follow-up tasks (from sprint review)
+- [ ] (#12) Update `MainScene.update()` to call `echoGhostRenderer.update()` during the `"gameOver"` phase so the ghost fade-out animation is actually rendered (currently the renderer is only updated during `"playing"`, so the drain/fade-out computed by `advancePlayhead()` is never visible) (blocked by #11)

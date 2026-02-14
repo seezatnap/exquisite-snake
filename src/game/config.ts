@@ -18,6 +18,8 @@ export const COLORS = {
   SNAKE_BODY: 0x00c8d4,
   FOOD: 0xff2d78,
   PARTICLE: 0xff2d78,
+  GHOST_BODY: 0x00f0ff,
+  GHOST_PARTICLE: 0x00f0ff,
 } as const;
 
 // ── Texture Keys (used by Boot preload and gameplay scenes) ──────
@@ -26,6 +28,8 @@ export const TEXTURE_KEYS = {
   SNAKE_BODY: "snake-body",
   FOOD: "food",
   PARTICLE: "particle",
+  GHOST_BODY: "ghost-body",
+  GHOST_PARTICLE: "ghost-particle",
 } as const;
 
 // ── Scene class type ─────────────────────────────────────────────

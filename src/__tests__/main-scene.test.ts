@@ -28,6 +28,9 @@ function createMockSprite() {
   return {
     destroy: mockDestroy,
     setPosition: mockSetPosition,
+    setAlpha: vi.fn(),
+    setVisible: vi.fn(),
+    visible: true,
     x: 0,
     y: 0,
   };
@@ -42,6 +45,11 @@ vi.mock("phaser", () => {
       particles: vi.fn(() => ({
         explode: vi.fn(),
         destroy: vi.fn(),
+        stop: vi.fn(),
+        start: vi.fn(),
+        setPosition: vi.fn(),
+        emitting: true,
+        particleAlpha: 1,
       })),
     };
     input = {
@@ -955,7 +963,7 @@ describe("MainScene – echo ghost integration", () => {
     expect(trail[0].row).toBe(15);
   });
 
-  it("does not record when game is not in playing phase", () => {
+  it("does not record new frames when game is not in playing phase", () => {
     const scene = new MainScene();
     scene.create();
     scene.enterPhase("playing");
@@ -963,9 +971,10 @@ describe("MainScene – echo ghost integration", () => {
     const ghost = scene.getEchoGhost()!;
     scene.endRun(); // game over
 
-    const tickBefore = ghost.getCurrentTick();
+    const countBefore = ghost.getCount();
     scene.update(0, 1000);
-    expect(ghost.getCurrentTick()).toBe(tickBefore);
+    // No new frames are recorded, but the playhead may advance for drain
+    expect(ghost.getCount()).toBe(countBefore);
   });
 
   it("echoGhost is null after endRun and new enterPhase('playing')", () => {
@@ -1039,6 +1048,451 @@ describe("MainScene – echo ghost integration", () => {
   });
 });
 
+// ── Echo ghost collision ─────────────────────────────────────────
+
+describe("MainScene – echo ghost collision", () => {
+  it("ends the run when snake head overlaps a ghost trail segment", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.enterPhase("playing");
+
+    const snake = scene.getSnake()!;
+    const ghost = scene.getEchoGhost()!;
+    const interval = snake.getTicker().interval;
+
+    // Start snake at col=1, row=1, going right, length=1
+    snake.reset({ col: 1, row: 1 }, "right", 1);
+
+    // Advance 37 ticks going right (col 1 → 38)
+    for (let i = 0; i < 37; i++) {
+      scene.update(0, interval);
+    }
+    expect(scene.getPhase()).toBe("playing");
+
+    // Turn down for 3 more ticks to reach 40 total, ghost now active
+    snake.bufferDirection("down");
+    scene.update(0, interval); // tick 38
+    scene.update(0, interval); // tick 39
+    scene.update(0, interval); // tick 40, ghost active
+
+    expect(ghost.isActive()).toBe(true);
+    expect(scene.getPhase()).toBe("playing");
+
+    // Ghost trail at tick 40 shows the position from tick 0 (col=2, row=1).
+    // Steer snake back toward that position. Snake is at col=38, row=4.
+    // Turn left to go back.
+    snake.bufferDirection("left");
+    // We need to reach col=2, row=4 (or wherever the ghost trail is).
+    // The ghost trail from tick 0 was at col=2, row=1.
+    // Instead of navigating back 36 columns, let's test with a fresh approach.
+    // We know the ghost trail from 40 ticks ago is at (2, 1).
+
+    // Let's verify the ghost is active and the trail position
+    const trail = ghost.getGhostTrail()!;
+    expect(trail).not.toBeNull();
+    expect(trail[0].col).toBe(2);
+    expect(trail[0].row).toBe(1);
+
+    // Now, directly place the snake's head at the ghost trail position
+    // and trigger a collision check via update
+    snake.reset({ col: 1, row: 1 }, "right", 1);
+    // On next update, snake steps to col=2, row=1 — matching ghost trail
+    scene.update(0, interval);
+
+    expect(scene.getPhase()).toBe("gameOver");
+    expect(snake.isAlive()).toBe(false);
+  });
+
+  it("does not trigger ghost collision before ghost is active", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.enterPhase("playing");
+
+    const snake = scene.getSnake()!;
+    const ghost = scene.getEchoGhost()!;
+    const interval = snake.getTicker().interval;
+
+    // Snake starts at center going right, length 1
+    snake.reset({ col: 10, row: 15 }, "right", 1);
+
+    // Advance a few ticks — ghost is still warming
+    for (let i = 0; i < 5; i++) {
+      scene.update(0, interval);
+    }
+
+    expect(ghost.isActive()).toBe(false);
+    expect(ghost.getGhostTrail()).toBeNull();
+    expect(scene.getPhase()).toBe("playing");
+  });
+
+  it("does not trigger ghost collision when head is not on ghost trail", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.enterPhase("playing");
+
+    const snake = scene.getSnake()!;
+    const ghost = scene.getEchoGhost()!;
+    const interval = snake.getTicker().interval;
+
+    // Start snake at col=1, row=1, going right, length=1
+    snake.reset({ col: 1, row: 1 }, "right", 1);
+
+    // Advance 37 ticks going right
+    for (let i = 0; i < 37; i++) {
+      scene.update(0, interval);
+    }
+
+    // Turn down for 3 more ticks to reach tick 40
+    snake.bufferDirection("down");
+    scene.update(0, interval);
+    scene.update(0, interval);
+    scene.update(0, interval);
+
+    expect(ghost.isActive()).toBe(true);
+
+    // Snake is now at col=38, row=4 — far from ghost trail at col=2, row=1
+    // Continue stepping down, which is away from the ghost trail
+    scene.update(0, interval);
+    scene.update(0, interval);
+
+    expect(scene.getPhase()).toBe("playing");
+    expect(snake.isAlive()).toBe(true);
+  });
+
+  it("ghost collision triggers same game-over flow as self-collision", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.enterPhase("playing");
+
+    const snake = scene.getSnake()!;
+    const ghost = scene.getEchoGhost()!;
+    const interval = snake.getTicker().interval;
+
+    snake.reset({ col: 1, row: 1 }, "right", 1);
+
+    // Fill 40 ticks to activate ghost
+    for (let i = 0; i < 37; i++) {
+      scene.update(0, interval);
+    }
+    snake.bufferDirection("down");
+    scene.update(0, interval);
+    scene.update(0, interval);
+    scene.update(0, interval);
+
+    expect(ghost.isActive()).toBe(true);
+
+    // Add score to test high-score update on ghost collision
+    scene.addScore(42);
+
+    // Place snake at ghost trail position and trigger collision
+    snake.reset({ col: 1, row: 1 }, "right", 1);
+    scene.update(0, interval);
+
+    // Same outcome as self-collision: gameOver, snake dead, high score updated
+    expect(scene.getPhase()).toBe("gameOver");
+    expect(snake.isAlive()).toBe(false);
+    expect(scene.getHighScore()).toBe(42);
+  });
+
+  it("ghost collision stops recording on the echo ghost", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.enterPhase("playing");
+
+    const snake = scene.getSnake()!;
+    const ghost = scene.getEchoGhost()!;
+    const interval = snake.getTicker().interval;
+
+    snake.reset({ col: 1, row: 1 }, "right", 1);
+
+    // Fill 40 ticks to activate ghost
+    for (let i = 0; i < 37; i++) {
+      scene.update(0, interval);
+    }
+    snake.bufferDirection("down");
+    scene.update(0, interval);
+    scene.update(0, interval);
+    scene.update(0, interval);
+
+    expect(ghost.isRecordingStopped()).toBe(false);
+
+    // Trigger ghost collision
+    snake.reset({ col: 1, row: 1 }, "right", 1);
+    scene.update(0, interval);
+
+    // endRun calls stopRecording on the ghost
+    expect(ghost.isRecordingStopped()).toBe(true);
+  });
+
+  it("ghost collision with any segment of the trail ends the run", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.enterPhase("playing");
+
+    const snake = scene.getSnake()!;
+    const ghost = scene.getEchoGhost()!;
+    const interval = snake.getTicker().interval;
+
+    // Use a length-3 snake so the ghost trail has 3 segments
+    snake.reset({ col: 1, row: 1 }, "right", 3);
+
+    // Fill 40 ticks to activate ghost. Start at col 1, segments trail left.
+    for (let i = 0; i < 37; i++) {
+      scene.update(0, interval);
+    }
+    snake.bufferDirection("down");
+    scene.update(0, interval);
+    scene.update(0, interval);
+    scene.update(0, interval);
+
+    expect(ghost.isActive()).toBe(true);
+
+    // Ghost trail from 40 ticks ago has 3 segments.
+    // Tick 0 recorded: head at (2,1), body at (1,1), body at (0,1)
+    const trail = ghost.getGhostTrail()!;
+    expect(trail.length).toBe(3);
+
+    // Place snake head to hit the second ghost segment (body, not head)
+    // The second segment of the trail is at (1, 1)
+    const targetSeg = trail[1];
+    snake.reset(
+      { col: targetSeg.col - 1, row: targetSeg.row },
+      "right",
+      1,
+    );
+    scene.update(0, interval);
+
+    expect(scene.getPhase()).toBe("gameOver");
+    expect(snake.isAlive()).toBe(false);
+  });
+});
+
+// ── Ghost drain / fade-out during game-over (#11) ───────────────
+
+describe("MainScene – ghost drain during game-over", () => {
+  it("advances ghost playhead during gameOver phase", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.enterPhase("playing");
+
+    const snake = scene.getSnake()!;
+    const ghost = scene.getEchoGhost()!;
+    const interval = snake.getTicker().interval;
+
+    // Record a few ticks of play
+    snake.reset({ col: 10, row: 15 }, "right", 1);
+    for (let i = 0; i < 5; i++) {
+      scene.update(0, interval);
+    }
+    expect(ghost.getCurrentTick()).toBe(5);
+
+    // End the run → phase is now "gameOver"
+    scene.endRun();
+    expect(scene.getPhase()).toBe("gameOver");
+    expect(ghost.isRecordingStopped()).toBe(true);
+
+    const tickAfterStop = ghost.getCurrentTick();
+
+    // Advance time during game-over — ghost playhead should advance
+    scene.update(0, interval);
+    expect(ghost.getCurrentTick()).toBe(tickAfterStop + 1);
+
+    scene.update(0, interval);
+    expect(ghost.getCurrentTick()).toBe(tickAfterStop + 2);
+  });
+
+  it("ghost transitions to inactive after draining during gameOver", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.enterPhase("playing");
+
+    const snake = scene.getSnake()!;
+    const ghost = scene.getEchoGhost()!;
+    const interval = snake.getTicker().interval;
+
+    // Record enough ticks for ghost to become active (40 ticks = 5s at 125ms)
+    snake.reset({ col: 1, row: 1 }, "right", 1);
+    for (let i = 0; i < 37; i++) {
+      scene.update(0, interval);
+    }
+    snake.bufferDirection("down");
+    for (let i = 0; i < 3; i++) {
+      scene.update(0, interval);
+    }
+    expect(ghost.getLifecycleState()).toBe("active");
+
+    // End the run
+    scene.endRun();
+    expect(ghost.isRecordingStopped()).toBe(true);
+
+    // Advance enough ticks during game-over for ghost to fully drain
+    // The ghost needs to drain all buffered frames + fade duration.
+    // With fadeDurationTicks = 8 (1000/125), we need to advance enough.
+    for (let i = 0; i < 100; i++) {
+      if (ghost.getLifecycleState() === "inactive") break;
+      scene.update(0, interval);
+    }
+
+    expect(ghost.getLifecycleState()).toBe("inactive");
+    expect(ghost.getOpacity()).toBe(0);
+  });
+
+  it("ghost passes through fading state before becoming inactive", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.enterPhase("playing");
+
+    const snake = scene.getSnake()!;
+    const ghost = scene.getEchoGhost()!;
+    const interval = snake.getTicker().interval;
+
+    // Build up enough recorded ticks for the ghost to be active
+    snake.reset({ col: 1, row: 1 }, "right", 1);
+    for (let i = 0; i < 37; i++) {
+      scene.update(0, interval);
+    }
+    snake.bufferDirection("down");
+    for (let i = 0; i < 3; i++) {
+      scene.update(0, interval);
+    }
+    expect(ghost.getLifecycleState()).toBe("active");
+
+    scene.endRun();
+
+    // Track lifecycle states during drain
+    const observedStates = new Set<string>();
+    for (let i = 0; i < 100; i++) {
+      const state = ghost.getLifecycleState();
+      observedStates.add(state);
+      if (state === "inactive") break;
+      scene.update(0, interval);
+    }
+
+    expect(observedStates.has("fading")).toBe(true);
+    expect(observedStates.has("inactive")).toBe(true);
+  });
+
+  it("ghost opacity decreases during fading state in gameOver", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.enterPhase("playing");
+
+    const snake = scene.getSnake()!;
+    const ghost = scene.getEchoGhost()!;
+    const interval = snake.getTicker().interval;
+
+    // Build up ghost to active state
+    snake.reset({ col: 1, row: 1 }, "right", 1);
+    for (let i = 0; i < 37; i++) {
+      scene.update(0, interval);
+    }
+    snake.bufferDirection("down");
+    for (let i = 0; i < 3; i++) {
+      scene.update(0, interval);
+    }
+
+    scene.endRun();
+
+    // Advance until we enter the fading state
+    let maxIterations = 100;
+    while (ghost.getLifecycleState() !== "fading" && maxIterations-- > 0) {
+      scene.update(0, interval);
+    }
+    expect(ghost.getLifecycleState()).toBe("fading");
+
+    // During fading, opacity should be between 0 and 1
+    const opacityDuringFade = ghost.getOpacity();
+    expect(opacityDuringFade).toBeGreaterThanOrEqual(0);
+    expect(opacityDuringFade).toBeLessThanOrEqual(1);
+
+    // Advance one more tick — opacity should decrease or stay the same
+    scene.update(0, interval);
+    const laterOpacity = ghost.getOpacity();
+    expect(laterOpacity).toBeLessThanOrEqual(opacityDuringFade);
+  });
+
+  it("stops advancing playhead once ghost reaches inactive", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.enterPhase("playing");
+
+    const snake = scene.getSnake()!;
+    const ghost = scene.getEchoGhost()!;
+    const interval = snake.getTicker().interval;
+
+    // Short recording: just a few ticks
+    snake.reset({ col: 10, row: 15 }, "right", 1);
+    for (let i = 0; i < 3; i++) {
+      scene.update(0, interval);
+    }
+
+    scene.endRun();
+
+    // Advance until inactive
+    for (let i = 0; i < 200; i++) {
+      if (ghost.getLifecycleState() === "inactive") break;
+      scene.update(0, interval);
+    }
+    expect(ghost.getLifecycleState()).toBe("inactive");
+
+    // Record the tick at inactive
+    const tickAtInactive = ghost.getCurrentTick();
+
+    // Further updates should not advance the playhead
+    scene.update(0, interval);
+    scene.update(0, interval);
+    expect(ghost.getCurrentTick()).toBe(tickAtInactive);
+  });
+
+  it("does not accumulate elapsed time during gameOver drain", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.enterPhase("playing");
+
+    const snake = scene.getSnake()!;
+    const interval = snake.getTicker().interval;
+
+    snake.reset({ col: 10, row: 15 }, "right", 1);
+    scene.update(0, interval);
+
+    scene.endRun();
+    const timeAtGameOver = scene.getElapsedTime();
+
+    // Ghost drain should not affect elapsed time
+    scene.update(0, interval);
+    scene.update(0, interval);
+    expect(scene.getElapsedTime()).toBe(timeAtGameOver);
+  });
+
+  it("new game after drain creates fresh ghost with zero ticks", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.enterPhase("playing");
+
+    const snake = scene.getSnake()!;
+    const interval = snake.getTicker().interval;
+
+    snake.reset({ col: 10, row: 15 }, "right", 1);
+    for (let i = 0; i < 5; i++) {
+      scene.update(0, interval);
+    }
+
+    scene.endRun();
+
+    // Drain a few ticks
+    for (let i = 0; i < 10; i++) {
+      scene.update(0, interval);
+    }
+
+    // Start a new game
+    scene.enterPhase("playing");
+    const newGhost = scene.getEchoGhost()!;
+    expect(newGhost.getCurrentTick()).toBe(0);
+    expect(newGhost.isRecordingStopped()).toBe(false);
+    expect(newGhost.getLifecycleState()).toBe("warming");
+  });
+});
+
 // ── Source-level checks for echo ghost integration ──────────────
 
 describe("MainScene source – echo ghost integration", () => {
@@ -1066,5 +1520,18 @@ describe("MainScene source – echo ghost integration", () => {
 
   it("exposes getEchoGhost accessor", () => {
     expect(source).toContain("getEchoGhost()");
+  });
+
+  it("checks ghost trail in collision detection", () => {
+    expect(source).toContain("getGhostTrail()");
+    expect(source).toContain("gridEquals(head, seg)");
+  });
+
+  it("calls advancePlayhead during gameOver for ghost drain", () => {
+    expect(source).toContain("advancePlayhead()");
+  });
+
+  it("has a ghostDrainTicker field for post-game-over drain timing", () => {
+    expect(source).toMatch(/ghostDrainTicker/);
   });
 });
