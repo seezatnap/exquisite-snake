@@ -27,3 +27,7 @@
 
 - [ ] (#12) Add automated tests for ParasiteManager and ability rules: spawn-on-empty validation, FIFO cap behavior, magnet pull and speed stacking, shield absorb plus blocked-food state transitions, and splitter score multiplier [5 pts] (blocked by #4, #5, #6)
 - [ ] (#13) Add integration/regression tests and QA checklist for splitter obstacle lifecycle and lethal collisions, Echo Ghost exclusion rules, HUD inventory updates, and Game Over parasites-collected display [5 pts] (blocked by #8, #10, #11)
+
+## Follow-up tasks (from sprint review)
+- [ ] (#14) Integrate `ParasiteManager.spawnPickupIfDue` into `MainScene` so parasite pickups actually appear during active gameplay, using live snake/food/obstacle occupancy and clearing pickup state on run reset.
+- [ ] (#15) Add a `MainScene` integration test that advances parasite timers and verifies spawned pickups are rendered and never placed on snake, food, or obstacle cells.
