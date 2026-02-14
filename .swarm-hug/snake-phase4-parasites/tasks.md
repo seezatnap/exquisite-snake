@@ -8,15 +8,15 @@
 
 ## Ability Mechanics
 
-- [A] (#4) Implement Magnet behavior: each tick, detect food within 2-tile Manhattan distance of any magnet segment, pull food 1 tile closer per tick with valid-cell checks, and apply stacked +10% base speed per magnet segment [5 pts] (blocked by #3)
-- [A] (#5) Implement Shield behavior: on wall/self collision, consume one shield segment to absorb the hit and cancel game over, then enforce blocked-next-food logic where first contact does not consume and second contact does [5 pts] (blocked by #3)
-- [B] (#6) Implement Splitter score behavior so all score gains are multiplied by 1.5 while splitter is attached, across all existing score event paths [5 pts] (blocked by #3)
-- [B] (#7) Implement Splitter obstacle behavior: spawn a stationary obstacle every 10 seconds while splitter is attached, place only on random empty cells, persist obstacles until biome change or game over, and clear correctly on those events [5 pts] (blocked by #3)
+- [x] (#4) Implement Magnet behavior: each tick, detect food within 2-tile Manhattan distance of any magnet segment, pull food 1 tile closer per tick with valid-cell checks, and apply stacked +10% base speed per magnet segment [5 pts] (blocked by #3) (A)
+- [x] (#5) Implement Shield behavior: on wall/self collision, consume one shield segment to absorb the hit and cancel game over, then enforce blocked-next-food logic where first contact does not consume and second contact does [5 pts] (blocked by #3) (A)
+- [x] (#6) Implement Splitter score behavior so all score gains are multiplied by 1.5 while splitter is attached, across all existing score event paths [5 pts] (blocked by #3) (B)
+- [x] (#7) Implement Splitter obstacle behavior: spawn a stationary obstacle every 10 seconds while splitter is attached, place only on random empty cells, persist obstacles until biome change or game over, and clear correctly on those events [5 pts] (blocked by #3) (B)
 
 ## Integration and Rendering
 
 - [ ] (#8) Integrate collision handling for parasite effects: splitter obstacles kill on contact, shield absorption resolves before game-over finalization, and collision ordering remains deterministic with existing wall/self checks [5 pts] (blocked by #5, #7)
-- [C] (#9) Add parasite segment visuals on the snake with pulsing glow and tiny type icon overlays (Magnet/Shield/Splitter), ensuring proper layering with existing snake and ghost rendering [5 pts] (blocked by #3)
+- [x] (#9) Add parasite segment visuals on the snake with pulsing glow and tiny type icon overlays (Magnet/Shield/Splitter), ensuring proper layering with existing snake and ghost rendering [5 pts] (blocked by #3) (C)
 - [ ] (#10) Enforce Echo Ghost exclusions so ghost entities neither collide with parasite pickups/obstacles nor receive parasite-driven effects (magnet pull, shield absorb, splitter multiplier) [5 pts] (blocked by #4, #5, #6, #7)
 
 ## HUD and End Screen
