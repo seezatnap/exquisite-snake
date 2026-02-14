@@ -3,8 +3,13 @@ import fs from "fs";
 import path from "path";
 import { gameBridge } from "@/game/bridge";
 import { GRID_COLS, GRID_ROWS } from "@/game/config";
-import { EchoGhost, type EchoGhostRewindState } from "@/game/entities/EchoGhost";
+import {
+  DEFAULT_ECHO_DELAY_MS,
+  EchoGhost,
+  type EchoGhostRewindState,
+} from "@/game/entities/EchoGhost";
 import type { GridPos } from "@/game/utils/grid";
+import * as effects from "@/game/systems/effects";
 
 const ROOT = path.resolve(__dirname, "../..");
 
@@ -25,6 +30,7 @@ const mockSceneStart = vi.fn();
 const mockDestroy = vi.fn();
 const mockSetPosition = vi.fn();
 const mockKeyboardOn = vi.fn();
+const mockDelayedCall = vi.fn();
 
 function createMockSprite() {
   return {
@@ -61,7 +67,7 @@ vi.mock("phaser", () => {
       exists: vi.fn().mockReturnValue(true),
     };
     time = {
-      delayedCall: vi.fn(),
+      delayedCall: mockDelayedCall,
     };
     constructor(public config?: { key: string }) {}
   }
@@ -408,6 +414,55 @@ describe("MainScene – no local state fields (single source of truth)", () => {
 
   it("reads state from gameBridge.getState()", () => {
     expect(source).toContain("gameBridge.getState()");
+  });
+});
+
+describe("MainScene – ghost food burst timing", () => {
+  it("schedules a ghost-food particle burst after the ghost delay", () => {
+    const scene = new MainScene();
+    const emitFoodSpy = vi.spyOn(effects, "emitFoodParticles");
+    scene.create();
+    scene.enterPhase("playing");
+
+    const food = scene.getFood();
+    const snake = scene.getSnake();
+    expect(food).not.toBeNull();
+    expect(snake).not.toBeNull();
+
+    const foodPos = food!.getPosition();
+    const foodSprite = food!.getSprite();
+    const burstX = 123;
+    const burstY = 456;
+    foodSprite.x = burstX;
+    foodSprite.y = burstY;
+
+    const startHead =
+      foodPos.row === 0
+        ? { col: foodPos.col, row: foodPos.row + 1 }
+        : { col: foodPos.col, row: foodPos.row - 1 };
+    const startDirection = foodPos.row === 0 ? "up" : "down";
+    snake!.reset(startHead, startDirection, snake!.getLength());
+
+    emitFoodSpy.mockClear();
+    mockDelayedCall.mockClear();
+
+    scene.update(0, snake!.getTicker().interval);
+    expect(scene.getScore()).toBe(1);
+
+    expect(mockDelayedCall).toHaveBeenCalledWith(
+      DEFAULT_ECHO_DELAY_MS,
+      expect.any(Function),
+    );
+
+    const delayedCallback = mockDelayedCall.mock.calls[0][1] as () => void;
+    expect(emitFoodSpy).toHaveBeenCalledTimes(1);
+    expect(emitFoodSpy).toHaveBeenLastCalledWith(scene, burstX, burstY);
+    emitFoodSpy.mockClear();
+
+    delayedCallback();
+    expect(emitFoodSpy).toHaveBeenCalledTimes(1);
+    expect(emitFoodSpy).toHaveBeenCalledWith(scene, burstX, burstY);
+    expect(scene.getScore()).toBe(1);
   });
 });
 

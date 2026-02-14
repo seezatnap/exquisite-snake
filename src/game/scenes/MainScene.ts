@@ -1,5 +1,5 @@
 import Phaser from "phaser";
-import {
+  import {
   ARENA_WIDTH,
   ARENA_HEIGHT,
   TILE_SIZE,
@@ -145,9 +145,21 @@ export class MainScene extends Phaser.Scene {
         this.addScore(points),
       );
       if (eaten) {
+        this.scheduleGhostFoodBurst(fx, fy);
         emitFoodParticles(this, fx, fy);
       }
     }
+  }
+
+  /** Schedule a cosmetic burst at the ghost's corresponding position after delay. */
+  private scheduleGhostFoodBurst(x: number, y: number): void {
+    if (!this.echoGhost) {
+      return;
+    }
+
+    this.time.delayedCall(this.echoGhost.getDelayMs(), () => {
+      emitFoodParticles(this, x, y);
+    });
   }
 
   // ── Phase management ────────────────────────────────────────
