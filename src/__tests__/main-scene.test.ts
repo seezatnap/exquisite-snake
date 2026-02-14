@@ -1899,6 +1899,74 @@ describe("MainScene – echo ghost collision", () => {
     expect(mockCameraShake).toHaveBeenCalledTimes(1);
   });
 
+  it("matches self-collision fatality side effects (parity with echo-collision)", () => {
+    const runSelfCollision = () => {
+      const scene = new MainScene();
+      scene.create();
+      scene.enterPhase("playing");
+
+      const snake = scene.getSnake()!;
+      const endRunSpy = vi.spyOn(scene, "endRun");
+      snake.reset({ col: 5, row: 5 }, "right", 5);
+
+      mockCameraShake.mockClear();
+      const interval = snake.getTicker().interval;
+      scene.update(0, interval);
+      snake.bufferDirection("down");
+      scene.update(0, interval);
+      snake.bufferDirection("left");
+      scene.update(0, interval);
+      snake.bufferDirection("up");
+      scene.update(0, interval);
+
+      return {
+        phase: scene.getPhase(),
+        snakeAlive: snake.isAlive(),
+        endRunCalls: endRunSpy.mock.calls.length,
+        cameraShakeCalls: mockCameraShake.mock.calls.length,
+      };
+    };
+
+    const runEchoCollision = () => {
+      const scene = new MainScene();
+      scene.create();
+      scene.enterPhase("playing");
+
+      const snake = scene.getSnake()!;
+      const echoGhost = scene.getEchoGhost()!;
+      const endRunSpy = vi.spyOn(scene, "endRun");
+      snake.reset({ col: 10, row: 10 }, "right", 1);
+
+      vi.spyOn(echoGhost, "isActive").mockReturnValue(true);
+      vi.spyOn(echoGhost, "getPlaybackSegments").mockReturnValue([
+        { col: 11, row: 10 },
+      ]);
+
+      mockCameraShake.mockClear();
+      const interval = snake.getTicker().interval;
+      scene.update(0, interval);
+
+      return {
+        phase: scene.getPhase(),
+        snakeAlive: snake.isAlive(),
+        endRunCalls: endRunSpy.mock.calls.length,
+        cameraShakeCalls: mockCameraShake.mock.calls.length,
+      };
+    };
+
+    const selfCollisionOutcome = runSelfCollision();
+    resetBridge();
+    const echoCollisionOutcome = runEchoCollision();
+
+    expect(selfCollisionOutcome).toEqual({
+      phase: "gameOver",
+      snakeAlive: false,
+      endRunCalls: 1,
+      cameraShakeCalls: 1,
+    });
+    expect(echoCollisionOutcome).toEqual(selfCollisionOutcome);
+  });
+
   it("does not collide with playback segments while echo ghost is inactive", () => {
     const scene = new MainScene();
     scene.create();
