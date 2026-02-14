@@ -14,6 +14,7 @@ import { Snake } from "../entities/Snake";
 import { Food } from "../entities/Food";
 import { EchoGhost } from "../entities/EchoGhost";
 import { emitFoodParticles, shakeCamera } from "../systems/effects";
+import { RewindManager } from "../systems/RewindManager";
 
 // ── Default spawn configuration ─────────────────────────────────
 
@@ -46,6 +47,9 @@ export class MainScene extends Phaser.Scene {
 
   /** The echo ghost entity for the current run (null when not playing). */
   private echoGhost: EchoGhost | null = null;
+
+  /** Rewind manager — Phase 6 hook for snapshotting/restoring game state. */
+  private rewindManager: RewindManager = new RewindManager();
 
   /**
    * Injectable RNG function for deterministic replay sessions.
@@ -178,6 +182,7 @@ export class MainScene extends Phaser.Scene {
     this.snake.setupTouchInput();
     this.food = new Food(this, this.snake, this.rng);
     this.echoGhost = new EchoGhost();
+    this.rewindManager.register("echoGhost", this.echoGhost);
   }
 
   /** Destroy existing snake, food, and echo ghost entities. */
@@ -194,6 +199,7 @@ export class MainScene extends Phaser.Scene {
       this.echoGhost.reset();
       this.echoGhost = null;
     }
+    this.rewindManager.clear();
   }
 
   // ── Collision detection ───────────────────────────────────────
@@ -268,6 +274,10 @@ export class MainScene extends Phaser.Scene {
 
   getEchoGhost(): EchoGhost | null {
     return this.echoGhost;
+  }
+
+  getRewindManager(): RewindManager {
+    return this.rewindManager;
   }
 
   // ── Arena grid ──────────────────────────────────────────────
