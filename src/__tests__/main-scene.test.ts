@@ -776,6 +776,41 @@ describe("MainScene – ghost rendering", () => {
     expect(fadeAlpha).toBeGreaterThan(0);
     expect(fadeAlpha).toBeLessThan(0.4);
   });
+
+  it("keeps the fading ghost trail visible on non-stepped frames", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.enterPhase("playing");
+
+    const snake = scene.getSnake();
+    expect(snake).not.toBeNull();
+
+    const fastFadeGhost = new EchoGhost(
+      snake!.getTicker().interval,
+      250,
+      250,
+    );
+    (scene as unknown as { echoGhost: EchoGhost }).echoGhost = fastFadeGhost;
+
+    snake!.reset({ col: 20, row: 15 }, "right", 1);
+    mockLineStyle.mockClear();
+
+    scene.update(0, snake!.getTicker().interval);
+    scene.update(0, snake!.getTicker().interval);
+    scene.update(0, snake!.getTicker().interval);
+
+    mockLineStyle.mockClear();
+    scene.update(0, snake!.getTicker().interval);
+    expect(mockLineStyle).toHaveBeenCalled();
+
+    const fadeAlpha = mockLineStyle.mock.calls.at(-1)?.at(2) as number;
+    expect(fadeAlpha).toBeGreaterThan(0);
+    expect(fadeAlpha).toBeLessThan(0.4);
+
+    mockLineStyle.mockClear();
+    scene.update(0, 0);
+    expect(mockLineStyle).toHaveBeenCalled();
+  });
 });
 
 describe("MainScene source file", () => {
