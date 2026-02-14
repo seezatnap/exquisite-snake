@@ -142,6 +142,27 @@ describe("EchoGhost", () => {
     }
   });
 
+  it("starts outputting only after the 5-second default delay window", () => {
+    const ghost = new EchoGhost(DEFAULT_MOVE_INTERVAL_MS);
+    const expectedDelayTicks = ghost.getDelayTicks();
+
+    expect(ghost.getDelayMs()).toBe(5000);
+    expect(expectedDelayTicks).toBe(40);
+
+    for (let step = 1; step <= expectedDelayTicks; step++) {
+      ghost.writePositions([makePos(step, 0)]);
+      ghost.advanceReplayProgress();
+
+      if (step < expectedDelayTicks) {
+        expect(ghost.isReplayReady()).toBe(false);
+        expect(ghost.readDelayedTrail()).toEqual([]);
+      } else {
+        expect(ghost.isReplayReady()).toBe(true);
+        expect(ghost.readDelayedTrail()).toEqual([makePos(1, 0)]);
+      }
+    }
+  });
+
   it("optionally reveals fading ghost trail output", () => {
     const ghost = new EchoGhost(100, 200, 200); // 2 delay ticks, 2 fade ticks
 
@@ -157,6 +178,31 @@ describe("EchoGhost", () => {
     expect(ghost.readDelayedTrail()).toEqual([]);
     expect(ghost.readDelayedTrail(true)).toEqual([makePos(3, 0)]);
     expect(ghost.getReplayOpacity()).toBe(0.5);
+  });
+
+  it("keeps replay bounded by buffer capacity after exhaustion", () => {
+    const ghost = new EchoGhost(100, 300, 100); // 3-tick delay, 1-tick fade
+    const capacity = ghost.getBufferCapacity();
+    expect(capacity).toBe(3);
+
+    for (let step = 1; step <= 6; step++) {
+      ghost.writePositions([makePos(step, 0)]);
+      ghost.advanceReplayProgress();
+    }
+
+    expect(ghost.getReplayState()).toBe("exhausted");
+    expect(ghost.readDelayedTrail()).toEqual([]);
+
+    for (let step = 7; step <= 12; step++) {
+      ghost.writePositions([makePos(step, 0)]);
+      ghost.advanceReplayProgress();
+
+      expect(ghost.getReplayState()).toBe("exhausted");
+      expect(ghost.readDelayedTrail()).toEqual([]);
+    }
+
+    expect(ghost.getBufferCapacity()).toBe(capacity);
+    expect(ghost.getRecordedTickCount()).toBe(12);
   });
 
   it("captures rewind snapshots with immutable copied buffers", () => {
