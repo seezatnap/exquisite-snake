@@ -8,12 +8,12 @@
 
 ## Gameplay & Collision
 
-- [ ] (#4) Add echo ghost to the central collision detection flow and treat any snake/ghost contact as a fatal self-collision-equivalent event, including reuse of existing game-over outcome handling. [5 pts] (blocked by #2, #3)
-- [ ] (#5) Implement delayed ghost-food burst behavior: when the real snake eats food, schedule a cosmetic particle burst at the corresponding ghost position exactly 5 seconds later, with no impact on score/state except visuals. [5 pts] (blocked by #2, #3)
+- [A] (#4) Add echo ghost to the central collision detection flow and treat any snake/ghost contact as a fatal self-collision-equivalent event, including reuse of existing game-over outcome handling. [5 pts] (blocked by #2, #3)
+- [B] (#5) Implement delayed ghost-food burst behavior: when the real snake eats food, schedule a cosmetic particle burst at the corresponding ghost position exactly 5 seconds later, with no impact on score/state except visuals. [5 pts] (blocked by #2, #3)
 
 ## Rendering & Biome
 
-- [ ] (#6) Render the ghost as a distinct translucent hazard (40% opacity, dashed outline) with trailing particles, using current renderer systems and matching existing segment geometry. [5 pts] (blocked by #2, #3)
+- [B] (#6) Render the ghost as a distinct translucent hazard (40% opacity, dashed outline) with trailing particles, using current renderer systems and matching existing segment geometry. [5 pts] (blocked by #2, #3)
 - [ ] (#7) Apply biome-aware tinting to ghost visuals so trail and particles are colored by the current biome while preserving opacity and dashed styling, including smooth transitions if the biome changes during replay. [5 pts] (blocked by #6)
 
 ## Rewind Preparation
