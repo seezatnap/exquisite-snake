@@ -683,6 +683,44 @@ describe("MainScene", () => {
     expect(pickupSpriteDestroy).toHaveBeenCalledTimes(1);
   });
 
+  it("keeps respawned food off active parasite pickup cells after food is eaten", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.setRng(() => 0);
+    scene.enterPhase("playing");
+
+    const snake = scene.getSnake()!;
+    snake.reset({ col: 5, row: 5 }, "right", 4);
+    snake.getTicker().setInterval(100);
+    scene.getFood()!.setPosition({ col: 6, row: 5 });
+
+    const parasiteManager = getParasiteManager(scene);
+    const seeded = parasiteManager.getState();
+    seeded.pickups = [
+      {
+        id: "pickup-a",
+        type: ParasiteType.Magnet,
+        position: { col: 0, row: 0 },
+        spawnedAtMs: 1,
+      },
+      {
+        id: "pickup-b",
+        type: ParasiteType.Shield,
+        position: { col: 0, row: 1 },
+        spawnedAtMs: 2,
+      },
+    ];
+    parasiteManager.replaceState(seeded);
+
+    scene.update(0, 100);
+
+    const respawnedFood = scene.getFood()!.getPosition();
+    const activePickups = parasiteManager.getState().pickups;
+    for (const pickup of activePickups) {
+      expect(respawnedFood).not.toEqual(pickup.position);
+    }
+  });
+
   it("pulls food one tile per stepped tick when a magnet segment is in range", () => {
     const scene = new MainScene();
     scene.create();

@@ -1141,8 +1141,13 @@ export class MainScene extends Phaser.Scene {
     const ghostSampleTimestampMs = this.echoGhost.getElapsedMs();
     const ghostDelayMs = this.echoGhost.getDelayMs();
     const runIdAtEat = this.activeRunId;
+    const blockedRespawnCells = this.parasiteManager
+      .getState()
+      .pickups
+      .map((pickup) => pickup.position);
     const eaten = this.food.checkEat(this.snake, (points) =>
       this.addScore(points),
+      blockedRespawnCells,
     );
     if (eaten) {
       emitFoodParticles(this, fx, fy);
