@@ -317,11 +317,43 @@ export class ParasiteManager {
    * - Splitter obstacle collisions.
    */
   onCollisionCheck(context: ParasiteCollisionContext): ParasiteCollisionResult {
-    void context;
+    if (context.actor !== "snake") {
+      return {
+        cancelGameOver: false,
+        absorbedByShield: false,
+        consumedShieldSegmentId: null,
+      };
+    }
+
+    if (context.kind !== "wall" && context.kind !== "self") {
+      return {
+        cancelGameOver: false,
+        absorbedByShield: false,
+        consumedShieldSegmentId: null,
+      };
+    }
+
+    const shieldSegmentIndex = this.state.activeSegments.findIndex((segment) =>
+      segment.type === ParasiteType.Shield
+    );
+    if (shieldSegmentIndex < 0) {
+      return {
+        cancelGameOver: false,
+        absorbedByShield: false,
+        consumedShieldSegmentId: null,
+      };
+    }
+
+    const [consumedShieldSegment] = this.state.activeSegments.splice(
+      shieldSegmentIndex,
+      1,
+    );
+    this.state.flags.blockNextFoodPickup = true;
+
     return {
-      cancelGameOver: false,
-      absorbedByShield: false,
-      consumedShieldSegmentId: null,
+      cancelGameOver: true,
+      absorbedByShield: true,
+      consumedShieldSegmentId: consumedShieldSegment?.id ?? null,
     };
   }
 
@@ -335,6 +367,14 @@ export class ParasiteManager {
       return {
         allowConsume: false,
         blockedByShieldPenalty: false,
+      };
+    }
+
+    if (this.state.flags.blockNextFoodPickup) {
+      this.state.flags.blockNextFoodPickup = false;
+      return {
+        allowConsume: false,
+        blockedByShieldPenalty: true,
       };
     }
 

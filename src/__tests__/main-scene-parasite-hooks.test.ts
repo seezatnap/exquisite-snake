@@ -230,6 +230,65 @@ describe("MainScene parasite hook wiring", () => {
     expect(scene.getPhase()).toBe("gameOver");
   });
 
+  it("absorbs wall collisions with shield segments and cancels game over", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.enterPhase("playing");
+
+    const parasiteState = createParasiteRuntimeState();
+    parasiteState.activeSegments.push({
+      id: "segment-shield",
+      type: ParasiteType.Shield,
+      attachedAtMs: 0,
+    });
+    scene.getParasiteManager().restoreState(parasiteState);
+
+    const snake = scene.getSnake()!;
+    snake.reset({ col: GRID_COLS - 1, row: 10 }, "right", 1);
+    scene.update(0, snake.getTicker().interval);
+
+    const stateAfterCollision = scene.getParasiteManager().getState();
+    expect(scene.getPhase()).toBe("playing");
+    expect(stateAfterCollision.activeSegments).toEqual([]);
+    expect(stateAfterCollision.flags.blockNextFoodPickup).toBe(true);
+  });
+
+  it("blocks first food contact after shield absorb, then consumes on second contact", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.enterPhase("playing");
+
+    const parasiteState = createParasiteRuntimeState();
+    parasiteState.activeSegments.push({
+      id: "segment-shield",
+      type: ParasiteType.Shield,
+      attachedAtMs: 0,
+    });
+    scene.getParasiteManager().restoreState(parasiteState);
+
+    const snake = scene.getSnake()!;
+    snake.reset({ col: GRID_COLS - 1, row: 10 }, "right", 1);
+    scene.update(0, snake.getTicker().interval);
+    expect(scene.getPhase()).toBe("playing");
+
+    const scoreBefore = scene.getScore();
+    const firstFoodPos = scene.getFood()!.getPosition();
+    const firstApproach = getApproachVector(firstFoodPos);
+    snake.reset(firstApproach.head, firstApproach.direction, 1);
+    scene.update(0, snake.getTicker().interval);
+
+    expect(scene.getScore()).toBe(scoreBefore);
+    expect(scene.getFood()!.getPosition()).toEqual(firstFoodPos);
+    expect(scene.getParasiteManager().getState().flags.blockNextFoodPickup).toBe(false);
+
+    const secondApproach = getApproachVector(firstFoodPos);
+    snake.reset(secondApproach.head, secondApproach.direction, 1);
+    scene.update(0, snake.getTicker().interval);
+
+    expect(scene.getScore()).toBe(scoreBefore + 1);
+    expect(scene.getFood()!.getPosition()).not.toEqual(firstFoodPos);
+  });
+
   it("routes food score gains through parasite scoring hook with food source metadata", () => {
     const scene = new MainScene();
     scene.create();

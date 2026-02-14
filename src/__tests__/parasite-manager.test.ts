@@ -418,6 +418,118 @@ describe("ParasiteManager integration hooks", () => {
     });
   });
 
+  it("consumes one shield segment to absorb wall/self collisions and block next food", () => {
+    const manager = new ParasiteManager();
+    const snapshot = createParasiteRuntimeState();
+    snapshot.activeSegments = [
+      { id: "segment-magnet", type: ParasiteType.Magnet, attachedAtMs: 10 },
+      { id: "segment-shield-a", type: ParasiteType.Shield, attachedAtMs: 20 },
+      { id: "segment-shield-b", type: ParasiteType.Shield, attachedAtMs: 30 },
+    ];
+    manager.restoreState(snapshot);
+
+    const wallCollision = manager.onCollisionCheck({
+      actor: "snake",
+      kind: "wall",
+      headPosition: { col: -1, row: 4 },
+    });
+    expect(wallCollision).toEqual({
+      cancelGameOver: true,
+      absorbedByShield: true,
+      consumedShieldSegmentId: "segment-shield-a",
+    });
+    expect(manager.getState().flags.blockNextFoodPickup).toBe(true);
+    expect(manager.getShieldSegmentCount()).toBe(1);
+
+    const selfCollision = manager.onCollisionCheck({
+      actor: "snake",
+      kind: "self",
+      headPosition: { col: 10, row: 10 },
+    });
+    expect(selfCollision).toEqual({
+      cancelGameOver: true,
+      absorbedByShield: true,
+      consumedShieldSegmentId: "segment-shield-b",
+    });
+    expect(manager.getShieldSegmentCount()).toBe(0);
+  });
+
+  it("does not absorb collisions without shield segments or for unsupported kinds", () => {
+    const manager = new ParasiteManager();
+    const snapshot = createParasiteRuntimeState();
+    snapshot.activeSegments.push({
+      id: "segment-shield",
+      type: ParasiteType.Shield,
+      attachedAtMs: 0,
+    });
+    manager.restoreState(snapshot);
+
+    expect(
+      manager.onCollisionCheck({
+        actor: "snake",
+        kind: "splitter-obstacle",
+        headPosition: { col: 8, row: 8 },
+      }),
+    ).toEqual({
+      cancelGameOver: false,
+      absorbedByShield: false,
+      consumedShieldSegmentId: null,
+    });
+    expect(manager.getShieldSegmentCount()).toBe(1);
+
+    manager.restoreState(createParasiteRuntimeState());
+    expect(
+      manager.onCollisionCheck({
+        actor: "snake",
+        kind: "wall",
+        headPosition: { col: -1, row: 8 },
+      }),
+    ).toEqual({
+      cancelGameOver: false,
+      absorbedByShield: false,
+      consumedShieldSegmentId: null,
+    });
+  });
+
+  it("blocks exactly one food contact after a shield absorb", () => {
+    const manager = new ParasiteManager();
+    const snapshot = createParasiteRuntimeState();
+    snapshot.activeSegments.push({
+      id: "segment-shield",
+      type: ParasiteType.Shield,
+      attachedAtMs: 0,
+    });
+    manager.restoreState(snapshot);
+
+    manager.onCollisionCheck({
+      actor: "snake",
+      kind: "wall",
+      headPosition: { col: -1, row: 5 },
+    });
+    expect(manager.getState().flags.blockNextFoodPickup).toBe(true);
+
+    const firstContact = manager.onFoodContact({
+      actor: "snake",
+      snakeHead: { col: 4, row: 5 },
+      foodPosition: { col: 4, row: 5 },
+    });
+    expect(firstContact).toEqual({
+      allowConsume: false,
+      blockedByShieldPenalty: true,
+    });
+    expect(manager.getState().flags.blockNextFoodPickup).toBe(false);
+
+    const secondContact = manager.onFoodContact({
+      actor: "snake",
+      snakeHead: { col: 4, row: 5 },
+      foodPosition: { col: 4, row: 5 },
+    });
+    expect(secondContact).toEqual({
+      allowConsume: true,
+      blockedByShieldPenalty: false,
+    });
+  });
+
   it("applies Splitter score multiplier across all score sources while attached", () => {
     const manager = new ParasiteManager();
     const snapshot = createParasiteRuntimeState();
