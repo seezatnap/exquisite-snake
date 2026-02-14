@@ -3,7 +3,7 @@ import fs from "fs";
 import path from "path";
 import { gameBridge } from "@/game/bridge";
 import { GRID_COLS, GRID_ROWS } from "@/game/config";
-import { EchoGhost } from "@/game/entities/EchoGhost";
+import { EchoGhost, type EchoGhostRewindState } from "@/game/entities/EchoGhost";
 import type { GridPos } from "@/game/utils/grid";
 
 const ROOT = path.resolve(__dirname, "../..");
@@ -904,5 +904,42 @@ describe("MainScene – update integration", () => {
     }
 
     expect(getGhostReplayTicks(scene)).toBe(1);
+  });
+
+  it("can register and receive echo ghost rewind snapshots during updates", () => {
+    const scene = new MainScene();
+    scene.create();
+    const received: EchoGhostRewindState[] = [];
+
+    scene.setEchoGhostRewindStateHook((state) => {
+      received.push(state);
+    });
+    scene.enterPhase("playing");
+
+    scene.update(0, scene.getSnake()!.getTicker().interval);
+
+    expect(received.length).toBeGreaterThan(0);
+    expect(received[received.length - 1]).toMatchObject({
+      writeCount: 1,
+      replayState: "waiting",
+    });
+  });
+
+  it("exposes rewind capture / restore entrypoints on MainScene", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.enterPhase("playing");
+
+    scene.update(0, scene.getSnake()!.getTicker().interval);
+
+    const snapshot = scene.getEchoGhostRewindState();
+    expect(snapshot).not.toBeNull();
+
+    if (snapshot) {
+      scene.restoreEchoGhostRewindState(snapshot);
+      expect(scene.getEchoGhostRewindState()!.writeCount).toBe(
+        snapshot.writeCount,
+      );
+    }
   });
 });
