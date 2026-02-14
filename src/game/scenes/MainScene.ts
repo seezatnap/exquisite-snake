@@ -83,6 +83,9 @@ export class MainScene extends Phaser.Scene {
   /** Whether the ghost delay window has completed and replay has started. */
   private isGhostReplayActive = false;
 
+  /** Cached non-empty ghost trail used to keep fading visible between movement ticks. */
+  private lastNonEmptyGhostTrail: GridPos[] = [];
+
   /** Current ghost trail tint before transition progress is applied. */
   private ghostTrailTint: number = GHOST_BIOME_DEFAULT_TINT;
 
@@ -153,7 +156,7 @@ export class MainScene extends Phaser.Scene {
 
     const stepped = this.snake.update(delta);
     this.advanceGhostTintTransition(delta);
-    let replayState = null;
+    let replayState = this.echoGhost?.getReplayState() ?? null;
 
     if (stepped) {
       this.echoGhost?.writePositions(this.snake.getSegments());
@@ -173,8 +176,17 @@ export class MainScene extends Phaser.Scene {
       }
     }
 
-    const ghostTrail =
-      this.echoGhost?.readDelayedTrail(replayState === "fading") ?? [];
+    let ghostTrail = this.echoGhost?.readDelayedTrail(
+      replayState === "fading",
+    ) ?? [];
+    if (replayState === "fading" && ghostTrail.length === 0) {
+      ghostTrail = this.lastNonEmptyGhostTrail;
+    }
+    if (ghostTrail.length > 0) {
+      this.lastNonEmptyGhostTrail = ghostTrail;
+    } else if (replayState !== "fading") {
+      this.lastNonEmptyGhostTrail = [];
+    }
     const ghostOpacity = this.echoGhost?.getReplayOpacity() ?? 0;
     const ghostTint = this.getCurrentGhostTrailTint();
     this.renderEchoGhost(ghostTrail, ghostOpacity, ghostTint);
@@ -323,6 +335,7 @@ export class MainScene extends Phaser.Scene {
     this.ghostProgressTicks = 0;
     this.ghostReplayTicks = 0;
     this.isGhostReplayActive = false;
+    this.lastNonEmptyGhostTrail = [];
   }
 
   /** Set the current ghost tint, optionally animating it over a short transition. */
