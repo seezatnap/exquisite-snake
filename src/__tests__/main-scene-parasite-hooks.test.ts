@@ -1,8 +1,12 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { gameBridge } from "@/game/bridge";
-import { TEXTURE_KEYS } from "@/game/config";
-import { GRID_COLS, GRID_ROWS } from "@/game/config";
-import { PARASITE_PICKUP_SPAWN_INTERVAL_MS } from "@/game/entities/Parasite";
+import { GRID_COLS, GRID_ROWS, RENDER_DEPTH, TEXTURE_KEYS } from "@/game/config";
+import {
+  PARASITE_COLORS,
+  PARASITE_PICKUP_SPAWN_INTERVAL_MS,
+  ParasiteType,
+  createParasiteRuntimeState,
+} from "@/game/entities/Parasite";
 import { Biome } from "@/game/systems/BiomeManager";
 
 function createMockGraphics() {
@@ -296,5 +300,63 @@ describe("MainScene parasite hook wiring", () => {
     expect(parasiteState.activeSegments).toHaveLength(1);
     expect(parasiteState.activeSegments[0]?.type).toBe(spawnedPickup!.type);
     expect(parasiteState.counters.collected).toBe(1);
+  });
+
+  it("renders pulsing parasite glows and tiny type labels above snake depth", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.enterPhase("playing");
+    scene.getSnake()!.reset({ col: 10, row: 10 }, "right", 6);
+
+    const parasiteState = createParasiteRuntimeState();
+    parasiteState.activeSegments = [
+      { id: "segment-magnet", type: ParasiteType.Magnet, attachedAtMs: 40 },
+      { id: "segment-shield", type: ParasiteType.Shield, attachedAtMs: 80 },
+      { id: "segment-splitter", type: ParasiteType.Splitter, attachedAtMs: 120 },
+    ];
+    parasiteState.timers.glowPulseElapsedMs = 180;
+    scene.getParasiteManager().restoreState(parasiteState);
+
+    scene.update(0, 16);
+
+    const internals = scene as unknown as {
+      parasiteSegmentGlowGraphics: ReturnType<typeof createMockGraphics> | null;
+      parasiteSegmentIconTexts: ReturnType<typeof createMockText>[];
+    };
+
+    const glowGraphics = internals.parasiteSegmentGlowGraphics;
+    expect(glowGraphics).not.toBeNull();
+    expect(glowGraphics!.fillStyle).toHaveBeenCalledWith(
+      PARASITE_COLORS[ParasiteType.Magnet],
+      expect.any(Number),
+    );
+    expect(glowGraphics!.fillStyle).toHaveBeenCalledWith(
+      PARASITE_COLORS[ParasiteType.Shield],
+      expect.any(Number),
+    );
+    expect(glowGraphics!.fillStyle).toHaveBeenCalledWith(
+      PARASITE_COLORS[ParasiteType.Splitter],
+      expect.any(Number),
+    );
+    expect(glowGraphics!.fillCircle.mock.calls.length).toBeGreaterThanOrEqual(6);
+    expect(glowGraphics!.setDepth).toHaveBeenCalledWith(
+      RENDER_DEPTH.PARASITE_SEGMENT_GLOW,
+    );
+
+    const iconTexts = internals.parasiteSegmentIconTexts;
+    expect(iconTexts).toHaveLength(3);
+    const iconLabels = iconTexts.flatMap((icon) =>
+      icon.setText.mock.calls.map(([label]) => label)
+    );
+    expect(iconLabels).toEqual(expect.arrayContaining(["Mg", "Sh", "Sp"]));
+    for (const icon of iconTexts) {
+      expect(icon.setDepth).toHaveBeenCalledWith(RENDER_DEPTH.PARASITE_SEGMENT_ICON);
+      expect(icon.setVisible).toHaveBeenCalledWith(true);
+    }
+
+    expect(RENDER_DEPTH.PARASITE_SEGMENT_GLOW).toBeGreaterThan(RENDER_DEPTH.SNAKE);
+    expect(RENDER_DEPTH.PARASITE_SEGMENT_ICON).toBeGreaterThan(
+      RENDER_DEPTH.PARASITE_SEGMENT_GLOW,
+    );
   });
 });
