@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, act, cleanup } from "@testing-library/react";
 import type { GameBridge } from "@/game/bridge";
+import { ParasiteType } from "@/game/entities/Parasite";
 import { Biome } from "@/game/systems/BiomeManager";
 
 // vi.hoisted runs before the mock factory, so bridge is available.
@@ -13,6 +14,7 @@ const { bridge } = vi.hoisted(() => {
     highScore: number;
     elapsedTime: number;
     currentBiome: Biome;
+    activeParasites: string[];
   }
   type Listener = (v: unknown) => void;
 
@@ -23,6 +25,7 @@ const { bridge } = vi.hoisted(() => {
       highScore: 0,
       elapsedTime: 0,
       currentBiome: "neon-city",
+      activeParasites: [],
     };
     private listeners = new Map<string, Set<Listener>>();
 
@@ -33,13 +36,19 @@ const { bridge } = vi.hoisted(() => {
     setHighScore(h: number) { this.state.highScore = h; this.emit("highScoreChange", h); }
     setElapsedTime(t: number) { this.state.elapsedTime = t; this.emit("elapsedTimeChange", t); }
     setCurrentBiome(b: Biome) { this.state.currentBiome = b; this.emit("biomeChange", b); }
+    setActiveParasites(parasites: string[]) {
+      this.state.activeParasites = [...parasites];
+      this.emit("activeParasitesChange", this.state.activeParasites);
+    }
     resetRun() {
       this.state.score = 0;
       this.state.elapsedTime = 0;
       this.state.currentBiome = "neon-city";
+      this.state.activeParasites = [];
       this.emit("scoreChange", 0);
       this.emit("elapsedTimeChange", 0);
       this.emit("biomeChange", "neon-city");
+      this.emit("activeParasitesChange", []);
     }
 
     on(event: string, fn: Listener) {
@@ -73,6 +82,7 @@ describe("HUD component", () => {
     bridge.setScore(0);
     bridge.setHighScore(0);
     bridge.setCurrentBiome(Biome.NeonCity);
+    bridge.setActiveParasites([]);
   });
 
   // ── Visibility ────────────────────────────────────────────
@@ -198,20 +208,47 @@ describe("HUD component", () => {
     expect(container.querySelector('[data-slot="rewind"]')).toBeTruthy();
   });
 
-  it("renders parasites placeholder slot", () => {
+  it("renders parasite inventory slot", () => {
     bridge.setPhase("playing");
     const { container } = render(<HUD />);
-    expect(container.querySelector('[data-slot="parasites"]')).toBeTruthy();
+    expect(container.querySelector('[data-testid="hud-parasite-inventory"]')).toBeTruthy();
   });
 
-  it("placeholder slots are aria-hidden", () => {
+  it("shows empty parasite indicators when no parasites are active", () => {
     bridge.setPhase("playing");
     const { container } = render(<HUD />);
-    const slots = container.querySelectorAll('[data-slot]:not([data-slot="biome"])');
-    expect(slots.length).toBe(2);
-    slots.forEach((slot) => {
-      expect(slot.getAttribute("aria-hidden")).toBe("true");
-    });
+    expect(container.querySelector('[data-testid="hud-parasite-slot-0"]')!.textContent).toBe("·");
+    expect(container.querySelector('[data-testid="hud-parasite-slot-1"]')!.textContent).toBe("·");
+    expect(container.querySelector('[data-testid="hud-parasite-slot-2"]')!.textContent).toBe("·");
+  });
+
+  it("renders up to three active parasite indicators", () => {
+    bridge.setPhase("playing");
+    bridge.setActiveParasites([
+      ParasiteType.Magnet,
+      ParasiteType.Shield,
+      ParasiteType.Splitter,
+      ParasiteType.Magnet,
+    ]);
+    const { container } = render(<HUD />);
+    expect(container.querySelector('[data-testid="hud-parasite-slot-0"]')!.textContent).toBe("MG");
+    expect(container.querySelector('[data-testid="hud-parasite-slot-1"]')!.textContent).toBe("SH");
+    expect(container.querySelector('[data-testid="hud-parasite-slot-2"]')!.textContent).toBe("SP");
+  });
+
+  it("updates parasite inventory when bridge emits activeParasitesChange", () => {
+    bridge.setPhase("playing");
+    const { container } = render(<HUD />);
+
+    act(() => bridge.setActiveParasites([ParasiteType.Shield]));
+    expect(container.querySelector('[data-testid="hud-parasite-slot-0"]')!.textContent).toBe("SH");
+    expect(container.querySelector('[data-testid="hud-parasite-slot-1"]')!.textContent).toBe("·");
+    expect(container.querySelector('[data-testid="hud-parasite-slot-2"]')!.textContent).toBe("·");
+
+    act(() => bridge.setActiveParasites([ParasiteType.Splitter, ParasiteType.Magnet]));
+    expect(container.querySelector('[data-testid="hud-parasite-slot-0"]')!.textContent).toBe("SP");
+    expect(container.querySelector('[data-testid="hud-parasite-slot-1"]')!.textContent).toBe("MG");
+    expect(container.querySelector('[data-testid="hud-parasite-slot-2"]')!.textContent).toBe("·");
   });
 
   // ── Accessibility ─────────────────────────────────────────
@@ -239,12 +276,13 @@ describe("HUD component", () => {
     const offSpy = vi.spyOn(bridge, "off");
     unmount();
 
-    expect(offSpy).toHaveBeenCalledTimes(4);
+    expect(offSpy).toHaveBeenCalledTimes(5);
     const events = offSpy.mock.calls.map((c) => c[0]);
     expect(events).toContain("phaseChange");
     expect(events).toContain("scoreChange");
     expect(events).toContain("highScoreChange");
     expect(events).toContain("biomeChange");
+    expect(events).toContain("activeParasitesChange");
 
     offSpy.mockRestore();
   });
