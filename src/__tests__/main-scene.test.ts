@@ -4,6 +4,7 @@ import path from "path";
 import { gameBridge } from "@/game/bridge";
 import { GRID_COLS, GRID_ROWS, RENDER_DEPTH } from "@/game/config";
 import { Biome } from "@/game/systems/BiomeManager";
+import { gridToPixel } from "@/game/utils/grid";
 
 const ROOT = path.resolve(__dirname, "../..");
 
@@ -21,6 +22,7 @@ const mockFillCircle = vi.fn();
 const mockAddGraphics = vi.fn(() => mockGraphics);
 const mockSetBackgroundColor = vi.fn();
 const mockCameraShake = vi.fn();
+const mockTimeDelayedCall = vi.fn();
 
 const mockGraphics = {
   lineStyle: mockLineStyle,
@@ -98,7 +100,7 @@ vi.mock("phaser", () => {
       exists: vi.fn().mockReturnValue(true),
     };
     time = {
-      delayedCall: vi.fn(),
+      delayedCall: mockTimeDelayedCall,
     };
     constructor(public config?: { key: string }) {}
   }
@@ -742,8 +744,10 @@ describe("MainScene", () => {
     const scene = new MainScene();
     scene.create();
     scene.enterPhase("playing");
+    scene.setMoltenLavaConfig({ spawnChancePerInterval: 0 });
 
     const snake = scene.getSnake()!;
+    const echoGhost = scene.getEchoGhost()!;
     snake.getTicker().setInterval(60_000); // isolate biome timing from movement
     scene.update(0, 45_000); // Neon -> Ice
     scene.update(0, 45_000); // Ice -> Molten
@@ -752,6 +756,7 @@ describe("MainScene", () => {
     snake.reset({ col: 10, row: 10 }, "right", 1);
     snake.getTicker().setInterval(100);
     snake.bufferDirection("up");
+    vi.spyOn(echoGhost, "isActive").mockReturnValue(false);
 
     scene.update(0, 100);
     expect(scene.getPhase()).toBe("playing");
@@ -1511,6 +1516,25 @@ describe("MainScene – entity management", () => {
     expect(scene.getEchoGhost()).not.toBeNull();
   });
 
+  it("exposes rewind hooks to snapshot/restore EchoGhost state", () => {
+    const scene = new MainScene();
+    scene.create();
+    expect(scene.createEchoGhostSnapshot()).toBeNull();
+
+    scene.enterPhase("playing");
+    const ghost = scene.getEchoGhost()!;
+    ghost.advance(5_000);
+
+    const snapshot = scene.createEchoGhostSnapshot();
+    expect(snapshot).not.toBeNull();
+
+    ghost.reset();
+    expect(ghost.getBufferedSampleCount()).toBe(0);
+
+    scene.restoreEchoGhostSnapshot(snapshot);
+    expect(ghost.createSnapshot()).toEqual(snapshot);
+  });
+
   it("snake starts alive when entering 'playing'", () => {
     const scene = new MainScene();
     scene.create();
@@ -1558,6 +1582,121 @@ describe("MainScene – entity management", () => {
     expect(echoGhost.getBufferedSampleCount()).toBe(initialSamples + 1);
   });
 
+  it("renders EchoGhost with dashed outlines, 40% opacity, and trailing particles after delay", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.enterPhase("playing");
+
+    const snake = scene.getSnake()!;
+    snake.getTicker().setInterval(60_000);
+
+    mockLineStyle.mockClear();
+    mockMoveTo.mockClear();
+    mockLineTo.mockClear();
+    mockFillCircle.mockClear();
+
+    scene.update(0, 4_999);
+    expect(mockLineStyle).not.toHaveBeenCalledWith(2, 0xff4b8f, 0.4);
+    expect(mockFillCircle).not.toHaveBeenCalled();
+
+    scene.update(0, 1);
+
+    expect(mockLineStyle).toHaveBeenCalledWith(2, 0xff4b8f, 0.4);
+    expect(mockMoveTo).toHaveBeenCalled();
+    expect(mockLineTo).toHaveBeenCalled();
+    expect(mockFillCircle).toHaveBeenCalled();
+  });
+
+  it("tints EchoGhost visuals to the active biome at render time", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.enterPhase("playing");
+
+    const snake = scene.getSnake()!;
+    snake.getTicker().setInterval(60_000);
+
+    mockLineStyle.mockClear();
+    scene.update(0, 5_000);
+    expect(mockLineStyle).toHaveBeenCalledWith(2, 0xff4b8f, 0.4);
+
+    mockLineStyle.mockClear();
+    scene.update(0, 45_000); // Neon -> Ice
+
+    expect(scene.getCurrentBiome()).toBe(Biome.IceCavern);
+    expect(mockLineStyle).toHaveBeenCalledWith(2, 0xd3f1ff, 0.4);
+  });
+
+  it("queues a delayed ghost-food burst exactly 5 seconds after food is eaten", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.setRng(() => 0.5);
+    scene.enterPhase("playing");
+
+    const snake = scene.getSnake()!;
+    const foodPos = scene.getFood()!.getPosition();
+    const moveDirection = foodPos.col > 0 ? "right" : "left";
+    const startCol = moveDirection === "right" ? foodPos.col - 1 : foodPos.col + 1;
+    snake.reset({ col: startCol, row: foodPos.row }, moveDirection, 1);
+
+    const particlesAdd = (
+      scene as unknown as { add: { particles: ReturnType<typeof vi.fn> } }
+    ).add.particles;
+    particlesAdd.mockClear();
+    mockTimeDelayedCall.mockClear();
+
+    const interval = snake.getTicker().interval;
+    scene.update(0, interval);
+
+    expect(particlesAdd).toHaveBeenCalledTimes(1);
+    const delayedGhostBurstCall = mockTimeDelayedCall.mock.calls.find(
+      (call) => call[0] === 5_000,
+    );
+    expect(delayedGhostBurstCall).toBeDefined();
+
+    const delayedGhostBurstCallback = delayedGhostBurstCall![1] as () => void;
+    delayedGhostBurstCallback();
+
+    expect(particlesAdd).toHaveBeenCalledTimes(2);
+    const delayedBurstArgs = particlesAdd.mock.calls[1];
+    const expectedGhostBurstPixel = gridToPixel(foodPos);
+    expect(delayedBurstArgs[0]).toBe(expectedGhostBurstPixel.x);
+    expect(delayedBurstArgs[1]).toBe(expectedGhostBurstPixel.y);
+  });
+
+  it("skips delayed ghost-food burst when the target history sample is unavailable", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.setRng(() => 0.5);
+    scene.enterPhase("playing");
+
+    const snake = scene.getSnake()!;
+    const foodPos = scene.getFood()!.getPosition();
+    const moveDirection = foodPos.col > 0 ? "right" : "left";
+    const startCol = moveDirection === "right" ? foodPos.col - 1 : foodPos.col + 1;
+    snake.reset({ col: startCol, row: foodPos.row }, moveDirection, 1);
+
+    const particlesAdd = (
+      scene as unknown as { add: { particles: ReturnType<typeof vi.fn> } }
+    ).add.particles;
+    particlesAdd.mockClear();
+    mockTimeDelayedCall.mockClear();
+
+    const interval = snake.getTicker().interval;
+    scene.update(0, interval);
+
+    expect(particlesAdd).toHaveBeenCalledTimes(1);
+    const delayedGhostBurstCall = mockTimeDelayedCall.mock.calls.find(
+      (call) => call[0] === 5_000,
+    );
+    expect(delayedGhostBurstCall).toBeDefined();
+
+    scene.getEchoGhost()!.reset();
+    const delayedGhostBurstCallback = delayedGhostBurstCall![1] as () => void;
+    delayedGhostBurstCallback();
+
+    expect(particlesAdd).toHaveBeenCalledTimes(1);
+  });
+
   it("destroys old entities on replay (entering 'playing' again)", () => {
     const scene = new MainScene();
     scene.create();
@@ -1587,6 +1726,29 @@ describe("MainScene – entity management", () => {
 
     scene.shutdown();
     expect(scene.getEchoGhost()).toBeNull();
+  });
+
+  it("clears ghost visual trail caches when restoring an EchoGhost snapshot", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.enterPhase("playing");
+    scene.getSnake()!.getTicker().setInterval(60_000);
+    scene.update(0, 5_000);
+
+    const internals = scene as unknown as {
+      echoGhostTrailParticles: unknown[];
+      echoGhostTrailSpawnElapsedMs: number;
+      lastEchoGhostHead: { col: number; row: number } | null;
+    };
+    expect(internals.echoGhostTrailParticles.length).toBeGreaterThan(0);
+    expect(internals.lastEchoGhostHead).not.toBeNull();
+
+    const snapshot = scene.createEchoGhostSnapshot();
+    scene.restoreEchoGhostSnapshot(snapshot);
+
+    expect(internals.echoGhostTrailParticles).toEqual([]);
+    expect(internals.echoGhostTrailSpawnElapsedMs).toBe(0);
+    expect(internals.lastEchoGhostHead).toBeNull();
   });
 });
 
@@ -1707,6 +1869,57 @@ describe("MainScene – self collision", () => {
     scene.update(0, interval);
     expect(scene.getPhase()).toBe("gameOver");
     expect(snake.isAlive()).toBe(false);
+  });
+});
+
+describe("MainScene – echo ghost collision", () => {
+  it("ends the run via endRun side effects when snake head hits an active echo segment", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.enterPhase("playing");
+
+    const snake = scene.getSnake()!;
+    const echoGhost = scene.getEchoGhost()!;
+    const endRunSpy = vi.spyOn(scene, "endRun");
+    snake.reset({ col: 10, row: 10 }, "right", 1);
+
+    mockCameraShake.mockClear();
+
+    vi.spyOn(echoGhost, "isActive").mockReturnValue(true);
+    vi.spyOn(echoGhost, "getPlaybackSegments").mockReturnValue([
+      { col: 11, row: 10 },
+    ]);
+
+    const interval = snake.getTicker().interval;
+    scene.update(0, interval);
+
+    expect(endRunSpy).toHaveBeenCalledTimes(1);
+    expect(scene.getPhase()).toBe("gameOver");
+    expect(snake.isAlive()).toBe(false);
+    expect(mockCameraShake).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not collide with playback segments while echo ghost is inactive", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.enterPhase("playing");
+
+    const snake = scene.getSnake()!;
+    const echoGhost = scene.getEchoGhost()!;
+    snake.reset({ col: 10, row: 10 }, "right", 1);
+
+    mockCameraShake.mockClear();
+    vi.spyOn(echoGhost, "isActive").mockReturnValue(false);
+    vi.spyOn(echoGhost, "getPlaybackSegments").mockReturnValue([
+      { col: 11, row: 10 },
+    ]);
+
+    const interval = snake.getTicker().interval;
+    scene.update(0, interval);
+
+    expect(scene.getPhase()).toBe("playing");
+    expect(snake.isAlive()).toBe(true);
+    expect(mockCameraShake).not.toHaveBeenCalled();
   });
 });
 

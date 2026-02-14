@@ -12,6 +12,7 @@ import { gameBridge, type GamePhase } from "../bridge";
 import { loadHighScore, saveHighScore } from "../utils/storage";
 import {
   isInBounds,
+  gridEquals,
   gridToPixel,
   oppositeDirection,
   stepInDirection,
@@ -20,7 +21,7 @@ import {
 } from "../utils/grid";
 import { Snake } from "../entities/Snake";
 import { Food } from "../entities/Food";
-import { EchoGhost } from "../entities/EchoGhost";
+import { EchoGhost, type EchoGhostSnapshot } from "../entities/EchoGhost";
 import { emitFoodParticles, shakeCamera } from "../systems/effects";
 import {
   Biome,
@@ -141,6 +142,16 @@ const BIOME_SHIFT_COUNTDOWN_SHAKE_X_PX = 10;
 const BIOME_SHIFT_COUNTDOWN_SHAKE_Y_PX = 7;
 const BIOME_SHIFT_COUNTDOWN_NUMBER_Y_OFFSET_PX = -40;
 const BIOME_SHIFT_COUNTDOWN_LABEL_Y_OFFSET_PX = 88;
+const ECHO_GHOST_RENDER_DEPTH = RENDER_DEPTH.SNAKE - 1;
+const ECHO_GHOST_OUTLINE_ALPHA = 0.4;
+const ECHO_GHOST_OUTLINE_WIDTH_PX = 2;
+const ECHO_GHOST_DASH_LENGTH_PX = 6;
+const ECHO_GHOST_DASH_GAP_PX = 4;
+const ECHO_GHOST_SEGMENT_INSET_PX = 2;
+const ECHO_GHOST_TRAIL_SPAWN_INTERVAL_MS = 90;
+const ECHO_GHOST_TRAIL_LIFESPAN_MS = 420;
+const ECHO_GHOST_TRAIL_MAX_PARTICLES = 40;
+const ECHO_GHOST_TRAIL_RADIUS_PX = TILE_SIZE * 0.24;
 
 interface BiomeTransitionEffectState {
   from: Biome;
@@ -150,6 +161,13 @@ interface BiomeMechanicsState {
   iceMomentumActive: boolean;
   moltenLavaActive: boolean;
   voidGravityActive: boolean;
+}
+interface EchoGhostTrailParticle {
+  x: number;
+  y: number;
+  ageMs: number;
+  lifespanMs: number;
+  radiusPx: number;
 }
 
 function createBiomeMechanicsState(biome: Biome): BiomeMechanicsState {
@@ -224,6 +242,21 @@ export class MainScene extends Phaser.Scene {
   /** Graphics object used for mechanic-linked overlays (lava pools / void vortex). */
   private biomeMechanicGraphics: Phaser.GameObjects.Graphics | null = null;
 
+  /** Graphics object used to render the delayed echo-ghost overlay. */
+  private echoGhostGraphics: Phaser.GameObjects.Graphics | null = null;
+
+  /** Short-lived particles that trail behind the delayed ghost path. */
+  private echoGhostTrailParticles: EchoGhostTrailParticle[] = [];
+
+  /** Time accumulator that controls periodic ghost trail particle spawns. */
+  private echoGhostTrailSpawnElapsedMs = 0;
+
+  /** Last ghost head position used to detect movement for trail spawning. */
+  private lastEchoGhostHead: GridPos | null = null;
+
+  /** Monotonic token used to ignore delayed callbacks from older runs. */
+  private activeRunId = 0;
+
   /** Number of snake steps elapsed since entering Void Rift. */
   private voidGravityStepCounter = 0;
 
@@ -281,12 +314,14 @@ export class MainScene extends Phaser.Scene {
     this.gridGraphics = null;
     this.biomeMechanicGraphics?.destroy?.();
     this.biomeMechanicGraphics = null;
+    this.destroyEchoGhostVisuals();
     this.destroyBiomeShiftCountdown();
   }
 
   update(_time: number, delta: number): void {
     if (gameBridge.getState().phase !== "playing") {
       this.clearBiomeShiftCountdown();
+      this.clearEchoGhostVisualState();
       return;
     }
 
@@ -295,6 +330,7 @@ export class MainScene extends Phaser.Scene {
 
     if (!this.snake || !this.food || !this.echoGhost) return;
     this.echoGhost.advance(delta);
+    this.updateEchoGhostVisuals(delta);
     this.updateMoltenCoreMechanics(delta);
     this.updateBiomeMechanicVisuals(delta);
 
@@ -341,6 +377,7 @@ export class MainScene extends Phaser.Scene {
 
   /** Reset per-run state and begin a new game. */
   private startRun(): void {
+    this.activeRunId += 1;
     this.biomeManager.startRun();
     gameBridge.resetRun({
       currentBiome: this.biomeManager.getCurrentBiome(),
@@ -392,6 +429,8 @@ export class MainScene extends Phaser.Scene {
     this.food = new Food(this, this.snake, this.rng);
     this.echoGhost = new EchoGhost();
     this.echoGhost.recordPath(this.snake.getSegments());
+    this.ensureEchoGhostGraphics();
+    this.clearEchoGhostVisualState();
   }
 
   /** Destroy existing snake and food entities. */
@@ -408,12 +447,13 @@ export class MainScene extends Phaser.Scene {
       this.echoGhost.reset();
       this.echoGhost = null;
     }
+    this.destroyEchoGhostVisuals();
   }
 
   // ── Collision detection ───────────────────────────────────────
 
   /**
-   * Check wall-collision and self-collision.
+   * Check wall-collision, self-collision, and echo-ghost collision.
    * If a collision is detected, ends the run and returns true.
    */
   private checkCollisions(): boolean {
@@ -433,6 +473,11 @@ export class MainScene extends Phaser.Scene {
       return true;
     }
 
+    if (this.hasEchoGhostCollision(head)) {
+      this.endRun();
+      return true;
+    }
+
     if (this.isVoidRiftCenterHazard(head)) {
       this.endRun();
       return true;
@@ -442,6 +487,20 @@ export class MainScene extends Phaser.Scene {
       return true;
     }
 
+    return false;
+  }
+
+  private hasEchoGhostCollision(head: GridPos): boolean {
+    if (!this.echoGhost || !this.echoGhost.isActive()) {
+      return false;
+    }
+
+    const playbackSegments = this.echoGhost.getPlaybackSegments();
+    for (const segment of playbackSegments) {
+      if (gridEquals(segment, head)) {
+        return true;
+      }
+    }
     return false;
   }
 
@@ -540,6 +599,24 @@ export class MainScene extends Phaser.Scene {
 
   getEchoGhost(): EchoGhost | null {
     return this.echoGhost;
+  }
+
+  /**
+   * Rewind integration hook: capture the active EchoGhost buffer/timing snapshot.
+   */
+  createEchoGhostSnapshot(): EchoGhostSnapshot | null {
+    return this.echoGhost?.createSnapshot() ?? null;
+  }
+
+  /**
+   * Rewind integration hook: restore a previously captured EchoGhost snapshot.
+   */
+  restoreEchoGhostSnapshot(snapshot: EchoGhostSnapshot | null): void {
+    if (!this.echoGhost || !snapshot) {
+      return;
+    }
+    this.echoGhost.restoreSnapshot(snapshot);
+    this.clearEchoGhostVisualState();
   }
 
   // ── Arena grid ──────────────────────────────────────────────
@@ -752,19 +829,58 @@ export class MainScene extends Phaser.Scene {
   }
 
   private resolveFoodConsumption(): void {
-    if (!this.snake || !this.food) {
+    if (!this.snake || !this.food || !this.echoGhost) {
       return;
     }
 
     const foodSprite = this.food.getSprite();
     const fx = foodSprite.x;
     const fy = foodSprite.y;
+    const ghostSampleTimestampMs = this.echoGhost.getElapsedMs();
+    const ghostDelayMs = this.echoGhost.getDelayMs();
+    const runIdAtEat = this.activeRunId;
     const eaten = this.food.checkEat(this.snake, (points) =>
       this.addScore(points),
     );
     if (eaten) {
       emitFoodParticles(this, fx, fy);
+      this.queueDelayedEchoGhostFoodBurst(
+        ghostSampleTimestampMs,
+        ghostDelayMs,
+        runIdAtEat,
+      );
     }
+  }
+
+  private queueDelayedEchoGhostFoodBurst(
+    targetSampleTimestampMs: number,
+    delayMs: number,
+    runIdAtEat: number,
+  ): void {
+    const safeDelayMs = Number.isFinite(delayMs) ? Math.max(0, Math.floor(delayMs)) : 0;
+
+    this.time.delayedCall(safeDelayMs, () => {
+      if (runIdAtEat !== this.activeRunId) {
+        return;
+      }
+
+      if (gameBridge.getState().phase !== "playing") {
+        return;
+      }
+
+      const ghost = this.echoGhost;
+      if (!ghost) {
+        return;
+      }
+
+      const ghostHead = ghost.getHeadAtOrBefore(targetSampleTimestampMs);
+      if (!ghostHead) {
+        return;
+      }
+
+      const ghostPixel = gridToPixel(ghostHead);
+      emitFoodParticles(this, ghostPixel.x, ghostPixel.y);
+    });
   }
 
   private applyVoidRiftGravityNudgeIfDue(): boolean {
@@ -966,8 +1082,206 @@ export class MainScene extends Phaser.Scene {
   private syncGameplayLayering(): void {
     this.gridGraphics?.setDepth?.(RENDER_DEPTH.BIOME_GRID);
     this.food?.getSprite()?.setDepth?.(RENDER_DEPTH.FOOD);
+    this.echoGhostGraphics?.setDepth?.(ECHO_GHOST_RENDER_DEPTH);
     this.snake?.setRenderDepth(RENDER_DEPTH.SNAKE);
     this.children?.depthSort?.();
+  }
+
+  private ensureEchoGhostGraphics(): boolean {
+    if (this.echoGhostGraphics) {
+      return true;
+    }
+
+    const addFactory = this.add as unknown as {
+      graphics?: () => Phaser.GameObjects.Graphics;
+    };
+    if (typeof addFactory.graphics !== "function") {
+      return false;
+    }
+
+    const graphics = addFactory.graphics();
+    graphics.setDepth?.(ECHO_GHOST_RENDER_DEPTH);
+    this.echoGhostGraphics = graphics;
+    return true;
+  }
+
+  private clearEchoGhostVisualState(): void {
+    this.echoGhostGraphics?.clear?.();
+    this.echoGhostTrailParticles = [];
+    this.echoGhostTrailSpawnElapsedMs = 0;
+    this.lastEchoGhostHead = null;
+  }
+
+  private destroyEchoGhostVisuals(): void {
+    this.clearEchoGhostVisualState();
+    this.echoGhostGraphics?.destroy?.();
+    this.echoGhostGraphics = null;
+  }
+
+  private updateEchoGhostVisuals(delta: number): void {
+    if (!this.ensureEchoGhostGraphics()) {
+      return;
+    }
+
+    const gfx = this.echoGhostGraphics!;
+    gfx.clear?.();
+
+    const ghost = this.echoGhost;
+    const ghostOpacity = ghost?.getOpacity() ?? 0;
+    const renderOpacity = Math.max(
+      0,
+      Math.min(1, ghostOpacity * ECHO_GHOST_OUTLINE_ALPHA),
+    );
+    const segments =
+      ghost && ghost.isActive() ? ghost.getPlaybackSegments() : [];
+    const tintColor = this.getEchoGhostTintForCurrentBiome();
+
+    this.updateEchoGhostTrailParticles(delta, segments);
+    this.drawEchoGhostTrailParticles(gfx, tintColor, renderOpacity);
+
+    if (segments.length === 0 || renderOpacity <= 0) {
+      return;
+    }
+
+    gfx.lineStyle(ECHO_GHOST_OUTLINE_WIDTH_PX, tintColor, renderOpacity);
+    for (const segment of segments) {
+      this.drawEchoGhostDashedSegment(gfx, segment);
+    }
+    gfx.strokePath?.();
+  }
+
+  private getEchoGhostTintForCurrentBiome(): number {
+    const biome = this.biomeManager.getCurrentBiome();
+    return BIOME_VISUAL_THEMES[biome].tilemapAccentColor;
+  }
+
+  private updateEchoGhostTrailParticles(
+    delta: number,
+    ghostSegments: readonly GridPos[],
+  ): void {
+    const safeDelta = Number.isFinite(delta) ? Math.max(0, delta) : 0;
+    for (const particle of this.echoGhostTrailParticles) {
+      particle.ageMs += safeDelta;
+    }
+    this.echoGhostTrailParticles = this.echoGhostTrailParticles.filter((particle) =>
+      particle.ageMs < particle.lifespanMs
+    );
+
+    if (ghostSegments.length === 0) {
+      this.echoGhostTrailSpawnElapsedMs = 0;
+      this.lastEchoGhostHead = null;
+      return;
+    }
+
+    const head = ghostSegments[0];
+    const headMoved =
+      !this.lastEchoGhostHead ||
+      this.lastEchoGhostHead.col !== head.col ||
+      this.lastEchoGhostHead.row !== head.row;
+    this.echoGhostTrailSpawnElapsedMs += safeDelta;
+
+    if (
+      headMoved ||
+      this.echoGhostTrailSpawnElapsedMs >= ECHO_GHOST_TRAIL_SPAWN_INTERVAL_MS
+    ) {
+      this.echoGhostTrailSpawnElapsedMs = 0;
+      const headPixel = gridToPixel(head);
+      this.echoGhostTrailParticles.push({
+        x: headPixel.x,
+        y: headPixel.y,
+        ageMs: 0,
+        lifespanMs: ECHO_GHOST_TRAIL_LIFESPAN_MS,
+        radiusPx: ECHO_GHOST_TRAIL_RADIUS_PX,
+      });
+
+      const overflow =
+        this.echoGhostTrailParticles.length - ECHO_GHOST_TRAIL_MAX_PARTICLES;
+      if (overflow > 0) {
+        this.echoGhostTrailParticles.splice(0, overflow);
+      }
+    }
+
+    this.lastEchoGhostHead = {
+      col: head.col,
+      row: head.row,
+    };
+  }
+
+  private drawEchoGhostTrailParticles(
+    gfx: Phaser.GameObjects.Graphics,
+    tintColor: number,
+    baseOpacity: number,
+  ): void {
+    if (this.echoGhostTrailParticles.length === 0 || baseOpacity <= 0) {
+      return;
+    }
+
+    for (const particle of this.echoGhostTrailParticles) {
+      const lifeProgress = particle.ageMs / particle.lifespanMs;
+      const alpha = Math.max(0, baseOpacity * (1 - lifeProgress));
+      if (alpha <= 0) {
+        continue;
+      }
+
+      const radius = Math.max(
+        1,
+        particle.radiusPx * (1 - Math.min(1, lifeProgress * 0.5)),
+      );
+      gfx.fillStyle?.(tintColor, alpha);
+      gfx.fillCircle?.(particle.x, particle.y, radius);
+    }
+  }
+
+  private drawEchoGhostDashedSegment(
+    gfx: Phaser.GameObjects.Graphics,
+    segment: GridPos,
+  ): void {
+    const center = gridToPixel(segment);
+    const size = TILE_SIZE - ECHO_GHOST_SEGMENT_INSET_PX * 2;
+    const half = size / 2;
+    const left = center.x - half;
+    const top = center.y - half;
+    const right = center.x + half;
+    const bottom = center.y + half;
+
+    this.drawDashedLine(gfx, left, top, right, top);
+    this.drawDashedLine(gfx, right, top, right, bottom);
+    this.drawDashedLine(gfx, right, bottom, left, bottom);
+    this.drawDashedLine(gfx, left, bottom, left, top);
+  }
+
+  private drawDashedLine(
+    gfx: Phaser.GameObjects.Graphics,
+    startX: number,
+    startY: number,
+    endX: number,
+    endY: number,
+  ): void {
+    const deltaX = endX - startX;
+    const deltaY = endY - startY;
+    const distance = Math.hypot(deltaX, deltaY);
+    if (distance <= 0) {
+      return;
+    }
+
+    const unitX = deltaX / distance;
+    const unitY = deltaY / distance;
+    let cursor = 0;
+
+    while (cursor < distance) {
+      const segmentStartX = startX + unitX * cursor;
+      const segmentStartY = startY + unitY * cursor;
+      const segmentEndDistance = Math.min(
+        distance,
+        cursor + ECHO_GHOST_DASH_LENGTH_PX,
+      );
+      const segmentEndX = startX + unitX * segmentEndDistance;
+      const segmentEndY = startY + unitY * segmentEndDistance;
+
+      gfx.moveTo(segmentStartX, segmentStartY);
+      gfx.lineTo(segmentEndX, segmentEndY);
+      cursor += ECHO_GHOST_DASH_LENGTH_PX + ECHO_GHOST_DASH_GAP_PX;
+    }
   }
 
   private startBiomeTransitionEffect(from: Biome): void {

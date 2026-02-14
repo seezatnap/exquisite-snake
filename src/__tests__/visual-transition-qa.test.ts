@@ -160,6 +160,10 @@ function createScene(opts?: { safeForCycling?: boolean }): MainScene {
 
 function startPlaying(scene: MainScene): void {
   scene.enterPhase("playing");
+  const echoGhost = scene.getEchoGhost();
+  if (echoGhost) {
+    vi.spyOn(echoGhost, "isActive").mockReturnValue(false);
+  }
 }
 
 /**
@@ -716,7 +720,7 @@ describe("Edge cases: death and replay across biome cycles", () => {
     scene.endRun();
 
     // Replay
-    scene.enterPhase("playing");
+    startPlaying(scene);
 
     expect(scene.getCurrentBiome()).toBe(Biome.NeonCity);
     expect(gameBridge.getState().currentBiome).toBe(Biome.NeonCity);
@@ -732,7 +736,7 @@ describe("Edge cases: death and replay across biome cycles", () => {
     scene.endRun();
 
     // Replay
-    scene.enterPhase("playing");
+    startPlaying(scene);
 
     const stats = scene.getBiomeVisitStats();
     expect(stats[Biome.NeonCity]).toBe(1);
