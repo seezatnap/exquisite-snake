@@ -64,6 +64,12 @@ export class Snake {
   /** Whether the snake should grow on the next step (tail not removed). */
   private pendingGrowth = 0;
 
+  /** Last pre-step segment snapshot used by shield collision rewind behavior. */
+  private lastStepSegmentsSnapshot: GridPos[] | null = null;
+
+  /** Last pre-step growth counter snapshot for rollback safety. */
+  private lastStepPendingGrowthSnapshot: number | null = null;
+
   /** Movement timing ticker. */
   private ticker: MoveTicker;
 
@@ -294,6 +300,9 @@ export class Snake {
   }
 
   private advanceSegments(direction: Direction): void {
+    this.lastStepSegmentsSnapshot = this.segments.map((segment) => ({ ...segment }));
+    this.lastStepPendingGrowthSnapshot = this.pendingGrowth;
+
     // Save previous positions for interpolation
     this.prevSegments = this.segments.map((s) => ({ ...s }));
 
@@ -312,6 +321,44 @@ export class Snake {
     } else {
       this.segments.pop();
     }
+  }
+
+  /**
+   * Revert the snake to its pre-step position.
+   *
+   * Used by shield collision absorption to cancel a lethal wall/self hit
+   * while keeping the run alive.
+   */
+  rewindLastStep(): void {
+    if (!this.alive || !this.lastStepSegmentsSnapshot) {
+      return;
+    }
+
+    const restoredSegments = this.lastStepSegmentsSnapshot.map((segment) => ({
+      ...segment,
+    }));
+    const restoredLength = restoredSegments.length;
+    this.pendingGrowth =
+      this.lastStepPendingGrowthSnapshot ?? this.pendingGrowth;
+
+    this.segments = restoredSegments;
+    this.prevSegments = restoredSegments.map((segment) => ({ ...segment }));
+
+    while (this.sprites.length > restoredLength) {
+      this.sprites.pop()?.destroy();
+    }
+
+    while (this.sprites.length < restoredLength) {
+      this.addSegmentSprite();
+    }
+
+    for (let i = 0; i < restoredLength; i++) {
+      const px = gridToPixel(this.segments[i]);
+      this.sprites[i].setPosition(px.x, px.y);
+    }
+
+    this.lastStepSegmentsSnapshot = null;
+    this.lastStepPendingGrowthSnapshot = null;
   }
 
   /**
@@ -356,6 +403,9 @@ export class Snake {
       this.prevSegments.pop();
       this.sprites.pop()?.destroy();
     }
+
+    this.lastStepSegmentsSnapshot = null;
+    this.lastStepPendingGrowthSnapshot = null;
 
     return true;
   }
@@ -443,6 +493,8 @@ export class Snake {
     this.touchInput = null;
     this.directionInputGuard = null;
     this.rejectedOppositeDirectionInput = false;
+    this.lastStepSegmentsSnapshot = null;
+    this.lastStepPendingGrowthSnapshot = null;
     for (const sprite of this.sprites) {
       sprite.destroy();
     }
@@ -472,6 +524,8 @@ export class Snake {
     this.pendingTurnSlideTiles = 0;
     this.pendingGrowth = 0;
     this.rejectedOppositeDirectionInput = false;
+    this.lastStepSegmentsSnapshot = null;
+    this.lastStepPendingGrowthSnapshot = null;
     this.ticker.reset();
 
     // Build new segments

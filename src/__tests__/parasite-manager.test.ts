@@ -225,6 +225,126 @@ describe("ParasiteManager scaffold", () => {
     ).toBe(-4);
   });
 
+  it("absorbs wall/self collisions by consuming one shield and adding blocked-food charge", () => {
+    const manager = new ParasiteManager();
+    const seeded = manager.getState();
+    seeded.inventory.segments = [
+      {
+        id: "seg-magnet",
+        type: ParasiteType.Magnet,
+        attachedAtMs: 1,
+        sourcePickupId: "pickup-magnet",
+      },
+      {
+        id: "seg-shield-1",
+        type: ParasiteType.Shield,
+        attachedAtMs: 2,
+        sourcePickupId: "pickup-shield-1",
+      },
+      {
+        id: "seg-shield-2",
+        type: ParasiteType.Shield,
+        attachedAtMs: 3,
+        sourcePickupId: "pickup-shield-2",
+      },
+    ];
+    manager.replaceState(seeded);
+
+    const absorbedWall = manager.resolveShieldCollision({
+      head: { col: GRID_COLS, row: 4 },
+      wallCollision: true,
+      selfCollision: false,
+    });
+    expect(absorbedWall).toEqual({
+      absorbed: true,
+      consumedSegment: {
+        id: "seg-shield-1",
+        type: ParasiteType.Shield,
+        attachedAtMs: 2,
+        sourcePickupId: "pickup-shield-1",
+      },
+      blockedFoodCharges: 1,
+      activeSegments: [
+        {
+          id: "seg-magnet",
+          type: ParasiteType.Magnet,
+          attachedAtMs: 1,
+          sourcePickupId: "pickup-magnet",
+        },
+        {
+          id: "seg-shield-2",
+          type: ParasiteType.Shield,
+          attachedAtMs: 3,
+          sourcePickupId: "pickup-shield-2",
+        },
+      ],
+    });
+
+    const absorbedSelf = manager.resolveShieldCollision({
+      head: { col: 8, row: 8 },
+      wallCollision: false,
+      selfCollision: true,
+    });
+    expect(absorbedSelf.absorbed).toBe(true);
+    expect(absorbedSelf.consumedSegment?.id).toBe("seg-shield-2");
+    expect(absorbedSelf.blockedFoodCharges).toBe(2);
+
+    const noShield = manager.resolveShieldCollision({
+      head: { col: GRID_COLS, row: 10 },
+      wallCollision: true,
+      selfCollision: false,
+    });
+    expect(noShield.absorbed).toBe(false);
+    expect(noShield.consumedSegment).toBeNull();
+    expect(noShield.blockedFoodCharges).toBe(2);
+  });
+
+  it("blocks the first matching food contact after shield absorb and allows the second", () => {
+    const manager = new ParasiteManager();
+    const seeded = manager.getState();
+    seeded.inventory.segments.push({
+      id: "seg-shield",
+      type: ParasiteType.Shield,
+      attachedAtMs: 4,
+      sourcePickupId: "pickup-shield",
+    });
+    manager.replaceState(seeded);
+
+    manager.resolveShieldCollision({
+      head: { col: GRID_COLS, row: 4 },
+      wallCollision: true,
+      selfCollision: false,
+    });
+    expect(manager.getBlockedFoodCharges()).toBe(1);
+
+    const notOnFood = manager.resolveFoodContact({
+      head: { col: 4, row: 5 },
+      foodPosition: { col: 5, row: 5 },
+    });
+    expect(notOnFood).toEqual({
+      blocked: false,
+      blockedFoodCharges: 1,
+    });
+
+    const firstContact = manager.resolveFoodContact({
+      head: { col: 5, row: 5 },
+      foodPosition: { col: 5, row: 5 },
+    });
+    expect(firstContact).toEqual({
+      blocked: true,
+      blockedFoodCharges: 0,
+    });
+
+    const secondContact = manager.resolveFoodContact({
+      head: { col: 5, row: 5 },
+      foodPosition: { col: 5, row: 5 },
+    });
+    expect(secondContact).toEqual({
+      blocked: false,
+      blockedFoodCharges: 0,
+    });
+  });
+
   it("pulls food one tile toward the nearest magnet segment within radius", () => {
     const manager = new ParasiteManager();
     const seeded = manager.getState();

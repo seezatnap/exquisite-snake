@@ -30,6 +30,23 @@ export interface ParasiteCollisionContext {
   selfCollision: boolean;
 }
 
+export interface ParasiteShieldCollisionResolution {
+  absorbed: boolean;
+  consumedSegment: ParasiteSegmentState | null;
+  blockedFoodCharges: number;
+  activeSegments: ParasiteSegmentState[];
+}
+
+export interface ParasiteFoodContactContext {
+  head: GridPos;
+  foodPosition: GridPos;
+}
+
+export interface ParasiteFoodContactResolution {
+  blocked: boolean;
+  blockedFoodCharges: number;
+}
+
 export type ParasiteScoreSource = "food" | "bonus" | "biome" | "other";
 
 export interface ParasiteScoringContext {
@@ -282,6 +299,13 @@ function normalizeScorePoints(points: number): number {
   return points;
 }
 
+function normalizeBlockedFoodCharges(charges: number): number {
+  if (!Number.isFinite(charges)) {
+    return 0;
+  }
+  return Math.max(0, Math.floor(charges));
+}
+
 function normalizeRandomSample(rng: () => number): number {
   const sample = rng();
   if (!Number.isFinite(sample)) {
@@ -400,6 +424,80 @@ export class ParasiteManager {
 
   getParasitesCollectedCount(): number {
     return this.state.parasitesCollected;
+  }
+
+  getBlockedFoodCharges(): number {
+    const normalizedCharges = normalizeBlockedFoodCharges(this.state.blockedFoodCharges);
+    this.state.blockedFoodCharges = normalizedCharges;
+    return normalizedCharges;
+  }
+
+  resolveShieldCollision(
+    context: ParasiteCollisionContext,
+  ): ParasiteShieldCollisionResolution {
+    const collisionHook = this.phase3Hooks.collision;
+    if (typeof collisionHook === "function") {
+      collisionHook(context);
+    }
+
+    const isShieldableCollision = context.wallCollision || context.selfCollision;
+    if (!isShieldableCollision) {
+      return {
+        absorbed: false,
+        consumedSegment: null,
+        blockedFoodCharges: this.getBlockedFoodCharges(),
+        activeSegments: this.getActiveSegments(),
+      };
+    }
+
+    const shieldIndex = this.state.inventory.segments.findIndex((segment) =>
+      segment.type === ParasiteType.Shield
+    );
+    if (shieldIndex < 0) {
+      return {
+        absorbed: false,
+        consumedSegment: null,
+        blockedFoodCharges: this.getBlockedFoodCharges(),
+        activeSegments: this.getActiveSegments(),
+      };
+    }
+
+    const consumedSegment = this.state.inventory.segments.splice(shieldIndex, 1)[0];
+    this.state.blockedFoodCharges = this.getBlockedFoodCharges() + 1;
+    return {
+      absorbed: true,
+      consumedSegment: cloneSegmentState(consumedSegment),
+      blockedFoodCharges: this.state.blockedFoodCharges,
+      activeSegments: this.getActiveSegments(),
+    };
+  }
+
+  resolveFoodContact(
+    context: ParasiteFoodContactContext,
+  ): ParasiteFoodContactResolution {
+    if (
+      context.head.col !== context.foodPosition.col ||
+      context.head.row !== context.foodPosition.row
+    ) {
+      return {
+        blocked: false,
+        blockedFoodCharges: this.getBlockedFoodCharges(),
+      };
+    }
+
+    const blockedFoodCharges = this.getBlockedFoodCharges();
+    if (blockedFoodCharges <= 0) {
+      return {
+        blocked: false,
+        blockedFoodCharges,
+      };
+    }
+
+    this.state.blockedFoodCharges = blockedFoodCharges - 1;
+    return {
+      blocked: true,
+      blockedFoodCharges: this.state.blockedFoodCharges,
+    };
   }
 
   resolveMagnetFoodPull(context: ParasiteMagnetFoodPullContext): GridPos | null {
