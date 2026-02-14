@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import fs from "fs";
 import path from "path";
 import { gameBridge } from "@/game/bridge";
-import { GRID_COLS, GRID_ROWS } from "@/game/config";
+import { COLORS, GRID_COLS, GRID_ROWS } from "@/game/config";
 import {
   DEFAULT_ECHO_DELAY_MS,
   EchoGhost,
@@ -464,9 +464,97 @@ describe("MainScene – ghost food burst timing", () => {
     expect(emitFoodSpy).toHaveBeenCalledWith(scene, burstX, burstY);
     expect(scene.getScore()).toBe(1);
   });
+
+  it("does not execute stale ghost-food burst callbacks after ending a run", () => {
+    const scene = new MainScene();
+    const emitFoodSpy = vi.spyOn(effects, "emitFoodParticles");
+    scene.create();
+    scene.enterPhase("playing");
+
+    const food = scene.getFood()!;
+    const snake = scene.getSnake()!;
+    const firstFoodSprite = food.getSprite();
+    firstFoodSprite.x = 123;
+    firstFoodSprite.y = 456;
+    const firstFoodPos = food.getPosition();
+    const firstStartHead =
+      firstFoodPos.row === 0
+        ? { col: firstFoodPos.col, row: firstFoodPos.row + 1 }
+        : { col: firstFoodPos.col, row: firstFoodPos.row - 1 };
+    const firstDirection = firstFoodPos.row === 0 ? "up" : "down";
+
+    snake.reset(firstStartHead, firstDirection, snake.getLength());
+    mockDelayedCall.mockClear();
+    emitFoodSpy.mockClear();
+
+    scene.update(0, snake.getTicker().interval);
+    const firstDelayedCallback = mockDelayedCall.mock.calls[0][1] as () => void;
+    scene.endRun();
+
+    emitFoodSpy.mockClear();
+    scene.enterPhase("playing");
+
+    const secondFood = scene.getFood()!;
+    const secondSnake = scene.getSnake()!;
+    const secondFoodSprite = secondFood.getSprite();
+    const secondFoodPos = secondFood.getPosition();
+    secondFoodSprite.x = 77;
+    secondFoodSprite.y = 88;
+    const secondStartHead =
+      secondFoodPos.row === 0
+        ? { col: secondFoodPos.col, row: secondFoodPos.row + 1 }
+        : { col: secondFoodPos.col, row: secondFoodPos.row - 1 };
+    const secondDirection = secondFoodPos.row === 0 ? "up" : "down";
+
+    secondSnake.reset(secondStartHead, secondDirection, secondSnake.getLength());
+    mockDelayedCall.mockClear();
+
+    scene.update(0, secondSnake.getTicker().interval);
+    const secondDelayedCallback = mockDelayedCall.mock.calls[0][1] as () => void;
+
+    emitFoodSpy.mockClear();
+    firstDelayedCallback();
+    expect(emitFoodSpy).not.toHaveBeenCalled();
+
+    secondDelayedCallback();
+    expect(emitFoodSpy).toHaveBeenCalledWith(scene, 77, 88);
+  });
+
+  it("clears scheduled ghost-food bursts when scene shuts down", () => {
+    const scene = new MainScene();
+    const emitFoodSpy = vi.spyOn(effects, "emitFoodParticles");
+    scene.create();
+    scene.enterPhase("playing");
+
+    const food = scene.getFood()!;
+    const snake = scene.getSnake()!;
+    const foodPos = food.getPosition();
+    const foodSprite = food.getSprite();
+    foodSprite.x = 999;
+    foodSprite.y = 111;
+    const startHead =
+      foodPos.row === 0 ? { col: foodPos.col, row: foodPos.row + 1 } : { col: foodPos.col, row: foodPos.row - 1 };
+    const startDirection = foodPos.row === 0 ? "up" : "down";
+
+    snake.reset(startHead, startDirection, snake.getLength());
+    mockDelayedCall.mockClear();
+    emitFoodSpy.mockClear();
+
+    scene.update(0, snake.getTicker().interval);
+    const delayedCallback = mockDelayedCall.mock.calls[0][1] as () => void;
+
+    scene.shutdown();
+    emitFoodSpy.mockClear();
+    delayedCallback();
+    expect(emitFoodSpy).not.toHaveBeenCalled();
+  });
 });
 
 describe("MainScene – ghost rendering", () => {
+  const getEchoGhost = (scene: MainScene): EchoGhost | null => {
+    return (scene as unknown as { echoGhost: EchoGhost | null }).echoGhost;
+  };
+
   it("renders a dashed ghost trail with particle emissions once active", () => {
     const scene = new MainScene();
     const emitGhostTrailSpy = vi.spyOn(
@@ -505,6 +593,117 @@ describe("MainScene – ghost rendering", () => {
     expect(mockStrokePath).toHaveBeenCalled();
 
     emitGhostTrailSpy.mockRestore();
+  });
+
+  it("renders ghost visuals with the current biome tint", () => {
+    const scene = new MainScene();
+    const emitGhostTrailSpy = vi.spyOn(
+      effects,
+      "emitGhostTrailParticles",
+    );
+    scene.create();
+    scene.enterPhase("playing");
+
+    const ghost = getEchoGhost(scene);
+    expect(ghost).not.toBeNull();
+
+    mockLineStyle.mockClear();
+    mockMoveTo.mockClear();
+    mockLineTo.mockClear();
+    mockStrokePath.mockClear();
+    emitGhostTrailSpy.mockClear();
+
+    for (let i = 0; i < 40; i++) {
+      ghost!.writePositions([{ col: i, row: 0 }]);
+      ghost!.advanceReplayProgress();
+    }
+
+    scene.update(0, 0);
+
+    expect(mockLineStyle).toHaveBeenCalledWith(
+      2,
+      COLORS.NEON_PURPLE,
+      expect.any(Number),
+    );
+
+    const ghostTrailCall = emitGhostTrailSpy.mock.calls.at(-1)!;
+    expect(ghostTrailCall[4]).toBe(COLORS.NEON_PURPLE);
+    emitGhostTrailSpy.mockRestore();
+  });
+
+  it("smoothly interpolates ghost tint during a biome change", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.enterPhase("playing");
+
+    const ghost = getEchoGhost(scene);
+    expect(ghost).not.toBeNull();
+    for (let i = 0; i < 40; i++) {
+      ghost!.writePositions([{ col: i, row: 0 }]);
+      ghost!.advanceReplayProgress();
+    }
+
+    mockLineStyle.mockClear();
+    scene.setEchoGhostBiomeTint(COLORS.NEON_CYAN, 100);
+
+    scene.update(0, 25);
+    scene.update(0, 25);
+    scene.update(0, 25);
+    scene.update(0, 25);
+
+    const colors = mockLineStyle.mock.calls.map((entry) => entry[1] as number);
+    expect(colors.length).toBeGreaterThan(1);
+    expect(colors[0]).not.toEqual(colors[colors.length - 1]);
+    expect(colors[colors.length - 1]).toBe(COLORS.NEON_CYAN);
+    expect(scene.getEchoGhostBiomeTint()).toBe(COLORS.NEON_CYAN);
+  });
+
+  it("renders the fading ghost trail with reduced opacity", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.enterPhase("playing");
+
+    const snake = scene.getSnake();
+    const ghost = getEchoGhost(scene);
+    expect(snake).not.toBeNull();
+    expect(ghost).not.toBeNull();
+
+    const fastFadeGhost = new EchoGhost(
+      snake!.getTicker().interval,
+      250, // 2 tick delay
+      500, // 4 tick fade
+    );
+    (scene as unknown as { echoGhost: EchoGhost }).echoGhost = fastFadeGhost;
+
+    snake!.reset({ col: 20, row: 15 }, "right", 1);
+
+    mockLineStyle.mockClear();
+    mockMoveTo.mockClear();
+    mockLineTo.mockClear();
+    mockStrokePath.mockClear();
+
+    // Delay window
+    scene.update(0, snake!.getTicker().interval);
+    expect(mockLineStyle).toHaveBeenCalledTimes(0);
+
+    // Active replay
+    scene.update(0, snake!.getTicker().interval);
+    expect(mockLineStyle).toHaveBeenCalledTimes(1);
+
+    // Still active
+    scene.update(0, snake!.getTicker().interval);
+    expect(mockLineStyle).toHaveBeenCalledTimes(2);
+
+    mockLineStyle.mockClear();
+    // Entering fade: should still render with opacity < full.
+    scene.update(0, snake!.getTicker().interval);
+    expect(mockLineStyle).toHaveBeenCalled();
+
+    const fadeAlpha = (mockLineStyle.mock.calls.at(-1)?.at(2) ?? null) as
+      | number
+      | null;
+    expect(fadeAlpha).toBeGreaterThan(0);
+    expect(fadeAlpha).toBeLessThan(0.4);
   });
 });
 
@@ -773,6 +972,32 @@ describe("MainScene – self collision", () => {
         expect(scene.getPhase()).toBe("playing");
       }
     }
+
+    expect(scene.getPhase()).toBe("gameOver");
+    expect(snake.isAlive()).toBe(false);
+  });
+
+  it("ends the run when snake collides with the fading ghost trail", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.enterPhase("playing");
+
+    const snake = scene.getSnake()!;
+
+    const ghostTrailCollision = [{ col: 20, row: 15 }];
+    const fadingGhost = {
+      readDelayedTrail: (includeFading = false) =>
+        includeFading ? ghostTrailCollision : [],
+      getReplayState: () => "fading" as const,
+      getReplayOpacity: () => 0.5,
+      writePositions: vi.fn(),
+      advanceReplayProgress: vi.fn(),
+    } as unknown as EchoGhost;
+
+    (scene as unknown as { echoGhost: EchoGhost }).echoGhost = fadingGhost;
+    snake.reset({ col: 21, row: 15 }, "left", 1);
+
+    scene.update(0, snake.getTicker().interval);
 
     expect(scene.getPhase()).toBe("gameOver");
     expect(snake.isAlive()).toBe(false);

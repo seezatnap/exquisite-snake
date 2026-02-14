@@ -1,5 +1,5 @@
 import Phaser from "phaser";
-import { TEXTURE_KEYS } from "../config";
+import { COLORS, TEXTURE_KEYS } from "../config";
 
 // ── Particle burst configuration ────────────────────────────────
 
@@ -85,6 +85,7 @@ export function emitGhostTrailParticles(
   x: number,
   y: number,
   opacity = 1,
+  tintColor: number = COLORS.PARTICLE,
 ): Phaser.GameObjects.Particles.ParticleEmitter | null {
   if (!scene.textures.exists(TEXTURE_KEYS.PARTICLE)) return null;
 
@@ -100,6 +101,7 @@ export function emitGhostTrailParticles(
     quantity: GHOST_TRAIL_PARTICLE_COUNT,
     scale: { start: 0.6, end: 0 },
     alpha: { start: normalizedOpacity, end: 0 },
+    tint: tintColor,
     emitting: false,
   });
 

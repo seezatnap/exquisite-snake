@@ -210,6 +210,26 @@ describe("emitGhostTrailParticles", () => {
     expect(emitter).toBeNull();
     expect(mockAddParticles).not.toHaveBeenCalled();
   });
+
+  it("supports a custom ghost trail tint color", () => {
+    const scene = new Phaser.Scene({ key: "Test" }) as unknown as Phaser.Scene;
+    emitGhostTrailParticles(
+      scene,
+      25,
+      50,
+      0.5,
+      0x00ff00,
+    );
+
+    expect(mockAddParticles).toHaveBeenCalledWith(
+      25,
+      50,
+      "particle",
+      expect.objectContaining({
+        tint: 0x00ff00,
+      }),
+    );
+  });
 });
 
 // ── shakeCamera ──────────────────────────────────────────────────
