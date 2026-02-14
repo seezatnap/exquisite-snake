@@ -6,7 +6,7 @@
 
 ## Gameplay Integration
 
-- [ ] (#2) Integrate `EchoGhost` into the game runtime lifecycle (spawn, per-tick update, reset/restart cleanup) and feed current snake positions into the ghost buffer on each tick [5 pts] (blocked by #1)
+- [A] (#2) Integrate `EchoGhost` into the game runtime lifecycle (spawn, per-tick update, reset/restart cleanup) and feed current snake positions into the ghost buffer on each tick [5 pts] (blocked by #1)
 - [ ] (#3) Add echo ghost collision checks to the existing collision pipeline so contact with the ghost is treated as self-collision/game-over using the same failure path and side effects [5 pts] (blocked by #1, #2)
 - [ ] (#4) Implement delayed ghost-food burst behavior: when food is eaten, queue a cosmetic burst at the corresponding ghost path position exactly 5 seconds later, including handling if the target history sample is unavailable [5 pts] (blocked by #1, #2)
 
