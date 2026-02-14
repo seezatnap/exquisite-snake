@@ -2,7 +2,7 @@
 
 ## Echo Ghost Core
 
-- [ ] (#1) Create `src/game/entities/EchoGhost.ts` to record the active snake path each tick into a bounded circular buffer, replay the path as a delayed (5-second) ghost trail, and support automatic stop/fade when playback consumes buffered history so it never grows indefinitely [5 pts]
+- [A] (#1) Create `src/game/entities/EchoGhost.ts` to record the active snake path each tick into a bounded circular buffer, replay the path as a delayed (5-second) ghost trail, and support automatic stop/fade when playback consumes buffered history so it never grows indefinitely [5 pts]
 
 ## Gameplay Integration
 
