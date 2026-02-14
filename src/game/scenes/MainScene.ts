@@ -195,7 +195,7 @@ export class MainScene extends Phaser.Scene {
   // ── Collision detection ───────────────────────────────────────
 
   /**
-   * Check wall-collision and self-collision.
+   * Check wall-collision, self-collision, and echo-ghost collision.
    * If a collision is detected, ends the run and returns true.
    */
   private checkCollisions(): boolean {
@@ -211,6 +211,12 @@ export class MainScene extends Phaser.Scene {
 
     // Self-collision: head occupies a body segment
     if (this.snake.hasSelfCollision()) {
+      this.endRun();
+      return true;
+    }
+
+    // Echo-ghost collision: head overlaps the ghost's delayed replay position
+    if (this.ghost && this.ghost.isActive() && this.ghost.isOnGhost(head)) {
       this.endRun();
       return true;
     }
