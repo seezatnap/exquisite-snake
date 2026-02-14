@@ -3,6 +3,8 @@ import {
   MAGNET_RADIUS_TILES,
   MAGNET_SPEED_BONUS_PER_SEGMENT,
   PARASITE_MAX_SEGMENTS,
+  PARASITE_PICKUP_SPAWN_CHANCE_PER_INTERVAL,
+  PARASITE_PICKUP_SPAWN_INTERVAL_MS,
   PARASITE_TYPES,
   ParasiteType,
   SPLITTER_OBSTACLE_INTERVAL_MS,
@@ -11,12 +13,16 @@ import {
 } from "@/game/entities/Parasite";
 import { ParasiteManager } from "@/game/systems/ParasiteManager";
 import { Biome } from "@/game/systems/BiomeManager";
+import { GRID_COLS, GRID_ROWS } from "@/game/config";
+import type { GridPos } from "@/game/utils/grid";
 
 describe("Parasite scaffolding constants", () => {
   it("matches Phase 4 spec constants", () => {
     expect(PARASITE_MAX_SEGMENTS).toBe(3);
     expect(MAGNET_RADIUS_TILES).toBe(2);
     expect(MAGNET_SPEED_BONUS_PER_SEGMENT).toBe(0.1);
+    expect(PARASITE_PICKUP_SPAWN_INTERVAL_MS).toBe(3_000);
+    expect(PARASITE_PICKUP_SPAWN_CHANCE_PER_INTERVAL).toBe(0.3);
     expect(SPLITTER_OBSTACLE_INTERVAL_MS).toBe(10_000);
     expect(PARASITE_TYPES).toEqual(["magnet", "shield", "splitter"]);
   });
@@ -56,6 +62,87 @@ describe("Parasite runtime state models", () => {
     });
 
     expect(base).toEqual(createParasiteRuntimeState());
+  });
+});
+
+describe("Parasite pickup spawning", () => {
+  it("spawns only after the spawn interval elapses", () => {
+    const manager = new ParasiteManager();
+
+    manager.advanceTimers(PARASITE_PICKUP_SPAWN_INTERVAL_MS - 1);
+    manager.updatePickupSpawn({
+      snakeSegments: [{ col: 5, row: 5 }],
+      foodPosition: { col: 6, row: 5 },
+      rng: () => 0,
+    });
+    expect(manager.getState().pickup).toBeNull();
+
+    manager.advanceTimers(1);
+    manager.updatePickupSpawn({
+      snakeSegments: [{ col: 5, row: 5 }],
+      foodPosition: { col: 6, row: 5 },
+      rng: () => 0,
+    });
+    expect(manager.getState().pickup).not.toBeNull();
+  });
+
+  it("chooses a random cell from only empty candidates", () => {
+    const manager = new ParasiteManager();
+    manager.advanceTimers(PARASITE_PICKUP_SPAWN_INTERVAL_MS);
+
+    manager.updatePickupSpawn({
+      snakeSegments: [
+        { col: 0, row: 0 },
+        { col: 0, row: 1 },
+      ],
+      foodPosition: { col: 0, row: 2 },
+      obstaclePositions: [{ col: 0, row: 3 }],
+      rng: () => 0,
+    });
+
+    const pickup = manager.getState().pickup;
+    expect(pickup).not.toBeNull();
+    expect(pickup!.type).toBe(ParasiteType.Magnet);
+    expect(pickup!.position).toEqual({ col: 0, row: 4 });
+  });
+
+  it("never spawns on splitter obstacles tracked in parasite state", () => {
+    const manager = new ParasiteManager();
+    const snapshot = createParasiteRuntimeState();
+    snapshot.splitterObstacles.push({
+      id: "obstacle-1",
+      position: { col: 0, row: 0 },
+      spawnedAtMs: 100,
+    });
+    manager.restoreState(snapshot);
+    manager.advanceTimers(PARASITE_PICKUP_SPAWN_INTERVAL_MS);
+
+    manager.updatePickupSpawn({
+      snakeSegments: [],
+      foodPosition: null,
+      rng: () => 0,
+    });
+
+    expect(manager.getState().pickup?.position).toEqual({ col: 0, row: 1 });
+  });
+
+  it("does not spawn if no free cells remain", () => {
+    const manager = new ParasiteManager();
+    const filledGrid: GridPos[] = [];
+    for (let col = 0; col < GRID_COLS; col++) {
+      for (let row = 0; row < GRID_ROWS; row++) {
+        filledGrid.push({ col, row });
+      }
+    }
+
+    manager.advanceTimers(PARASITE_PICKUP_SPAWN_INTERVAL_MS);
+    manager.updatePickupSpawn({
+      snakeSegments: filledGrid,
+      foodPosition: null,
+      rng: () => 0,
+    });
+
+    expect(manager.getState().pickup).toBeNull();
   });
 });
 
