@@ -25,6 +25,7 @@ export const TEXTURE_KEYS = {
   SNAKE_HEAD: "snake-head",
   SNAKE_BODY: "snake-body",
   FOOD: "food",
+  PARASITE_PICKUP: "parasite-pickup",
   PARTICLE: "particle",
 } as const;
 
@@ -35,6 +36,7 @@ export const RENDER_DEPTH = {
   BIOME_GRID: -10,
   BIOME_MECHANIC: 5,
   FOOD: 20,
+  PARASITE_PICKUP: 24,
   SNAKE: 30,
 } as const;
 

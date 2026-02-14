@@ -21,7 +21,7 @@ export class Boot extends Phaser.Scene {
     this.scene.start("MainScene");
   }
 
-  /** Build small canvas textures for snake, food, and particle effects. */
+  /** Build small canvas textures for snake, food, parasite pickups, and particles. */
   private generateTextures(): void {
     const size = TILE_SIZE;
     const half = size / 2;
@@ -51,6 +51,19 @@ export class Boot extends Phaser.Scene {
       foodGfx.fillCircle(half, half, half - 2);
       foodGfx.generateTexture(TEXTURE_KEYS.FOOD, size, size);
       foodGfx.destroy();
+    }
+
+    // ── Parasite pickup: hollow rounded-square token (distinct from food) ──
+    if (!this.textures.exists(TEXTURE_KEYS.PARASITE_PICKUP)) {
+      const pickupGfx = this.make.graphics({ x: 0, y: 0 }, false);
+      pickupGfx.fillStyle(0xffffff, 1);
+      pickupGfx.fillRoundedRect(2, 2, size - 4, size - 4, 4);
+      pickupGfx.fillStyle(COLORS.BACKGROUND, 1);
+      pickupGfx.fillCircle(half, half, half - 6);
+      pickupGfx.fillStyle(0xffffff, 1);
+      pickupGfx.fillCircle(half, half, 2.5);
+      pickupGfx.generateTexture(TEXTURE_KEYS.PARASITE_PICKUP, size, size);
+      pickupGfx.destroy();
     }
 
     // ── Particle: small neon-pink dot for burst effects ──────────
