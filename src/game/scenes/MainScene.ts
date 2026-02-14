@@ -12,6 +12,7 @@ import { loadHighScore, saveHighScore } from "../utils/storage";
 import { isInBounds, type GridPos } from "../utils/grid";
 import { Snake } from "../entities/Snake";
 import { Food } from "../entities/Food";
+import { EchoGhost } from "../entities/EchoGhost";
 import { emitFoodParticles, shakeCamera } from "../systems/effects";
 
 // ── Default spawn configuration ─────────────────────────────────
@@ -42,6 +43,18 @@ export class MainScene extends Phaser.Scene {
 
   /** The food entity for the current run (null when not playing). */
   private food: Food | null = null;
+
+  /** The echo ghost replay entity for the current run (null when not playing). */
+  private echoGhost: EchoGhost | null = null;
+
+  /** Number of recorded movement steps since run start. */
+  private ghostProgressTicks = 0;
+
+  /** Number of replayable steps emitted after the delay window starts. */
+  private ghostReplayTicks = 0;
+
+  /** Whether the ghost delay window has completed and replay has started. */
+  private isGhostReplayActive = false;
 
   /**
    * Injectable RNG function for deterministic replay sessions.
@@ -93,6 +106,21 @@ export class MainScene extends Phaser.Scene {
     const stepped = this.snake.update(delta);
 
     if (stepped) {
+      this.echoGhost?.writePositions(this.snake.getSegments());
+      this.ghostProgressTicks += 1;
+
+      const replayReady = this.echoGhost?.isReplayReady() ?? false;
+      if (!this.isGhostReplayActive && replayReady) {
+        this.isGhostReplayActive = true;
+      }
+
+      if (this.isGhostReplayActive) {
+        this.ghostReplayTicks += 1;
+      }
+
+      // Ensure replay output is being generated only from the recorded path.
+      this.echoGhost?.readDelayedTrail();
+
       // Check collisions after the snake moved to its new grid position
       if (this.checkCollisions()) {
         return; // Game over — stop processing this frame
@@ -163,6 +191,7 @@ export class MainScene extends Phaser.Scene {
     );
     this.snake.setupInput();
     this.snake.setupTouchInput();
+    this.echoGhost = new EchoGhost(this.snake.getTicker().interval);
     this.food = new Food(this, this.snake, this.rng);
   }
 
@@ -176,6 +205,10 @@ export class MainScene extends Phaser.Scene {
       this.food.destroy();
       this.food = null;
     }
+    this.echoGhost = null;
+    this.ghostProgressTicks = 0;
+    this.ghostReplayTicks = 0;
+    this.isGhostReplayActive = false;
   }
 
   // ── Collision detection ───────────────────────────────────────
