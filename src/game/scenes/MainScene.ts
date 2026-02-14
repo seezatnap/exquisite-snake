@@ -93,6 +93,12 @@ export class MainScene extends Phaser.Scene {
 
   /** Bound listener for bridge phase changes (stored for cleanup). */
   private onBridgePhaseChange: ((phase: GamePhase) => void) | null = null;
+  /** Active scheduled burst ids that should still execute when their timer fires. */
+  private pendingGhostFoodBurstIds = new Set<number>();
+  /** Timers for pending ghost-food bursts, keyed by burst id. */
+  private ghostFoodBurstTimerEvents = new Map<number, Phaser.Time.TimerEvent>();
+  /** Monotonic id used to identify burst callbacks across runs. */
+  private nextGhostFoodBurstId = 0;
 
   // ── Phaser lifecycle ────────────────────────────────────────
 
@@ -176,9 +182,37 @@ export class MainScene extends Phaser.Scene {
       return;
     }
 
-    this.time.delayedCall(this.echoGhost.getDelayMs(), () => {
+    const burstId = ++this.nextGhostFoodBurstId;
+    this.pendingGhostFoodBurstIds.add(burstId);
+
+    const callback = () => {
+      if (!this.pendingGhostFoodBurstIds.delete(burstId)) {
+        return;
+      }
+
+      this.clearScheduledGhostFoodBurst(burstId);
       emitFoodParticles(this, x, y);
-    });
+    };
+
+    const timerEvent = this.time.delayedCall(this.echoGhost.getDelayMs(), callback);
+    if (timerEvent) {
+      this.ghostFoodBurstTimerEvents.set(burstId, timerEvent);
+    }
+  }
+
+  private clearScheduledGhostFoodBurst(burstId: number): void {
+    const timerEvent = this.ghostFoodBurstTimerEvents.get(burstId);
+    if (timerEvent && typeof this.time.removeEvent === "function") {
+      this.time.removeEvent(timerEvent);
+    }
+    this.ghostFoodBurstTimerEvents.delete(burstId);
+  }
+
+  private clearScheduledGhostFoodBursts(): void {
+    for (const burstId of this.pendingGhostFoodBurstIds) {
+      this.clearScheduledGhostFoodBurst(burstId);
+    }
+    this.pendingGhostFoodBurstIds.clear();
   }
 
   // ── Phase management ────────────────────────────────────────
@@ -198,10 +232,15 @@ export class MainScene extends Phaser.Scene {
     return gameBridge.getState().phase;
   }
 
+  private clearRunArtifacts(): void {
+    this.clearScheduledGhostFoodBursts();
+  }
+
   // ── Run lifecycle ───────────────────────────────────────────
 
   /** Reset per-run state and begin a new game. */
   private startRun(): void {
+    this.clearRunArtifacts();
     gameBridge.resetRun();
     this.destroyEntities();
     this.createEntities();
@@ -209,6 +248,7 @@ export class MainScene extends Phaser.Scene {
 
   /** End the current run: kill snake, persist high-score, transition to gameOver. */
   endRun(): void {
+    this.clearRunArtifacts();
     shakeCamera(this);
     if (this.snake?.isAlive()) {
       this.snake.kill();
@@ -242,6 +282,7 @@ export class MainScene extends Phaser.Scene {
 
   /** Destroy existing snake and food entities. */
   private destroyEntities(): void {
+    this.clearRunArtifacts();
     if (this.snake) {
       this.snake.destroy();
       this.snake = null;
