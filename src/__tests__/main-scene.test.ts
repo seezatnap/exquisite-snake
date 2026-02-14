@@ -28,6 +28,9 @@ function createMockSprite() {
   return {
     destroy: mockDestroy,
     setPosition: mockSetPosition,
+    setAlpha: vi.fn(),
+    setVisible: vi.fn(),
+    visible: true,
     x: 0,
     y: 0,
   };
@@ -42,6 +45,11 @@ vi.mock("phaser", () => {
       particles: vi.fn(() => ({
         explode: vi.fn(),
         destroy: vi.fn(),
+        stop: vi.fn(),
+        start: vi.fn(),
+        setPosition: vi.fn(),
+        emitting: true,
+        particleAlpha: 1,
       })),
     };
     input = {
