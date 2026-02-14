@@ -31,3 +31,7 @@
 ## Follow-up tasks (from sprint review)
 - [x] (#14) Integrate `ParasiteManager.spawnPickupIfDue` into `MainScene` so parasite pickups actually appear during active gameplay, using live snake/food/obstacle occupancy and clearing pickup state on run reset. (B)
 - [x] (#15) Add a `MainScene` integration test that advances parasite timers and verifies spawned pickups are rendered and never placed on snake, food, or obstacle cells. (B)
+
+## Follow-up tasks (from sprint review)
+- [ ] (#16) Complete runtime pickup consumption in `MainScene` by consuming when the snake head enters a pickup cell, removing the consumed pickup sprite, and applying inventory/FIFO plus parasites-collected updates from `ParasiteManager`.
+- [ ] (#17) Update food respawn placement to exclude active parasite pickup cells (not just snake cells), and add regression coverage that food and parasite pickups never overlap after food is eaten.
