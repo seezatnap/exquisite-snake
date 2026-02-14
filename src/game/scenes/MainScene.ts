@@ -15,6 +15,7 @@ import { Food } from "../entities/Food";
 import { EchoGhost } from "../entities/EchoGhost";
 import { emitFoodParticles, shakeCamera } from "../systems/effects";
 import { RewindManager } from "../systems/RewindManager";
+import { GhostFoodScheduler } from "../systems/ghostFoodBurst";
 
 // ── Default spawn configuration ─────────────────────────────────
 
@@ -50,6 +51,9 @@ export class MainScene extends Phaser.Scene {
 
   /** Rewind manager — Phase 6 hook for snapshotting/restoring game state. */
   private rewindManager: RewindManager = new RewindManager();
+
+  /** Scheduler for delayed ghost-food particle bursts. */
+  private ghostFoodScheduler: GhostFoodScheduler | null = null;
 
   /**
    * Injectable RNG function for deterministic replay sessions.
@@ -109,6 +113,14 @@ export class MainScene extends Phaser.Scene {
       // Record the snake's current position into the echo ghost buffer
       if (this.echoGhost) {
         this.echoGhost.record(this.snake.getSegments());
+
+        // Process any pending ghost-food bursts that match the current replay tick
+        if (this.ghostFoodScheduler) {
+          const bursts = this.ghostFoodScheduler.processTick(this.echoGhost);
+          for (const burst of bursts) {
+            emitFoodParticles(this, burst.x, burst.y);
+          }
+        }
       }
 
       // Check food consumption — emit particles at the old food position on eat
@@ -120,6 +132,10 @@ export class MainScene extends Phaser.Scene {
       );
       if (eaten) {
         emitFoodParticles(this, fx, fy);
+        // Schedule a ghost-food burst at the ghost's position 5 seconds later
+        if (this.echoGhost && this.ghostFoodScheduler) {
+          this.ghostFoodScheduler.schedule(this.echoGhost.getCurrentTick() - 1);
+        }
       }
     }
   }
@@ -183,6 +199,7 @@ export class MainScene extends Phaser.Scene {
     this.food = new Food(this, this.snake, this.rng);
     this.echoGhost = new EchoGhost();
     this.rewindManager.register("echoGhost", this.echoGhost);
+    this.ghostFoodScheduler = new GhostFoodScheduler();
   }
 
   /** Destroy existing snake, food, and echo ghost entities. */
@@ -200,6 +217,10 @@ export class MainScene extends Phaser.Scene {
       this.echoGhost = null;
     }
     this.rewindManager.clear();
+    if (this.ghostFoodScheduler) {
+      this.ghostFoodScheduler.reset();
+      this.ghostFoodScheduler = null;
+    }
   }
 
   // ── Collision detection ───────────────────────────────────────
@@ -291,6 +312,10 @@ export class MainScene extends Phaser.Scene {
 
   getRewindManager(): RewindManager {
     return this.rewindManager;
+  }
+
+  getGhostFoodScheduler(): GhostFoodScheduler | null {
+    return this.ghostFoodScheduler;
   }
 
   // ── Arena grid ──────────────────────────────────────────────
