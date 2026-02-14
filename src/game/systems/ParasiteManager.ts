@@ -2,9 +2,11 @@ import type { BiomeTransition } from "./BiomeManager";
 import { GRID_COLS, GRID_ROWS } from "../config";
 import {
   PARASITE_ECHO_GHOST_POLICY,
+  PARASITE_MAGNET_RADIUS_TILES,
   PARASITE_MAGNET_SPEED_BONUS_PER_SEGMENT,
   PARASITE_MAX_SEGMENTS,
   PARASITE_SPLITTER_INTERVAL_MS,
+  PARASITE_SPLITTER_SCORE_MULTIPLIER,
   getParasitePickupRenderIdentity,
   Parasite,
   ParasiteType,
@@ -14,7 +16,7 @@ import {
   type ParasitePickupRenderIdentity,
   type ParasiteSegmentState,
 } from "../entities/Parasite";
-import type { GridPos } from "../utils/grid";
+import { isInBounds, type GridPos } from "../utils/grid";
 
 export interface ParasiteMovementContext {
   deltaMs: number;
@@ -26,6 +28,23 @@ export interface ParasiteCollisionContext {
   head: GridPos;
   wallCollision: boolean;
   selfCollision: boolean;
+}
+
+export interface ParasiteShieldCollisionResolution {
+  absorbed: boolean;
+  consumedSegment: ParasiteSegmentState | null;
+  blockedFoodCharges: number;
+  activeSegments: ParasiteSegmentState[];
+}
+
+export interface ParasiteFoodContactContext {
+  head: GridPos;
+  foodPosition: GridPos;
+}
+
+export interface ParasiteFoodContactResolution {
+  blocked: boolean;
+  blockedFoodCharges: number;
 }
 
 export type ParasiteScoreSource = "food" | "bonus" | "biome" | "other";
@@ -121,6 +140,14 @@ export interface ParasiteSpawnedPickup {
   pickup: ParasitePickupState;
   render: ParasitePickupRenderIdentity;
 }
+
+export interface ParasiteMagnetFoodPullContext {
+  snakeSegments: readonly GridPos[];
+  foodPosition: GridPos;
+  obstaclePositions?: readonly GridPos[];
+}
+
+export type ParasiteObstacleSpawnContext = ParasitePickupSpawnContext;
 
 export interface ParasitePickupConsumptionResult {
   consumedPickup: ParasitePickupState;
@@ -267,6 +294,20 @@ function normalizeTimestampMs(timestampMs: number): number {
   return Math.max(0, Math.floor(timestampMs));
 }
 
+function normalizeScorePoints(points: number): number {
+  if (!Number.isFinite(points)) {
+    return 0;
+  }
+  return points;
+}
+
+function normalizeBlockedFoodCharges(charges: number): number {
+  if (!Number.isFinite(charges)) {
+    return 0;
+  }
+  return Math.max(0, Math.floor(charges));
+}
+
 function normalizeRandomSample(rng: () => number): number {
   const sample = rng();
   if (!Number.isFinite(sample)) {
@@ -294,6 +335,17 @@ function sampleIndex(length: number, rng: () => number): number {
 
 function gridPosKey(position: GridPos): string {
   return `${position.col}:${position.row}`;
+}
+
+function manhattanDistance(a: GridPos, b: GridPos): number {
+  return Math.abs(a.col - b.col) + Math.abs(a.row - b.row);
+}
+
+let splitterObstacleIdSequence = 0;
+
+function createSplitterObstacleId(): string {
+  splitterObstacleIdSequence += 1;
+  return `splitter-obstacle-${splitterObstacleIdSequence}`;
 }
 
 /**
@@ -347,12 +399,171 @@ export class ParasiteManager {
     return calculateMagnetSpeedMultiplier(magnetSegments);
   }
 
+  getSplitterScoreMultiplier(): number {
+    if (!this.hasActiveSegmentType(ParasiteType.Splitter)) {
+      return 1;
+    }
+    return PARASITE_SPLITTER_SCORE_MULTIPLIER;
+  }
+
+  applyScoreModifiers(context: ParasiteScoringContext): number {
+    const safeBasePoints = normalizeScorePoints(context.basePoints);
+    const splitterAdjustedBasePoints = safeBasePoints > 0
+      ? safeBasePoints * this.getSplitterScoreMultiplier()
+      : safeBasePoints;
+
+    const scoringHook = this.phase3Hooks.scoring;
+    if (typeof scoringHook !== "function") {
+      return splitterAdjustedBasePoints;
+    }
+
+    const scoreWithHook = scoringHook({
+      ...context,
+      basePoints: splitterAdjustedBasePoints,
+    });
+    if (!Number.isFinite(scoreWithHook)) {
+      return splitterAdjustedBasePoints;
+    }
+    return scoreWithHook;
+  }
+
   getActiveSegments(): ParasiteSegmentState[] {
     return this.state.inventory.segments.map(cloneSegmentState);
   }
 
   getParasitesCollectedCount(): number {
     return this.state.parasitesCollected;
+  }
+
+  getBlockedFoodCharges(): number {
+    const normalizedCharges = normalizeBlockedFoodCharges(this.state.blockedFoodCharges);
+    this.state.blockedFoodCharges = normalizedCharges;
+    return normalizedCharges;
+  }
+
+  resolveShieldCollision(
+    context: ParasiteCollisionContext,
+  ): ParasiteShieldCollisionResolution {
+    const collisionHook = this.phase3Hooks.collision;
+    if (typeof collisionHook === "function") {
+      collisionHook(context);
+    }
+
+    const isShieldableCollision = context.wallCollision || context.selfCollision;
+    if (!isShieldableCollision) {
+      return {
+        absorbed: false,
+        consumedSegment: null,
+        blockedFoodCharges: this.getBlockedFoodCharges(),
+        activeSegments: this.getActiveSegments(),
+      };
+    }
+
+    const shieldIndex = this.state.inventory.segments.findIndex((segment) =>
+      segment.type === ParasiteType.Shield
+    );
+    if (shieldIndex < 0) {
+      return {
+        absorbed: false,
+        consumedSegment: null,
+        blockedFoodCharges: this.getBlockedFoodCharges(),
+        activeSegments: this.getActiveSegments(),
+      };
+    }
+
+    const consumedSegment = this.state.inventory.segments.splice(shieldIndex, 1)[0];
+    this.state.blockedFoodCharges = this.getBlockedFoodCharges() + 1;
+    return {
+      absorbed: true,
+      consumedSegment: cloneSegmentState(consumedSegment),
+      blockedFoodCharges: this.state.blockedFoodCharges,
+      activeSegments: this.getActiveSegments(),
+    };
+  }
+
+  resolveFoodContact(
+    context: ParasiteFoodContactContext,
+  ): ParasiteFoodContactResolution {
+    if (
+      context.head.col !== context.foodPosition.col ||
+      context.head.row !== context.foodPosition.row
+    ) {
+      return {
+        blocked: false,
+        blockedFoodCharges: this.getBlockedFoodCharges(),
+      };
+    }
+
+    const blockedFoodCharges = this.getBlockedFoodCharges();
+    if (blockedFoodCharges <= 0) {
+      return {
+        blocked: false,
+        blockedFoodCharges,
+      };
+    }
+
+    this.state.blockedFoodCharges = blockedFoodCharges - 1;
+    return {
+      blocked: true,
+      blockedFoodCharges: this.state.blockedFoodCharges,
+    };
+  }
+
+  resolveMagnetFoodPull(context: ParasiteMagnetFoodPullContext): GridPos | null {
+    const magnetAnchors = this.getSegmentAnchorsByType(
+      context.snakeSegments,
+      ParasiteType.Magnet,
+    );
+    if (magnetAnchors.length === 0) {
+      return null;
+    }
+
+    const nearestMagnet = this.findNearestAnchor(
+      context.foodPosition,
+      magnetAnchors,
+    );
+    if (!nearestMagnet) {
+      return null;
+    }
+
+    if (nearestMagnet.distance > PARASITE_MAGNET_RADIUS_TILES) {
+      return null;
+    }
+
+    const occupiedCellKeys = new Set<string>();
+    for (const snakeSegment of context.snakeSegments) {
+      occupiedCellKeys.add(gridPosKey(snakeSegment));
+    }
+
+    for (const obstaclePos of context.obstaclePositions ?? []) {
+      occupiedCellKeys.add(gridPosKey(obstaclePos));
+    }
+
+    for (const splitterObstacle of this.state.splitterObstacles) {
+      occupiedCellKeys.add(gridPosKey(splitterObstacle.position));
+    }
+
+    for (const pickup of this.state.pickups) {
+      occupiedCellKeys.add(gridPosKey(pickup.position));
+    }
+
+    const pullCandidates = this.getPullCandidates(
+      context.foodPosition,
+      nearestMagnet.anchor,
+    );
+    for (const candidate of pullCandidates) {
+      if (!isInBounds(candidate)) {
+        continue;
+      }
+
+      if (occupiedCellKeys.has(gridPosKey(candidate))) {
+        continue;
+      }
+
+      return candidate;
+    }
+
+    return null;
   }
 
   getPickupSpawnCandidates(context: ParasitePickupSpawnContext): GridPos[] {
@@ -456,6 +667,49 @@ export class ParasiteManager {
     };
   }
 
+  spawnSplitterObstaclesForDueTicks(
+    context: ParasiteObstacleSpawnContext,
+    splitterTicksDue: number,
+  ): ParasiteObstacleState[] {
+    const safeTicksDue = Number.isFinite(splitterTicksDue)
+      ? Math.max(0, Math.floor(splitterTicksDue))
+      : 0;
+    if (safeTicksDue <= 0 || !this.hasActiveSegmentType(ParasiteType.Splitter)) {
+      return [];
+    }
+
+    const rng = context.rng ?? Math.random;
+    const spawnedAtMs = normalizeTimestampMs(
+      context.nowMs ?? this.state.timers.elapsedRunMs,
+    );
+    const sourceSegmentId = this.state.inventory.segments.find((segment) =>
+      segment.type === ParasiteType.Splitter
+    )?.id ?? null;
+    const spawned: ParasiteObstacleState[] = [];
+
+    for (let tick = 0; tick < safeTicksDue; tick += 1) {
+      const candidates = this.getPickupSpawnCandidates(context);
+      if (candidates.length === 0) {
+        continue;
+      }
+
+      const obstacle: ParasiteObstacleState = {
+        id: createSplitterObstacleId(),
+        position: cloneGridPos(candidates[sampleIndex(candidates.length, rng)]),
+        spawnedAtMs,
+        sourceSegmentId,
+      };
+      this.state.splitterObstacles.push(obstacle);
+      spawned.push(cloneObstacleState(obstacle));
+    }
+
+    return spawned;
+  }
+
+  clearSplitterObstacles(): void {
+    this.state.splitterObstacles = [];
+  }
+
   advanceTimers(deltaMs: number): ParasiteTimerTickResult {
     const safeDelta = normalizeDeltaMs(deltaMs);
     if (safeDelta <= 0) {
@@ -495,6 +749,104 @@ export class ParasiteManager {
 
   private hasActiveSegmentType(type: ParasiteType): boolean {
     return this.state.inventory.segments.some((segment) => segment.type === type);
+  }
+
+  private getSegmentAnchorsByType(
+    snakeSegments: readonly GridPos[],
+    type: ParasiteType,
+  ): GridPos[] {
+    if (snakeSegments.length === 0) {
+      return [];
+    }
+
+    const anchors: GridPos[] = [];
+    const seenKeys = new Set<string>();
+
+    for (let inventoryIndex = 0; inventoryIndex < this.state.inventory.segments.length; inventoryIndex += 1) {
+      const segment = this.state.inventory.segments[inventoryIndex];
+      if (segment.type !== type) {
+        continue;
+      }
+
+      const indexFromTail = Math.min(inventoryIndex, snakeSegments.length - 1);
+      const snakeIndex = snakeSegments.length - 1 - indexFromTail;
+      const anchor = snakeSegments[snakeIndex];
+      const anchorKey = gridPosKey(anchor);
+      if (seenKeys.has(anchorKey)) {
+        continue;
+      }
+
+      seenKeys.add(anchorKey);
+      anchors.push(cloneGridPos(anchor));
+    }
+
+    return anchors;
+  }
+
+  private findNearestAnchor(
+    source: GridPos,
+    anchors: readonly GridPos[],
+  ): { anchor: GridPos; distance: number } | null {
+    if (anchors.length === 0) {
+      return null;
+    }
+
+    let nearestAnchor: GridPos | null = null;
+    let nearestDistance = Number.POSITIVE_INFINITY;
+
+    for (const anchor of anchors) {
+      const distance = manhattanDistance(source, anchor);
+      if (distance < nearestDistance) {
+        nearestAnchor = anchor;
+        nearestDistance = distance;
+      }
+    }
+
+    if (!nearestAnchor || !Number.isFinite(nearestDistance)) {
+      return null;
+    }
+
+    return {
+      anchor: nearestAnchor,
+      distance: nearestDistance,
+    };
+  }
+
+  private getPullCandidates(
+    from: GridPos,
+    toward: GridPos,
+  ): GridPos[] {
+    const deltaCol = toward.col - from.col;
+    const deltaRow = toward.row - from.row;
+    if (deltaCol === 0 && deltaRow === 0) {
+      return [];
+    }
+
+    const candidates: GridPos[] = [];
+    const preferHorizontalFirst = Math.abs(deltaCol) >= Math.abs(deltaRow);
+
+    if (preferHorizontalFirst && deltaCol !== 0) {
+      candidates.push({
+        col: from.col + Math.sign(deltaCol),
+        row: from.row,
+      });
+    }
+
+    if (deltaRow !== 0) {
+      candidates.push({
+        col: from.col,
+        row: from.row + Math.sign(deltaRow),
+      });
+    }
+
+    if (!preferHorizontalFirst && deltaCol !== 0) {
+      candidates.push({
+        col: from.col + Math.sign(deltaCol),
+        row: from.row,
+      });
+    }
+
+    return candidates;
   }
 
   private collectOccupiedCellKeys(context: ParasitePickupSpawnContext): Set<string> {

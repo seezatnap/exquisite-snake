@@ -80,6 +80,20 @@ export class Food {
    */
   respawn(snake: Snake): void {
     this.position = this.findSafePosition(snake);
+    this.syncSpriteToGrid();
+  }
+
+  /**
+   * Move food to a specific grid cell without triggering score/growth effects.
+   *
+   * Used by parasite mechanics that reposition food in-place.
+   */
+  setPosition(nextPosition: GridPos): void {
+    this.position = { ...nextPosition };
+    this.syncSpriteToGrid();
+  }
+
+  private syncSpriteToGrid(): void {
     const px = gridToPixel(this.position);
     this.sprite.setPosition(px.x, px.y);
   }

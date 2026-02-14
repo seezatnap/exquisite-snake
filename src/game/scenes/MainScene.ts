@@ -11,6 +11,7 @@ import {
 import { gameBridge, type GamePhase } from "../bridge";
 import { loadHighScore, saveHighScore } from "../utils/storage";
 import {
+  DEFAULT_MOVE_INTERVAL_MS,
   isInBounds,
   gridEquals,
   gridToPixel,
@@ -22,6 +23,11 @@ import {
 import { Snake } from "../entities/Snake";
 import { Food } from "../entities/Food";
 import { EchoGhost, type EchoGhostSnapshot } from "../entities/EchoGhost";
+import {
+  PARASITE_COLOR_BY_TYPE,
+  ParasiteType,
+  type ParasiteSegmentState,
+} from "../entities/Parasite";
 import { emitFoodParticles, shakeCamera } from "../systems/effects";
 import {
   Biome,
@@ -43,6 +49,7 @@ import {
 } from "../systems/biomeMechanics";
 import {
   ParasiteManager,
+  type ParasiteScoreSource,
   type ParasiteSpawnedPickup,
 } from "../systems/ParasiteManager";
 
@@ -156,6 +163,14 @@ const ECHO_GHOST_TRAIL_SPAWN_INTERVAL_MS = 90;
 const ECHO_GHOST_TRAIL_LIFESPAN_MS = 420;
 const ECHO_GHOST_TRAIL_MAX_PARTICLES = 40;
 const ECHO_GHOST_TRAIL_RADIUS_PX = TILE_SIZE * 0.24;
+const PARASITE_SEGMENT_GLOW_RENDER_DEPTH = RENDER_DEPTH.SNAKE + 1;
+const PARASITE_SEGMENT_ICON_RENDER_DEPTH = RENDER_DEPTH.SNAKE + 2;
+const PARASITE_SEGMENT_PULSE_DURATION_MS = 900;
+const PARASITE_SEGMENT_ICON_LABEL_BY_TYPE: Record<ParasiteType, string> = {
+  [ParasiteType.Magnet]: "MG",
+  [ParasiteType.Shield]: "SH",
+  [ParasiteType.Splitter]: "SP",
+};
 
 interface BiomeTransitionEffectState {
   from: Biome;
@@ -172,6 +187,10 @@ interface EchoGhostTrailParticle {
   ageMs: number;
   lifespanMs: number;
   radiusPx: number;
+}
+interface ParasiteSegmentRenderBinding {
+  segment: ParasiteSegmentState;
+  position: GridPos;
 }
 
 function createBiomeMechanicsState(biome: Biome): BiomeMechanicsState {
@@ -204,8 +223,20 @@ export class MainScene extends Phaser.Scene {
   /** Runtime state/timers for parasite pickups and attached segment systems. */
   private readonly parasiteManager = new ParasiteManager();
 
+  /** Baseline snake movement interval before magnet speed modifiers. */
+  private snakeBaseMoveIntervalMs = DEFAULT_MOVE_INTERVAL_MS;
+
+  /** Last applied magnet speed multiplier used for interval restoration. */
+  private appliedMagnetSpeedMultiplier = 1;
+
   /** Rendered parasite pickup sprites keyed by pickup id. */
   private parasitePickupSprites = new Map<string, Phaser.GameObjects.Sprite>();
+
+  /** Graphics object used to render pulsing parasite glows on attached segments. */
+  private parasiteSegmentGlowGraphics: Phaser.GameObjects.Graphics | null = null;
+
+  /** Tiny type icons keyed by attached parasite segment id. */
+  private parasiteSegmentIconOverlays = new Map<string, Phaser.GameObjects.Text>();
 
   /** Delayed playback of historical snake path for Echo Ghost mechanics. */
   private echoGhost: EchoGhost | null = null;
@@ -327,12 +358,14 @@ export class MainScene extends Phaser.Scene {
     this.destroyEchoGhostVisuals();
     this.destroyBiomeShiftCountdown();
     this.destroyParasitePickupSprites();
+    this.destroyParasiteSegmentVisuals();
   }
 
   update(_time: number, delta: number): void {
     if (gameBridge.getState().phase !== "playing") {
       this.clearBiomeShiftCountdown();
       this.clearEchoGhostVisualState();
+      this.clearParasiteSegmentVisualState();
       return;
     }
 
@@ -345,14 +378,17 @@ export class MainScene extends Phaser.Scene {
     this.updateMoltenCoreMechanics(delta);
     this.updateParasitePickupSpawning(delta);
     this.updateBiomeMechanicVisuals(delta);
+    this.syncMagnetSpeedWithActiveSegments();
 
     const stepped = this.snake.update(delta);
+    this.updateParasiteSegmentVisuals();
 
     if (stepped) {
       if (this.checkCollisions()) {
         return; // Game over — stop processing this frame
       }
 
+      this.resolveParasitePickupConsumption();
       this.resolveFoodConsumption();
 
       const gravityApplied = this.applyVoidRiftGravityNudgeIfDue();
@@ -361,9 +397,11 @@ export class MainScene extends Phaser.Scene {
           this.echoGhost.recordPath(this.snake.getSegments());
           return;
         }
+        this.resolveParasitePickupConsumption();
         this.resolveFoodConsumption();
       }
 
+      this.applyMagnetFoodPull();
       this.echoGhost.recordPath(this.snake.getSegments());
     }
   }
@@ -412,6 +450,7 @@ export class MainScene extends Phaser.Scene {
   endRun(): void {
     shakeCamera(this);
     this.biomeManager.stopRun();
+    this.parasiteManager.clearSplitterObstacles();
     this.resetMoltenCoreState();
     this.clearBiomeTransitionEffect();
     this.clearBiomeShiftCountdown();
@@ -445,6 +484,7 @@ export class MainScene extends Phaser.Scene {
     this.echoGhost.recordPath(this.snake.getSegments());
     this.ensureEchoGhostGraphics();
     this.clearEchoGhostVisualState();
+    this.resetMagnetSpeedState(this.snake.getTicker().interval);
   }
 
   /** Destroy existing snake and food entities. */
@@ -463,6 +503,8 @@ export class MainScene extends Phaser.Scene {
     }
     this.destroyEchoGhostVisuals();
     this.destroyParasitePickupSprites();
+    this.resetMagnetSpeedState();
+    this.destroyParasiteSegmentVisuals();
   }
 
   private updateParasitePickupSpawning(delta: number): void {
@@ -470,20 +512,24 @@ export class MainScene extends Phaser.Scene {
       return;
     }
 
-    this.parasiteManager.advanceTimers(delta);
-    const spawn = this.parasiteManager.spawnPickupIfDue({
+    const timerTick = this.parasiteManager.advanceTimers(delta);
+    const spawnContext = {
       snakeSegments: this.snake.getSegments(),
       foodPosition: this.food.getPosition(),
       obstaclePositions: this.getLiveObstaclePositions(),
       rng: this.rng,
       nowMs: gameBridge.getState().elapsedTime,
-    });
+    };
+    const spawn = this.parasiteManager.spawnPickupIfDue(spawnContext);
 
-    if (!spawn) {
-      return;
+    if (spawn) {
+      this.renderSpawnedParasitePickup(spawn);
     }
 
-    this.renderSpawnedParasitePickup(spawn);
+    this.parasiteManager.spawnSplitterObstaclesForDueTicks(
+      spawnContext,
+      timerTick.splitterTicksDue,
+    );
   }
 
   private getLiveObstaclePositions(): GridPos[] {
@@ -510,6 +556,151 @@ export class MainScene extends Phaser.Scene {
     this.parasitePickupSprites.clear();
   }
 
+  private updateParasiteSegmentVisuals(): void {
+    if (!this.snake) {
+      this.clearParasiteSegmentVisualState();
+      return;
+    }
+
+    const bindings = this.mapParasiteSegmentsToSnakeBody(
+      this.parasiteManager.getActiveSegments(),
+      this.snake.getSegments(),
+    );
+
+    if (bindings.length === 0) {
+      this.clearParasiteSegmentVisualState();
+      return;
+    }
+
+    if (!this.ensureParasiteSegmentGlowGraphics()) {
+      return;
+    }
+
+    const boundSegmentIds = new Set(bindings.map(({ segment }) => segment.id));
+    for (const [segmentId, icon] of this.parasiteSegmentIconOverlays.entries()) {
+      if (!boundSegmentIds.has(segmentId)) {
+        icon.destroy();
+        this.parasiteSegmentIconOverlays.delete(segmentId);
+      }
+    }
+
+    const glow = this.parasiteSegmentGlowGraphics!;
+    glow.clear?.();
+    const elapsedMs = gameBridge.getState().elapsedTime;
+
+    for (let index = 0; index < bindings.length; index += 1) {
+      const binding = bindings[index]!;
+      const center = gridToPixel(binding.position);
+      const tint = PARASITE_COLOR_BY_TYPE[binding.segment.type];
+      const pulsePhase =
+        ((elapsedMs + index * 140) % PARASITE_SEGMENT_PULSE_DURATION_MS) /
+        PARASITE_SEGMENT_PULSE_DURATION_MS;
+      const pulse = 0.5 + Math.sin(pulsePhase * Math.PI * 2) * 0.5;
+      const glowAlpha = 0.18 + pulse * 0.24;
+      const glowRadius = TILE_SIZE * (0.32 + pulse * 0.16);
+
+      glow.fillStyle?.(tint, glowAlpha);
+      glow.fillCircle?.(center.x, center.y, glowRadius);
+      glow.fillStyle?.(tint, glowAlpha * 0.55);
+      glow.fillCircle?.(center.x, center.y, glowRadius * 0.62);
+
+      let icon = this.parasiteSegmentIconOverlays.get(binding.segment.id);
+      if (!icon) {
+        icon = this.createParasiteSegmentIcon(binding.segment.type);
+        if (icon) {
+          this.parasiteSegmentIconOverlays.set(binding.segment.id, icon);
+        }
+      }
+
+      icon?.setText?.(PARASITE_SEGMENT_ICON_LABEL_BY_TYPE[binding.segment.type]);
+      icon?.setPosition?.(center.x, center.y);
+      icon?.setAlpha?.(0.75 + pulse * 0.25);
+      icon?.setVisible?.(true);
+      icon?.setDepth?.(PARASITE_SEGMENT_ICON_RENDER_DEPTH);
+    }
+  }
+
+  private mapParasiteSegmentsToSnakeBody(
+    activeSegments: readonly ParasiteSegmentState[],
+    snakeSegments: readonly GridPos[],
+  ): ParasiteSegmentRenderBinding[] {
+    if (activeSegments.length === 0 || snakeSegments.length <= 1) {
+      return [];
+    }
+
+    const bodyFromTail = snakeSegments.slice(1).reverse();
+    const slotCount = Math.min(activeSegments.length, bodyFromTail.length);
+    const bindings: ParasiteSegmentRenderBinding[] = [];
+
+    for (let index = 0; index < slotCount; index += 1) {
+      bindings.push({
+        segment: activeSegments[index]!,
+        position: { ...bodyFromTail[index]! },
+      });
+    }
+
+    return bindings;
+  }
+
+  private createParasiteSegmentIcon(
+    type: ParasiteType,
+  ): Phaser.GameObjects.Text | undefined {
+    const addFactory = this.add as unknown as {
+      text?: (
+        x: number,
+        y: number,
+        text: string,
+        style?: Phaser.Types.GameObjects.Text.TextStyle,
+      ) => Phaser.GameObjects.Text;
+    };
+    if (typeof addFactory.text !== "function") {
+      return undefined;
+    }
+
+    const icon = addFactory.text(0, 0, PARASITE_SEGMENT_ICON_LABEL_BY_TYPE[type], {
+      fontFamily: "monospace",
+      fontSize: `${Math.max(8, Math.floor(TILE_SIZE * 0.38))}px`,
+      fontStyle: "700",
+      color: "#041014",
+      align: "center",
+    });
+    icon.setOrigin?.(0.5, 0.5);
+    icon.setDepth?.(PARASITE_SEGMENT_ICON_RENDER_DEPTH);
+    return icon;
+  }
+
+  private ensureParasiteSegmentGlowGraphics(): boolean {
+    if (this.parasiteSegmentGlowGraphics) {
+      return true;
+    }
+
+    const addFactory = this.add as unknown as {
+      graphics?: () => Phaser.GameObjects.Graphics;
+    };
+    if (typeof addFactory.graphics !== "function") {
+      return false;
+    }
+
+    const graphics = addFactory.graphics();
+    graphics.setDepth?.(PARASITE_SEGMENT_GLOW_RENDER_DEPTH);
+    this.parasiteSegmentGlowGraphics = graphics;
+    return true;
+  }
+
+  private clearParasiteSegmentVisualState(): void {
+    this.parasiteSegmentGlowGraphics?.clear?.();
+    for (const icon of this.parasiteSegmentIconOverlays.values()) {
+      icon.destroy();
+    }
+    this.parasiteSegmentIconOverlays.clear();
+  }
+
+  private destroyParasiteSegmentVisuals(): void {
+    this.clearParasiteSegmentVisualState();
+    this.parasiteSegmentGlowGraphics?.destroy?.();
+    this.parasiteSegmentGlowGraphics = null;
+  }
+
   // ── Collision detection ───────────────────────────────────────
 
   /**
@@ -523,12 +714,30 @@ export class MainScene extends Phaser.Scene {
 
     // Wall collision: head is outside arena bounds
     if (!isInBounds(head)) {
+      if (
+        this.tryAbsorbShieldCollision({
+          head,
+          wallCollision: true,
+          selfCollision: false,
+        })
+      ) {
+        return false;
+      }
       this.endRun();
       return true;
     }
 
     // Self-collision: head occupies a body segment
     if (this.snake.hasSelfCollision()) {
+      if (
+        this.tryAbsorbShieldCollision({
+          head,
+          wallCollision: false,
+          selfCollision: true,
+        })
+      ) {
+        return false;
+      }
       this.endRun();
       return true;
     }
@@ -550,6 +759,24 @@ export class MainScene extends Phaser.Scene {
     return false;
   }
 
+  private tryAbsorbShieldCollision(context: {
+    head: GridPos;
+    wallCollision: boolean;
+    selfCollision: boolean;
+  }): boolean {
+    if (!this.snake) {
+      return false;
+    }
+
+    const shieldCollision = this.parasiteManager.resolveShieldCollision(context);
+    if (!shieldCollision.absorbed) {
+      return false;
+    }
+
+    this.snake.rewindLastStep();
+    return true;
+  }
+
   private hasEchoGhostCollision(head: GridPos): boolean {
     if (!this.echoGhost || !this.echoGhost.isActive()) {
       return false;
@@ -566,8 +793,12 @@ export class MainScene extends Phaser.Scene {
 
   // ── Score helpers ───────────────────────────────────────────
 
-  addScore(points: number): void {
-    gameBridge.setScore(gameBridge.getState().score + points);
+  addScore(points: number, source: ParasiteScoreSource = "other"): void {
+    const adjustedPoints = this.parasiteManager.applyScoreModifiers({
+      basePoints: points,
+      source,
+    });
+    gameBridge.setScore(gameBridge.getState().score + adjustedPoints);
   }
 
   getScore(): number {
@@ -726,6 +957,7 @@ export class MainScene extends Phaser.Scene {
     if (biome === Biome.MoltenCore) {
       this.resetMoltenCoreState();
     }
+    this.parasiteManager.clearSplitterObstacles();
 
     gameBridge.emitBiomeExit(biome);
     this.events?.emit?.("biomeExit", biome);
@@ -897,6 +1129,15 @@ export class MainScene extends Phaser.Scene {
     const fx = foodSprite.x;
     const fy = foodSprite.y;
     const eatGridPos = this.snake.getHeadPosition();
+    const foodGridPos = this.food.getPosition();
+    const foodContact = this.parasiteManager.resolveFoodContact({
+      head: eatGridPos,
+      foodPosition: foodGridPos,
+    });
+    if (foodContact.blocked) {
+      return;
+    }
+
     const ghostSampleTimestampMs = this.echoGhost.getElapsedMs();
     const ghostDelayMs = this.echoGhost.getDelayMs();
     const runIdAtEat = this.activeRunId;
@@ -912,6 +1153,99 @@ export class MainScene extends Phaser.Scene {
         eatGridPos,
       );
     }
+  }
+
+  private resolveParasitePickupConsumption(): void {
+    if (!this.snake) {
+      return;
+    }
+
+    const consumed = this.parasiteManager.consumePickupAt(
+      this.snake.getHeadPosition(),
+      gameBridge.getState().elapsedTime,
+    );
+    if (!consumed) {
+      return;
+    }
+
+    this.destroyParasitePickupSprite(consumed.consumedPickup.id);
+  }
+
+  private destroyParasitePickupSprite(pickupId: string): void {
+    const sprite = this.parasitePickupSprites.get(pickupId);
+    if (!sprite) {
+      return;
+    }
+
+    sprite.destroy();
+    this.parasitePickupSprites.delete(pickupId);
+  }
+
+  private applyMagnetFoodPull(): void {
+    if (!this.snake || !this.food) {
+      return;
+    }
+
+    const pulledFoodPosition = this.parasiteManager.resolveMagnetFoodPull({
+      snakeSegments: this.snake.getSegments(),
+      foodPosition: this.food.getPosition(),
+      obstaclePositions: this.getLiveObstaclePositions(),
+    });
+    if (!pulledFoodPosition) {
+      return;
+    }
+
+    this.food.setPosition(pulledFoodPosition);
+  }
+
+  private resetMagnetSpeedState(
+    baseMoveIntervalMs: number = DEFAULT_MOVE_INTERVAL_MS,
+  ): void {
+    this.snakeBaseMoveIntervalMs = Math.max(1, baseMoveIntervalMs);
+    this.appliedMagnetSpeedMultiplier = 1;
+  }
+
+  private syncMagnetSpeedWithActiveSegments(): void {
+    if (!this.snake) {
+      return;
+    }
+
+    const ticker = this.snake.getTicker();
+    const currentInterval = ticker.interval;
+    const magnetSpeedMultiplier = this.parasiteManager.getMagnetSpeedMultiplier();
+    const hasMagnetBoost = magnetSpeedMultiplier > 1;
+
+    if (!hasMagnetBoost) {
+      if (this.appliedMagnetSpeedMultiplier > 1) {
+        const restoredInterval = Math.max(1, this.snakeBaseMoveIntervalMs);
+        if (Math.abs(restoredInterval - currentInterval) > 1e-6) {
+          ticker.setInterval(restoredInterval);
+        }
+      } else {
+        this.snakeBaseMoveIntervalMs = Math.max(1, currentInterval);
+      }
+
+      this.appliedMagnetSpeedMultiplier = 1;
+      return;
+    }
+
+    if (this.appliedMagnetSpeedMultiplier > 1) {
+      this.snakeBaseMoveIntervalMs = Math.max(
+        1,
+        currentInterval * this.appliedMagnetSpeedMultiplier,
+      );
+    } else {
+      this.snakeBaseMoveIntervalMs = Math.max(1, currentInterval);
+    }
+
+    const boostedInterval = Math.max(
+      1,
+      this.snakeBaseMoveIntervalMs / magnetSpeedMultiplier,
+    );
+    if (Math.abs(boostedInterval - currentInterval) > 1e-6) {
+      ticker.setInterval(boostedInterval);
+    }
+    this.appliedMagnetSpeedMultiplier = magnetSpeedMultiplier;
   }
 
   private queueDelayedEchoGhostFoodBurst(
@@ -1150,6 +1484,12 @@ export class MainScene extends Phaser.Scene {
     }
     this.echoGhostGraphics?.setDepth?.(ECHO_GHOST_RENDER_DEPTH);
     this.snake?.setRenderDepth(RENDER_DEPTH.SNAKE);
+    this.parasiteSegmentGlowGraphics?.setDepth?.(
+      PARASITE_SEGMENT_GLOW_RENDER_DEPTH,
+    );
+    for (const icon of this.parasiteSegmentIconOverlays.values()) {
+      icon.setDepth?.(PARASITE_SEGMENT_ICON_RENDER_DEPTH);
+    }
     this.children?.depthSort?.();
   }
 

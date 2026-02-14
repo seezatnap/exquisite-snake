@@ -7,6 +7,7 @@ import {
   PARASITE_MAX_SEGMENTS,
   PARASITE_PICKUP_TEXTURE_KEY,
   PARASITE_SPLITTER_INTERVAL_MS,
+  PARASITE_SPLITTER_SCORE_MULTIPLIER,
   Parasite,
   getParasitePickupRenderIdentity,
   ParasiteType,
@@ -41,6 +42,7 @@ describe("Parasite scaffold constants", () => {
     expect(PARASITE_MAGNET_RADIUS_TILES).toBe(2);
     expect(PARASITE_MAGNET_SPEED_BONUS_PER_SEGMENT).toBe(0.1);
     expect(PARASITE_SPLITTER_INTERVAL_MS).toBe(10_000);
+    expect(PARASITE_SPLITTER_SCORE_MULTIPLIER).toBe(1.5);
     expect(PARASITE_PICKUP_SPAWN_INTERVAL_MS).toBe(8_000);
   });
 
@@ -168,6 +170,90 @@ describe("ParasiteManager scaffold", () => {
     expect(manager.getState().timers.splitterObstacleElapsedMs).toBe(0);
   });
 
+  it("spawns one splitter obstacle per due tick on random empty cells", () => {
+    const manager = new ParasiteManager();
+    const seeded = manager.getState();
+    seeded.inventory.segments.push({
+      id: "segment-splitter-1",
+      type: ParasiteType.Splitter,
+      attachedAtMs: 0,
+      sourcePickupId: null,
+    });
+    seeded.pickups = [
+      {
+        id: "pickup-existing",
+        type: ParasiteType.Magnet,
+        position: { col: 0, row: 3 },
+        spawnedAtMs: 10,
+      },
+    ];
+    seeded.splitterObstacles = [
+      {
+        id: "splitter-existing",
+        position: { col: 0, row: 4 },
+        spawnedAtMs: 20,
+        sourceSegmentId: null,
+      },
+    ];
+    manager.replaceState(seeded);
+
+    const timerTick = manager.advanceTimers(
+      PARASITE_SPLITTER_INTERVAL_MS * 2 + 500,
+    );
+    expect(timerTick.splitterTicksDue).toBe(2);
+
+    const snakeSegments: GridPos[] = [
+      { col: 0, row: 0 },
+      { col: 0, row: 1 },
+    ];
+    const foodPosition: GridPos = { col: 0, row: 2 };
+    const obstaclePositions: GridPos[] = [{ col: 0, row: 5 }];
+    const blocked = new Set<string>([
+      ...snakeSegments.map(toGridKey),
+      toGridKey(foodPosition),
+      ...obstaclePositions.map(toGridKey),
+      "0:3",
+      "0:4",
+    ]);
+
+    const spawned = manager.spawnSplitterObstaclesForDueTicks(
+      {
+        snakeSegments,
+        foodPosition,
+        obstaclePositions,
+        rng: sequenceRng([0, 0]),
+        nowMs: 9_999,
+      },
+      timerTick.splitterTicksDue,
+    );
+
+    expect(spawned).toHaveLength(2);
+    expect(manager.getState().splitterObstacles).toHaveLength(3);
+    expect(new Set(spawned.map((obstacle) => toGridKey(obstacle.position))).size).toBe(2);
+    for (const obstacle of spawned) {
+      expect(blocked.has(toGridKey(obstacle.position))).toBe(false);
+      expect(obstacle.spawnedAtMs).toBe(9_999);
+      expect(obstacle.sourceSegmentId).toBe("segment-splitter-1");
+    }
+  });
+
+  it("does not spawn splitter obstacles when no splitter segment is attached", () => {
+    const manager = new ParasiteManager();
+
+    const spawned = manager.spawnSplitterObstaclesForDueTicks(
+      {
+        snakeSegments: [{ col: 4, row: 4 }],
+        foodPosition: { col: 5, row: 4 },
+        obstaclePositions: [{ col: 6, row: 4 }],
+        rng: sequenceRng([0]),
+      },
+      3,
+    );
+
+    expect(spawned).toEqual([]);
+    expect(manager.getState().splitterObstacles).toEqual([]);
+  });
+
   it("derives magnet speed multiplier from attached segments", () => {
     const manager = new ParasiteManager();
     const state = manager.getState();
@@ -197,6 +283,253 @@ describe("ParasiteManager scaffold", () => {
     expect(manager.isEchoGhostExcludedFromParasites()).toBe(true);
   });
 
+  it("applies the splitter score multiplier while splitter is attached", () => {
+    const manager = new ParasiteManager();
+
+    expect(manager.getSplitterScoreMultiplier()).toBe(1);
+    expect(
+      manager.applyScoreModifiers({ basePoints: 2, source: "food" }),
+    ).toBe(2);
+
+    const seeded = manager.getState();
+    seeded.inventory.segments.push({
+      id: "splitter-segment",
+      type: ParasiteType.Splitter,
+      attachedAtMs: 0,
+      sourcePickupId: null,
+    });
+    manager.replaceState(seeded);
+
+    expect(manager.getSplitterScoreMultiplier()).toBe(1.5);
+    expect(
+      manager.applyScoreModifiers({ basePoints: 2, source: "food" }),
+    ).toBe(3);
+    expect(
+      manager.applyScoreModifiers({ basePoints: -4, source: "other" }),
+    ).toBe(-4);
+  });
+
+  it("absorbs wall/self collisions by consuming one shield and adding blocked-food charge", () => {
+    const manager = new ParasiteManager();
+    const seeded = manager.getState();
+    seeded.inventory.segments = [
+      {
+        id: "seg-magnet",
+        type: ParasiteType.Magnet,
+        attachedAtMs: 1,
+        sourcePickupId: "pickup-magnet",
+      },
+      {
+        id: "seg-shield-1",
+        type: ParasiteType.Shield,
+        attachedAtMs: 2,
+        sourcePickupId: "pickup-shield-1",
+      },
+      {
+        id: "seg-shield-2",
+        type: ParasiteType.Shield,
+        attachedAtMs: 3,
+        sourcePickupId: "pickup-shield-2",
+      },
+    ];
+    manager.replaceState(seeded);
+
+    const absorbedWall = manager.resolveShieldCollision({
+      head: { col: GRID_COLS, row: 4 },
+      wallCollision: true,
+      selfCollision: false,
+    });
+    expect(absorbedWall).toEqual({
+      absorbed: true,
+      consumedSegment: {
+        id: "seg-shield-1",
+        type: ParasiteType.Shield,
+        attachedAtMs: 2,
+        sourcePickupId: "pickup-shield-1",
+      },
+      blockedFoodCharges: 1,
+      activeSegments: [
+        {
+          id: "seg-magnet",
+          type: ParasiteType.Magnet,
+          attachedAtMs: 1,
+          sourcePickupId: "pickup-magnet",
+        },
+        {
+          id: "seg-shield-2",
+          type: ParasiteType.Shield,
+          attachedAtMs: 3,
+          sourcePickupId: "pickup-shield-2",
+        },
+      ],
+    });
+
+    const absorbedSelf = manager.resolveShieldCollision({
+      head: { col: 8, row: 8 },
+      wallCollision: false,
+      selfCollision: true,
+    });
+    expect(absorbedSelf.absorbed).toBe(true);
+    expect(absorbedSelf.consumedSegment?.id).toBe("seg-shield-2");
+    expect(absorbedSelf.blockedFoodCharges).toBe(2);
+
+    const noShield = manager.resolveShieldCollision({
+      head: { col: GRID_COLS, row: 10 },
+      wallCollision: true,
+      selfCollision: false,
+    });
+    expect(noShield.absorbed).toBe(false);
+    expect(noShield.consumedSegment).toBeNull();
+    expect(noShield.blockedFoodCharges).toBe(2);
+  });
+
+  it("blocks the first matching food contact after shield absorb and allows the second", () => {
+    const manager = new ParasiteManager();
+    const seeded = manager.getState();
+    seeded.inventory.segments.push({
+      id: "seg-shield",
+      type: ParasiteType.Shield,
+      attachedAtMs: 4,
+      sourcePickupId: "pickup-shield",
+    });
+    manager.replaceState(seeded);
+
+    manager.resolveShieldCollision({
+      head: { col: GRID_COLS, row: 4 },
+      wallCollision: true,
+      selfCollision: false,
+    });
+    expect(manager.getBlockedFoodCharges()).toBe(1);
+
+    const notOnFood = manager.resolveFoodContact({
+      head: { col: 4, row: 5 },
+      foodPosition: { col: 5, row: 5 },
+    });
+    expect(notOnFood).toEqual({
+      blocked: false,
+      blockedFoodCharges: 1,
+    });
+
+    const firstContact = manager.resolveFoodContact({
+      head: { col: 5, row: 5 },
+      foodPosition: { col: 5, row: 5 },
+    });
+    expect(firstContact).toEqual({
+      blocked: true,
+      blockedFoodCharges: 0,
+    });
+
+    const secondContact = manager.resolveFoodContact({
+      head: { col: 5, row: 5 },
+      foodPosition: { col: 5, row: 5 },
+    });
+    expect(secondContact).toEqual({
+      blocked: false,
+      blockedFoodCharges: 0,
+    });
+  });
+
+  it("pulls food one tile toward the nearest magnet segment within radius", () => {
+    const manager = new ParasiteManager();
+    const seeded = manager.getState();
+    seeded.inventory.segments = [
+      {
+        id: "seg-magnet",
+        type: ParasiteType.Magnet,
+        attachedAtMs: 1,
+        sourcePickupId: "pickup-magnet",
+      },
+      {
+        id: "seg-shield",
+        type: ParasiteType.Shield,
+        attachedAtMs: 2,
+        sourcePickupId: "pickup-shield",
+      },
+    ];
+    manager.replaceState(seeded);
+
+    const pulled = manager.resolveMagnetFoodPull({
+      snakeSegments: [
+        { col: 10, row: 10 },
+        { col: 9, row: 10 },
+        { col: 8, row: 10 },
+        { col: 7, row: 10 },
+      ],
+      foodPosition: { col: 7, row: 12 },
+      obstaclePositions: [],
+    });
+
+    expect(pulled).toEqual({ col: 7, row: 11 });
+  });
+
+  it("checks valid pull cells and falls back to an alternate axis when needed", () => {
+    const manager = new ParasiteManager();
+    const seeded = manager.getState();
+    seeded.inventory.segments = [
+      {
+        id: "seg-magnet",
+        type: ParasiteType.Magnet,
+        attachedAtMs: 1,
+        sourcePickupId: "pickup-magnet",
+      },
+    ];
+    manager.replaceState(seeded);
+
+    const pulled = manager.resolveMagnetFoodPull({
+      snakeSegments: [
+        { col: 2, row: 1 },
+        { col: 1, row: 1 },
+      ],
+      foodPosition: { col: 0, row: 0 },
+      obstaclePositions: [{ col: 1, row: 0 }],
+    });
+
+    expect(pulled).toEqual({ col: 0, row: 1 });
+  });
+
+  it("does not pull food when out of magnet range or when no valid cell exists", () => {
+    const manager = new ParasiteManager();
+    const seeded = manager.getState();
+    seeded.inventory.segments = [
+      {
+        id: "seg-magnet",
+        type: ParasiteType.Magnet,
+        attachedAtMs: 1,
+        sourcePickupId: "pickup-magnet",
+      },
+    ];
+    seeded.pickups = [
+      {
+        id: "pickup-blocker",
+        type: ParasiteType.Shield,
+        position: { col: 0, row: 1 },
+        spawnedAtMs: 0,
+      },
+    ];
+    manager.replaceState(seeded);
+
+    const outsideRadius = manager.resolveMagnetFoodPull({
+      snakeSegments: [
+        { col: 4, row: 4 },
+        { col: 3, row: 4 },
+      ],
+      foodPosition: { col: 0, row: 0 },
+    });
+    expect(outsideRadius).toBeNull();
+
+    const blocked = manager.resolveMagnetFoodPull({
+      snakeSegments: [
+        { col: 1, row: 2 },
+        { col: 1, row: 1 },
+      ],
+      foodPosition: { col: 0, row: 0 },
+      obstaclePositions: [{ col: 1, row: 0 }],
+    });
+
+    expect(PARASITE_MAGNET_RADIUS_TILES).toBe(2);
+    expect(blocked).toBeNull();
+  });
+
   it("returns defensive state snapshots", () => {
     const manager = new ParasiteManager();
     const state = manager.getState();
@@ -208,6 +541,30 @@ describe("ParasiteManager scaffold", () => {
     });
 
     expect(manager.getState().inventory.segments).toEqual([]);
+  });
+
+  it("clears persisted splitter obstacles on explicit reset call", () => {
+    const manager = new ParasiteManager();
+    const seeded = manager.getState();
+    seeded.splitterObstacles = [
+      {
+        id: "splitter-a",
+        position: { col: 10, row: 10 },
+        spawnedAtMs: 10_000,
+        sourceSegmentId: "segment-a",
+      },
+      {
+        id: "splitter-b",
+        position: { col: 12, row: 10 },
+        spawnedAtMs: 20_000,
+        sourceSegmentId: "segment-b",
+      },
+    ];
+    manager.replaceState(seeded);
+
+    manager.clearSplitterObstacles();
+
+    expect(manager.getState().splitterObstacles).toEqual([]);
   });
 
   it("spawns a pickup only after the spawn interval is reached", () => {
