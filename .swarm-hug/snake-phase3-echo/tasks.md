@@ -26,3 +26,6 @@
 
 ## Follow-up tasks (from sprint review)
 - [x] (#10) Add unit tests for `EchoGhost.reset()` and constructor edge cases (zero/negative tick interval and delay) in `echo-ghost.test.ts` (blocked by #1) (A)
+
+## Follow-up tasks (from sprint review)
+- [ ] (#11) Wire `advancePlayhead()` into the game loop so the ghost actually drains and fades after `stopRecording()` is called during game-over (the update loop currently exits early when phase is not `"playing"`, so the fade-out never runs) (blocked by #3)
