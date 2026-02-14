@@ -1022,6 +1022,14 @@ export class MainScene extends Phaser.Scene {
     }
 
     const foodPos = this.food.getPosition();
+    const parasiteState = this.parasiteManager.getState();
+    const parasiteBlockedCells = new Set<string>();
+    for (const pickup of parasiteState.pickups) {
+      parasiteBlockedCells.add(this.gridPosKey(pickup.position));
+    }
+    for (const obstacle of parasiteState.splitterObstacles) {
+      parasiteBlockedCells.add(this.gridPosKey(obstacle.position));
+    }
     const candidates: GridPos[] = [];
 
     for (let col = 0; col < GRID_COLS; col++) {
@@ -1033,7 +1041,11 @@ export class MainScene extends Phaser.Scene {
         if (foodPos.col === col && foodPos.row === row) {
           continue;
         }
-        if (this.moltenLavaPools.has(this.gridPosKey(pos))) {
+        const posKey = this.gridPosKey(pos);
+        if (this.moltenLavaPools.has(posKey)) {
+          continue;
+        }
+        if (parasiteBlockedCells.has(posKey)) {
           continue;
         }
         candidates.push(pos);

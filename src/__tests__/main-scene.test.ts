@@ -1421,6 +1421,73 @@ describe("MainScene", () => {
     }
   });
 
+  it("Molten Core lava spawns avoid active parasite pickup and splitter-obstacle cells", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.enterPhase("playing");
+    scene.setRng(() => 0);
+    scene.setMoltenLavaConfig({
+      spawnIntervalMs: 1,
+      spawnChancePerInterval: 0,
+      maxPools: 2,
+    });
+
+    const snake = scene.getSnake()!;
+    snake.reset({ col: GRID_COLS - 2, row: GRID_ROWS - 2 }, "right", 4);
+    snake.getTicker().setInterval(60_000);
+    scene.getFood()!.setPosition({ col: GRID_COLS - 5, row: GRID_ROWS - 5 });
+
+    scene.update(0, 45_000); // Neon -> Ice
+    scene.update(45_000, 45_000); // Ice -> Molten
+    expect(scene.getCurrentBiome()).toBe(Biome.MoltenCore);
+    expect(scene.getMoltenLavaPools()).toHaveLength(0);
+
+    const parasiteManager = getParasiteManager(scene);
+    const seeded = parasiteManager.getState();
+    seeded.pickups = [
+      {
+        id: "pickup-blocked",
+        type: ParasiteType.Magnet,
+        position: { col: 0, row: 0 },
+        spawnedAtMs: 1,
+      },
+    ];
+    seeded.splitterObstacles = [
+      {
+        id: "splitter-blocked",
+        position: { col: 0, row: 1 },
+        spawnedAtMs: 2,
+        sourceSegmentId: "segment-splitter",
+      },
+    ];
+    parasiteManager.replaceState(seeded);
+
+    scene.setMoltenLavaConfig({
+      spawnIntervalMs: 1,
+      spawnChancePerInterval: 1,
+      maxPools: 2,
+    });
+
+    scene.update(90_000, 2);
+
+    const blocked = new Set<string>([
+      ...parasiteManager
+        .getState()
+        .pickups
+        .map((pickup) => `${pickup.position.col}:${pickup.position.row}`),
+      ...parasiteManager
+        .getState()
+        .splitterObstacles
+        .map((obstacle) => `${obstacle.position.col}:${obstacle.position.row}`),
+    ]);
+    const pools = scene.getMoltenLavaPools();
+
+    expect(pools).toHaveLength(2);
+    for (const pool of pools) {
+      expect(blocked.has(`${pool.col}:${pool.row}`)).toBe(false);
+    }
+  });
+
   it("Molten Core renders lava pool visuals from active mechanic pools", () => {
     const scene = new MainScene();
     scene.create();

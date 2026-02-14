@@ -38,4 +38,4 @@
 
 ## Follow-up tasks (from sprint review)
 - [ ] (#18) Extend food respawn placement to exclude active splitter-obstacle and Molten Core lava cells (not just snake), and add a regression test that post-eat food respawns never land on hazard/obstacle tiles. (blocked by #17)
-- [C] (#19) Update Molten Core lava spawn candidate filtering to exclude active parasite pickup and splitter-obstacle cells, and add integration coverage that lava and parasite entities never overlap.
+- [x] (#19) Update Molten Core lava spawn candidate filtering to exclude active parasite pickup and splitter-obstacle cells, and add integration coverage that lava and parasite entities never overlap. (C)
