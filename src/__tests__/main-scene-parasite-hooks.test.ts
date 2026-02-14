@@ -2,7 +2,11 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { gameBridge } from "@/game/bridge";
 import { TEXTURE_KEYS } from "@/game/config";
 import { GRID_COLS, GRID_ROWS } from "@/game/config";
-import { PARASITE_PICKUP_SPAWN_INTERVAL_MS } from "@/game/entities/Parasite";
+import {
+  PARASITE_PICKUP_SPAWN_INTERVAL_MS,
+  ParasiteType,
+  createParasiteRuntimeState,
+} from "@/game/entities/Parasite";
 import { Biome } from "@/game/systems/BiomeManager";
 
 function createMockGraphics() {
@@ -224,6 +228,29 @@ describe("MainScene parasite hook wiring", () => {
         source: "food",
       }),
     );
+  });
+
+  it("applies Splitter multiplier to food score gains via MainScene score path", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.enterPhase("playing");
+
+    const parasiteState = createParasiteRuntimeState();
+    parasiteState.activeSegments.push({
+      id: "segment-splitter",
+      type: ParasiteType.Splitter,
+      attachedAtMs: 0,
+    });
+    scene.getParasiteManager().restoreState(parasiteState);
+
+    const snake = scene.getSnake()!;
+    const foodPos = scene.getFood()!.getPosition();
+    const approach = getApproachVector(foodPos);
+    snake.reset(approach.head, approach.direction, 1);
+
+    scene.update(0, snake.getTicker().interval);
+
+    expect(scene.getScore()).toBe(1.5);
   });
 
   it("invokes biome enter/exit/transition hooks on biome rotation", () => {
