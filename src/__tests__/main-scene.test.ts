@@ -1558,6 +1558,50 @@ describe("MainScene – entity management", () => {
     expect(echoGhost.getBufferedSampleCount()).toBe(initialSamples + 1);
   });
 
+  it("renders EchoGhost with dashed outlines, 40% opacity, and trailing particles after delay", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.enterPhase("playing");
+
+    const snake = scene.getSnake()!;
+    snake.getTicker().setInterval(60_000);
+
+    mockLineStyle.mockClear();
+    mockMoveTo.mockClear();
+    mockLineTo.mockClear();
+    mockFillCircle.mockClear();
+
+    scene.update(0, 4_999);
+    expect(mockLineStyle).not.toHaveBeenCalledWith(2, 0xff4b8f, 0.4);
+    expect(mockFillCircle).not.toHaveBeenCalled();
+
+    scene.update(0, 1);
+
+    expect(mockLineStyle).toHaveBeenCalledWith(2, 0xff4b8f, 0.4);
+    expect(mockMoveTo).toHaveBeenCalled();
+    expect(mockLineTo).toHaveBeenCalled();
+    expect(mockFillCircle).toHaveBeenCalled();
+  });
+
+  it("tints EchoGhost visuals to the active biome at render time", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.enterPhase("playing");
+
+    const snake = scene.getSnake()!;
+    snake.getTicker().setInterval(60_000);
+
+    mockLineStyle.mockClear();
+    scene.update(0, 5_000);
+    expect(mockLineStyle).toHaveBeenCalledWith(2, 0xff4b8f, 0.4);
+
+    mockLineStyle.mockClear();
+    scene.update(0, 45_000); // Neon -> Ice
+
+    expect(scene.getCurrentBiome()).toBe(Biome.IceCavern);
+    expect(mockLineStyle).toHaveBeenCalledWith(2, 0xd3f1ff, 0.4);
+  });
+
   it("destroys old entities on replay (entering 'playing' again)", () => {
     const scene = new MainScene();
     scene.create();
