@@ -245,7 +245,9 @@ describe("MainScene integrates effects", () => {
     // The pattern: get sprite position, then checkEat, then emit at old position
     const spriteIndex = source.indexOf("getSprite()");
     const checkEatIndex = source.indexOf("checkEat");
-    const emitIndex = source.indexOf("emitFoodParticles(this,");
+    // Find the emitFoodParticles call that comes after checkEat (the food-eat emit),
+    // not the ghost-food burst emit which may appear earlier in the source.
+    const emitIndex = source.indexOf("emitFoodParticles(this,", checkEatIndex);
 
     expect(spriteIndex).toBeGreaterThan(-1);
     expect(checkEatIndex).toBeGreaterThan(spriteIndex);
