@@ -388,6 +388,7 @@ export class MainScene extends Phaser.Scene {
         return; // Game over — stop processing this frame
       }
 
+      this.resolveParasitePickupConsumption();
       this.resolveFoodConsumption();
 
       const gravityApplied = this.applyVoidRiftGravityNudgeIfDue();
@@ -396,6 +397,7 @@ export class MainScene extends Phaser.Scene {
           this.echoGhost.recordPath(this.snake.getSegments());
           return;
         }
+        this.resolveParasitePickupConsumption();
         this.resolveFoodConsumption();
       }
 
@@ -1151,6 +1153,32 @@ export class MainScene extends Phaser.Scene {
         eatGridPos,
       );
     }
+  }
+
+  private resolveParasitePickupConsumption(): void {
+    if (!this.snake) {
+      return;
+    }
+
+    const consumed = this.parasiteManager.consumePickupAt(
+      this.snake.getHeadPosition(),
+      gameBridge.getState().elapsedTime,
+    );
+    if (!consumed) {
+      return;
+    }
+
+    this.destroyParasitePickupSprite(consumed.consumedPickup.id);
+  }
+
+  private destroyParasitePickupSprite(pickupId: string): void {
+    const sprite = this.parasitePickupSprites.get(pickupId);
+    if (!sprite) {
+      return;
+    }
+
+    sprite.destroy();
+    this.parasitePickupSprites.delete(pickupId);
   }
 
   private applyMagnetFoodPull(): void {
