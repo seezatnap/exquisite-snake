@@ -712,12 +712,30 @@ export class MainScene extends Phaser.Scene {
 
     // Wall collision: head is outside arena bounds
     if (!isInBounds(head)) {
+      if (
+        this.tryAbsorbShieldCollision({
+          head,
+          wallCollision: true,
+          selfCollision: false,
+        })
+      ) {
+        return false;
+      }
       this.endRun();
       return true;
     }
 
     // Self-collision: head occupies a body segment
     if (this.snake.hasSelfCollision()) {
+      if (
+        this.tryAbsorbShieldCollision({
+          head,
+          wallCollision: false,
+          selfCollision: true,
+        })
+      ) {
+        return false;
+      }
       this.endRun();
       return true;
     }
@@ -737,6 +755,24 @@ export class MainScene extends Phaser.Scene {
     }
 
     return false;
+  }
+
+  private tryAbsorbShieldCollision(context: {
+    head: GridPos;
+    wallCollision: boolean;
+    selfCollision: boolean;
+  }): boolean {
+    if (!this.snake) {
+      return false;
+    }
+
+    const shieldCollision = this.parasiteManager.resolveShieldCollision(context);
+    if (!shieldCollision.absorbed) {
+      return false;
+    }
+
+    this.snake.rewindLastStep();
+    return true;
   }
 
   private hasEchoGhostCollision(head: GridPos): boolean {
@@ -1091,6 +1127,15 @@ export class MainScene extends Phaser.Scene {
     const fx = foodSprite.x;
     const fy = foodSprite.y;
     const eatGridPos = this.snake.getHeadPosition();
+    const foodGridPos = this.food.getPosition();
+    const foodContact = this.parasiteManager.resolveFoodContact({
+      head: eatGridPos,
+      foodPosition: foodGridPos,
+    });
+    if (foodContact.blocked) {
+      return;
+    }
+
     const ghostSampleTimestampMs = this.echoGhost.getElapsedMs();
     const ghostDelayMs = this.echoGhost.getDelayMs();
     const runIdAtEat = this.activeRunId;

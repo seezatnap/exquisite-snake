@@ -385,6 +385,44 @@ describe("MainScene", () => {
     expect(spySetScore).toHaveBeenLastCalledWith(3);
   });
 
+  it("blocks the first food contact when shield debt is active and consumes on second contact", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.enterPhase("playing");
+
+    const snake = scene.getSnake()!;
+    const food = scene.getFood()!;
+    const parasiteManager = getParasiteManager(scene);
+    const seeded = parasiteManager.getState();
+    seeded.blockedFoodCharges = 1;
+    parasiteManager.replaceState(seeded);
+
+    snake.reset({ col: 7, row: 7 }, "right", 1);
+    food.setPosition({ col: 7, row: 7 });
+    const checkEatSpy = vi.spyOn(food, "checkEat");
+    spySetScore.mockClear();
+
+    (
+      scene as unknown as {
+        resolveFoodConsumption: () => void;
+      }
+    ).resolveFoodConsumption();
+
+    expect(checkEatSpy).not.toHaveBeenCalled();
+    expect(parasiteManager.getState().blockedFoodCharges).toBe(0);
+    expect(scene.getScore()).toBe(0);
+
+    (
+      scene as unknown as {
+        resolveFoodConsumption: () => void;
+      }
+    ).resolveFoodConsumption();
+
+    expect(checkEatSpy).toHaveBeenCalledTimes(1);
+    expect(scene.getScore()).toBe(1);
+    expect(parasiteManager.getState().blockedFoodCharges).toBe(0);
+  });
+
   // ── High score ─────────────────────────────────────────────
 
   it("endRun updates highScore if score is greater", () => {
@@ -2208,6 +2246,29 @@ describe("MainScene – entity management", () => {
 // ── Wall collision ─────────────────────────────────────────────
 
 describe("MainScene – wall collision", () => {
+  it("shield absorbs one wall collision, then a second collision is fatal", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.enterPhase("playing");
+    setActiveParasiteSegments(scene, [ParasiteType.Shield]);
+
+    const snake = scene.getSnake()!;
+    snake.reset({ col: GRID_COLS - 1, row: 15 }, "right", 1);
+    const interval = snake.getTicker().interval;
+
+    scene.update(0, interval);
+
+    const parasiteState = getParasiteManager(scene).getState();
+    expect(scene.getPhase()).toBe("playing");
+    expect(snake.isAlive()).toBe(true);
+    expect(snake.getHeadPosition()).toEqual({ col: GRID_COLS - 1, row: 15 });
+    expect(parasiteState.inventory.segments).toEqual([]);
+    expect(parasiteState.blockedFoodCharges).toBe(1);
+
+    scene.update(interval, interval);
+    expect(scene.getPhase()).toBe("gameOver");
+  });
+
   it("ends the run when snake hits the right wall", () => {
     const scene = new MainScene();
     scene.create();
@@ -2287,6 +2348,34 @@ describe("MainScene – wall collision", () => {
 // ── Self-collision ────────────────────────────────────────────
 
 describe("MainScene – self collision", () => {
+  it("shield absorbs one self-collision and keeps the run alive", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.enterPhase("playing");
+    setActiveParasiteSegments(scene, [ParasiteType.Shield]);
+
+    const snake = scene.getSnake()!;
+    snake.reset({ col: 5, row: 5 }, "right", 5);
+    const interval = snake.getTicker().interval;
+
+    scene.update(0, interval);
+    snake.bufferDirection("down");
+    scene.update(0, interval);
+    snake.bufferDirection("left");
+    scene.update(0, interval);
+
+    const preCollisionHead = snake.getHeadPosition();
+    snake.bufferDirection("up");
+    scene.update(0, interval);
+
+    const parasiteState = getParasiteManager(scene).getState();
+    expect(scene.getPhase()).toBe("playing");
+    expect(snake.isAlive()).toBe(true);
+    expect(snake.getHeadPosition()).toEqual(preCollisionHead);
+    expect(parasiteState.inventory.segments).toEqual([]);
+    expect(parasiteState.blockedFoodCharges).toBe(1);
+  });
+
   it("ends the run when snake collides with itself", () => {
     const scene = new MainScene();
     scene.create();
