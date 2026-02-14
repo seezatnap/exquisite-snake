@@ -17,6 +17,11 @@ const mockGraphics = {
   moveTo: mockMoveTo,
   lineTo: mockLineTo,
   strokePath: mockStrokePath,
+  clear: vi.fn(),
+  fillStyle: vi.fn(),
+  fillRoundedRect: vi.fn(),
+  beginPath: vi.fn(),
+  destroy: vi.fn(),
 };
 
 const mockSceneStart = vi.fn();

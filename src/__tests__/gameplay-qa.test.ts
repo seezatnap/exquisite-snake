@@ -24,6 +24,11 @@ const mockGraphics = {
   moveTo: vi.fn(),
   lineTo: vi.fn(),
   strokePath: vi.fn(),
+  clear: vi.fn(),
+  fillStyle: vi.fn(),
+  fillRoundedRect: vi.fn(),
+  beginPath: vi.fn(),
+  destroy: vi.fn(),
 };
 
 const mockDestroy = vi.fn();
