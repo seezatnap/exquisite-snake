@@ -23,6 +23,7 @@ import { Food } from "../entities/Food";
 import { EchoGhost } from "../entities/EchoGhost";
 import { emitFoodParticles, shakeCamera } from "../systems/effects";
 import { GhostFoodBurstQueue } from "../systems/GhostFoodBurstQueue";
+import { EchoGhostRenderer } from "../systems/EchoGhostRenderer";
 import {
   Biome,
   BIOME_CONFIG,
@@ -186,6 +187,9 @@ export class MainScene extends Phaser.Scene {
   /** Queue for delayed ghost-food cosmetic bursts. */
   private ghostFoodBurstQueue: GhostFoodBurstQueue | null = null;
 
+  /** Visual renderer for the echo ghost trail. */
+  private echoGhostRenderer: EchoGhostRenderer | null = null;
+
   /** Biome rotation/timing owner for the current run. */
   private readonly biomeManager = new BiomeManager();
 
@@ -300,6 +304,7 @@ export class MainScene extends Phaser.Scene {
     if (!this.snake || !this.food) return;
     this.updateMoltenCoreMechanics(delta);
     this.updateBiomeMechanicVisuals(delta);
+    this.renderEchoGhost();
 
     const stepped = this.snake.update(delta);
 
@@ -400,6 +405,7 @@ export class MainScene extends Phaser.Scene {
     this.food = new Food(this, this.snake, this.rng);
     this.echoGhost = new EchoGhost();
     this.ghostFoodBurstQueue = new GhostFoodBurstQueue();
+    this.echoGhostRenderer = new EchoGhostRenderer(this);
   }
 
   /** Destroy existing snake and food entities. */
@@ -419,6 +425,10 @@ export class MainScene extends Phaser.Scene {
     if (this.ghostFoodBurstQueue) {
       this.ghostFoodBurstQueue.reset();
       this.ghostFoodBurstQueue = null;
+    }
+    if (this.echoGhostRenderer) {
+      this.echoGhostRenderer.destroy();
+      this.echoGhostRenderer = null;
     }
   }
 
@@ -562,6 +572,10 @@ export class MainScene extends Phaser.Scene {
 
   getGhostFoodBurstQueue(): GhostFoodBurstQueue | null {
     return this.ghostFoodBurstQueue;
+  }
+
+  getEchoGhostRenderer(): EchoGhostRenderer | null {
+    return this.echoGhostRenderer;
   }
 
   // ── Arena grid ──────────────────────────────────────────────
@@ -799,6 +813,14 @@ export class MainScene extends Phaser.Scene {
     }
   }
 
+  private renderEchoGhost(): void {
+    if (!this.echoGhostRenderer || !this.echoGhost) return;
+    this.echoGhostRenderer.render(
+      this.echoGhost.getState(),
+      this.biomeManager.getCurrentBiome(),
+    );
+  }
+
   private applyVoidRiftGravityNudgeIfDue(): boolean {
     if (!this.snake || this.biomeManager.getCurrentBiome() !== Biome.VoidRift) {
       return false;
@@ -997,6 +1019,7 @@ export class MainScene extends Phaser.Scene {
    */
   private syncGameplayLayering(): void {
     this.gridGraphics?.setDepth?.(RENDER_DEPTH.BIOME_GRID);
+    this.echoGhostRenderer?.getGraphics()?.setDepth?.(RENDER_DEPTH.ECHO_GHOST);
     this.food?.getSprite()?.setDepth?.(RENDER_DEPTH.FOOD);
     this.snake?.setRenderDepth(RENDER_DEPTH.SNAKE);
     this.children?.depthSort?.();
