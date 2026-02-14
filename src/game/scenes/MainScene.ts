@@ -1,5 +1,5 @@
 import Phaser from "phaser";
-import {
+  import {
   ARENA_WIDTH,
   ARENA_HEIGHT,
   TILE_SIZE,
@@ -9,10 +9,32 @@ import {
 } from "../config";
 import { gameBridge, type GamePhase } from "../bridge";
 import { loadHighScore, saveHighScore } from "../utils/storage";
-import { isInBounds, type GridPos } from "../utils/grid";
+import {
+  isInBounds,
+  gridEquals,
+  gridToPixel,
+  type GridPos,
+} from "../utils/grid";
 import { Snake } from "../entities/Snake";
 import { Food } from "../entities/Food";
-import { emitFoodParticles, shakeCamera } from "../systems/effects";
+import {
+  EchoGhost,
+  type EchoGhostRewindState,
+  type EchoGhostRewindStateHook,
+} from "../entities/EchoGhost";
+import {
+  emitFoodParticles,
+  emitGhostTrailParticles,
+  shakeCamera,
+} from "../systems/effects";
+
+const GHOST_SEGMENT_INSET = 2;
+const GHOST_LINE_WIDTH = 2;
+const GHOST_DASH_LENGTH = 4;
+const GHOST_DASH_GAP = 4;
+const GHOST_OPACITY = 0.4;
+const GHOST_BIOME_DEFAULT_TINT = COLORS.NEON_PURPLE;
+const GHOST_BIOME_TRANSITION_MS = 250;
 
 // ── Default spawn configuration ─────────────────────────────────
 
@@ -42,6 +64,39 @@ export class MainScene extends Phaser.Scene {
 
   /** The food entity for the current run (null when not playing). */
   private food: Food | null = null;
+
+  /** The echo ghost replay entity for the current run (null when not playing). */
+  private echoGhost: EchoGhost | null = null;
+
+  /** Graphics used for rendering the dashed ghost hazard trail. */
+  private echoGhostGraphics: Phaser.GameObjects.Graphics | null = null;
+
+  /** Optional observer for rewind snapshots emitted by the echo ghost. */
+  private echoGhostRewindStateHook: EchoGhostRewindStateHook | null = null;
+
+  /** Number of recorded movement steps since run start. */
+  private ghostProgressTicks = 0;
+
+  /** Number of replayable steps emitted after the delay window starts. */
+  private ghostReplayTicks = 0;
+
+  /** Whether the ghost delay window has completed and replay has started. */
+  private isGhostReplayActive = false;
+
+  /** Current ghost trail tint before transition progress is applied. */
+  private ghostTrailTint: number = GHOST_BIOME_DEFAULT_TINT;
+
+  /** Tint we are transitioning from for the current ghost trail color update. */
+  private ghostTrailTintTransitionStart: number = GHOST_BIOME_DEFAULT_TINT;
+
+  /** Tint we are transitioning to for the current ghost trail color update. */
+  private ghostTrailTintTransitionTarget: number = GHOST_BIOME_DEFAULT_TINT;
+
+  /** Total duration of the active tint transition in ms. */
+  private ghostTrailTintTransitionDurationMs = 0;
+
+  /** Elapsed progress toward the active tint transition target in ms. */
+  private ghostTrailTintTransitionElapsedMs = 0;
 
   /**
    * Injectable RNG function for deterministic replay sessions.
@@ -91,10 +146,34 @@ export class MainScene extends Phaser.Scene {
     if (!this.snake || !this.food) return;
 
     const stepped = this.snake.update(delta);
+    this.advanceGhostTintTransition(delta);
+
+    if (stepped) {
+      this.echoGhost?.writePositions(this.snake.getSegments());
+      this.ghostProgressTicks += 1;
+
+      this.echoGhost?.advanceReplayProgress();
+
+      const replayState = this.echoGhost?.getReplayState();
+      if (!this.isGhostReplayActive && replayState === "active") {
+        this.isGhostReplayActive = true;
+      }
+      if (replayState === "active") {
+        this.ghostReplayTicks += 1;
+      }
+      if (replayState === "exhausted") {
+        this.isGhostReplayActive = false;
+      }
+    }
+
+    const ghostTrail = this.echoGhost?.readDelayedTrail() ?? [];
+    const ghostOpacity = this.echoGhost?.getReplayOpacity() ?? 0;
+    const ghostTint = this.getCurrentGhostTrailTint();
+    this.renderEchoGhost(ghostTrail, ghostOpacity, ghostTint);
 
     if (stepped) {
       // Check collisions after the snake moved to its new grid position
-      if (this.checkCollisions()) {
+      if (this.checkCollisions(ghostTrail)) {
         return; // Game over — stop processing this frame
       }
 
@@ -106,9 +185,21 @@ export class MainScene extends Phaser.Scene {
         this.addScore(points),
       );
       if (eaten) {
+        this.scheduleGhostFoodBurst(fx, fy);
         emitFoodParticles(this, fx, fy);
       }
     }
+  }
+
+  /** Schedule a cosmetic burst at the ghost's corresponding position after delay. */
+  private scheduleGhostFoodBurst(x: number, y: number): void {
+    if (!this.echoGhost) {
+      return;
+    }
+
+    this.time.delayedCall(this.echoGhost.getDelayMs(), () => {
+      emitFoodParticles(this, x, y);
+    });
   }
 
   // ── Phase management ────────────────────────────────────────
@@ -155,6 +246,9 @@ export class MainScene extends Phaser.Scene {
 
   /** Create snake and food entities for a new run. */
   private createEntities(): void {
+    this.echoGhostGraphics = this.add.graphics();
+    this.resetGhostTrailTint();
+
     this.snake = new Snake(
       this,
       DEFAULT_HEAD_POS,
@@ -163,6 +257,8 @@ export class MainScene extends Phaser.Scene {
     );
     this.snake.setupInput();
     this.snake.setupTouchInput();
+    this.echoGhost = new EchoGhost(this.snake.getTicker().interval);
+    this.echoGhost.setRewindStateHook(this.echoGhostRewindStateHook);
     this.food = new Food(this, this.snake, this.rng);
   }
 
@@ -176,6 +272,203 @@ export class MainScene extends Phaser.Scene {
       this.food.destroy();
       this.food = null;
     }
+    if (this.echoGhostGraphics) {
+      this.echoGhostGraphics.destroy?.();
+      this.echoGhostGraphics = null;
+    }
+    this.echoGhost = null;
+    this.ghostProgressTicks = 0;
+    this.ghostReplayTicks = 0;
+    this.isGhostReplayActive = false;
+  }
+
+  /** Set the current ghost tint, optionally animating it over a short transition. */
+  setEchoGhostBiomeTint(
+    tintColor: number,
+    transitionMs = GHOST_BIOME_TRANSITION_MS,
+  ): void {
+    this.setGhostTrailTint(tintColor, transitionMs);
+  }
+
+  /** Read the current ghost tint value for testability and future biome integration. */
+  getEchoGhostBiomeTint(): number {
+    return this.ghostTrailTint;
+  }
+
+  // ── Ghost rendering ─────────────────────────────────────────
+
+  private renderEchoGhost(
+    trail: readonly GridPos[],
+    opacityMultiplier: number,
+    tintColor: number,
+  ): void {
+    if (!this.echoGhostGraphics) return;
+
+    this.echoGhostGraphics.clear?.();
+
+    if (trail.length === 0) {
+      return;
+    }
+
+    const alpha = GHOST_OPACITY * opacityMultiplier;
+    if (alpha <= 0) {
+      return;
+    }
+
+    const segmentSize = TILE_SIZE - GHOST_SEGMENT_INSET * 2;
+    this.echoGhostGraphics.lineStyle(
+      GHOST_LINE_WIDTH,
+      this.normalizeTintColor(tintColor),
+      alpha,
+    );
+
+    for (let i = 0; i < trail.length; i++) {
+      const segment = trail[i];
+      const x = segment.col * TILE_SIZE + GHOST_SEGMENT_INSET;
+      const y = segment.row * TILE_SIZE + GHOST_SEGMENT_INSET;
+      const right = x + segmentSize;
+      const bottom = y + segmentSize;
+
+      this.drawDashedRect(this.echoGhostGraphics, x, y, right, bottom);
+
+      if (i === 0 || i === trail.length - 1 || i % 3 === 0) {
+        const pixel = gridToPixel(segment);
+        emitGhostTrailParticles(this, pixel.x, pixel.y, alpha, tintColor);
+      }
+    }
+  }
+
+  private drawDashedRect(
+    graphics: Phaser.GameObjects.Graphics,
+    left: number,
+    top: number,
+    right: number,
+    bottom: number,
+  ): void {
+    this.drawDashedSegment(graphics, left, top, right, top);
+    this.drawDashedSegment(graphics, right, top, right, bottom);
+    this.drawDashedSegment(graphics, right, bottom, left, bottom);
+    this.drawDashedSegment(graphics, left, bottom, left, top);
+    graphics.strokePath();
+  }
+
+  private drawDashedSegment(
+    graphics: Phaser.GameObjects.Graphics,
+    startX: number,
+    startY: number,
+    endX: number,
+    endY: number,
+  ): void {
+    const deltaX = endX - startX;
+    const deltaY = endY - startY;
+
+    if (deltaX !== 0 && deltaY !== 0) {
+      return;
+    }
+    if (deltaX === 0 && deltaY === 0) {
+      return;
+    }
+
+    const segmentLength = Math.abs(deltaX !== 0 ? deltaX : deltaY);
+    const stepX = deltaX > 0 ? 1 : deltaX < 0 ? -1 : 0;
+    const stepY = deltaY > 0 ? 1 : deltaY < 0 ? -1 : 0;
+
+    for (let cursor = 0; cursor < segmentLength; cursor += GHOST_DASH_LENGTH + GHOST_DASH_GAP) {
+      const dashEnd = Math.min(cursor + GHOST_DASH_LENGTH, segmentLength);
+
+      graphics.moveTo(
+        startX + stepX * cursor,
+        startY + stepY * cursor,
+      );
+      graphics.lineTo(
+        startX + stepX * dashEnd,
+        startY + stepY * dashEnd,
+      );
+    }
+  }
+
+  private resetGhostTrailTint(): void {
+    this.ghostTrailTint = GHOST_BIOME_DEFAULT_TINT;
+    this.ghostTrailTintTransitionStart = GHOST_BIOME_DEFAULT_TINT;
+    this.ghostTrailTintTransitionTarget = GHOST_BIOME_DEFAULT_TINT;
+    this.ghostTrailTintTransitionDurationMs = 0;
+    this.ghostTrailTintTransitionElapsedMs = 0;
+  }
+
+  private setGhostTrailTint(
+    tintColor: number,
+    transitionMs = GHOST_BIOME_TRANSITION_MS,
+  ): void {
+    const target = this.normalizeTintColor(tintColor);
+    if (this.ghostTrailTint === target && !this.isTweeningGhostTint()) {
+      return;
+    }
+
+    if (this.ghostTrailTint === target) {
+      this.ghostTrailTintTransitionElapsedMs = this.ghostTrailTintTransitionDurationMs;
+      return;
+    }
+
+    this.ghostTrailTintTransitionStart = this.getCurrentGhostTrailTint();
+    this.ghostTrailTintTransitionTarget = target;
+    this.ghostTrailTintTransitionDurationMs = Math.max(
+      1,
+      transitionMs,
+    );
+    this.ghostTrailTintTransitionElapsedMs = 0;
+  }
+
+  private isTweeningGhostTint(): boolean {
+    return this.ghostTrailTintTransitionElapsedMs < this.ghostTrailTintTransitionDurationMs;
+  }
+
+  private advanceGhostTintTransition(delta: number): void {
+    if (!this.isTweeningGhostTint()) {
+      return;
+    }
+
+    this.ghostTrailTintTransitionElapsedMs += delta;
+    const progress = Math.min(
+      1,
+      this.ghostTrailTintTransitionElapsedMs /
+        this.ghostTrailTintTransitionDurationMs,
+    );
+
+    this.ghostTrailTint = this.blendColor(
+      this.ghostTrailTintTransitionStart,
+      this.ghostTrailTintTransitionTarget,
+      progress,
+    );
+
+    if (progress >= 1) {
+      this.ghostTrailTintTransitionElapsedMs = this.ghostTrailTintTransitionDurationMs;
+    }
+  }
+
+  private getCurrentGhostTrailTint(): number {
+    return this.ghostTrailTint;
+  }
+
+  private normalizeTintColor(value: number): number {
+    return Math.max(0, Math.min(0xffffff, Math.floor(value)));
+  }
+
+  private blendColor(from: number, to: number, progress: number): number {
+    const progressClamped = Math.min(1, Math.max(0, progress));
+
+    const fromR = (from >> 16) & 0xff;
+    const fromG = (from >> 8) & 0xff;
+    const fromB = from & 0xff;
+
+    const toR = (to >> 16) & 0xff;
+    const toG = (to >> 8) & 0xff;
+    const toB = to & 0xff;
+
+    const outR = Math.round(fromR + (toR - fromR) * progressClamped);
+    const outG = Math.round(fromG + (toG - fromG) * progressClamped);
+    const outB = Math.round(fromB + (toB - fromB) * progressClamped);
+
+    return (outR << 16) | (outG << 8) | outB;
   }
 
   // ── Collision detection ───────────────────────────────────────
@@ -184,7 +477,7 @@ export class MainScene extends Phaser.Scene {
    * Check wall-collision and self-collision.
    * If a collision is detected, ends the run and returns true.
    */
-  private checkCollisions(): boolean {
+  private checkCollisions(ghostTrail: readonly GridPos[] = []): boolean {
     if (!this.snake) return false;
 
     const head = this.snake.getHeadPosition();
@@ -201,6 +494,25 @@ export class MainScene extends Phaser.Scene {
       return true;
     }
 
+    // Ghost collision: head overlaps any trail segment in replay
+    if (this.isGhostCollision(head, ghostTrail)) {
+      this.endRun();
+      return true;
+    }
+
+    return false;
+  }
+
+  /** Check whether the snake head overlaps any segment of the echo ghost trail. */
+  private isGhostCollision(
+    head: GridPos,
+    ghostTrail: readonly GridPos[],
+  ): boolean {
+    for (const segment of ghostTrail) {
+      if (gridEquals(head, segment)) {
+        return true;
+      }
+    }
     return false;
   }
 
@@ -246,6 +558,24 @@ export class MainScene extends Phaser.Scene {
 
   getFood(): Food | null {
     return this.food;
+  }
+
+  /** Register a callback for per-tick echo ghost rewind snapshots; no gameplay impact until used. */
+  setEchoGhostRewindStateHook(
+    hook: EchoGhostRewindStateHook | null,
+  ): void {
+    this.echoGhostRewindStateHook = hook;
+    this.echoGhost?.setRewindStateHook(hook);
+  }
+
+  /** Expose the current echo ghost rewind state for future rewind actions. */
+  getEchoGhostRewindState(): EchoGhostRewindState | null {
+    return this.echoGhost?.captureRewindState() ?? null;
+  }
+
+  /** Restore the echo ghost replay state from a rewind snapshot. */
+  restoreEchoGhostRewindState(snapshot: EchoGhostRewindState): void {
+    this.echoGhost?.restoreRewindState(snapshot);
   }
 
   // ── Arena grid ──────────────────────────────────────────────

@@ -96,12 +96,17 @@ import Phaser from "phaser";
 import {
   emitFoodParticles,
   shakeCamera,
+  emitGhostTrailParticles,
   PARTICLE_COUNT,
   PARTICLE_LIFESPAN,
   SHAKE_DURATION,
   SHAKE_INTENSITY,
   PARTICLE_SPEED_MIN,
   PARTICLE_SPEED_MAX,
+  GHOST_TRAIL_PARTICLE_COUNT,
+  GHOST_TRAIL_PARTICLE_LIFESPAN,
+  GHOST_TRAIL_PARTICLE_SPEED_MIN,
+  GHOST_TRAIL_PARTICLE_SPEED_MAX,
 } from "@/game/systems/effects";
 
 beforeEach(() => {
@@ -168,6 +173,65 @@ describe("emitFoodParticles", () => {
   });
 });
 
+describe("emitGhostTrailParticles", () => {
+  it("creates a ghost trail burst at the given position", () => {
+    const scene = new Phaser.Scene({ key: "Test" }) as unknown as Phaser.Scene;
+    emitGhostTrailParticles(scene, 150, 250, 0.4);
+
+    expect(mockAddParticles).toHaveBeenCalledWith(
+      150,
+      250,
+      "particle",
+      expect.objectContaining({
+        lifespan: GHOST_TRAIL_PARTICLE_LIFESPAN,
+        quantity: GHOST_TRAIL_PARTICLE_COUNT,
+        angle: { min: 0, max: 360 },
+        speed: expect.objectContaining({
+          min: GHOST_TRAIL_PARTICLE_SPEED_MIN,
+          max: GHOST_TRAIL_PARTICLE_SPEED_MAX,
+        }),
+        alpha: { start: 0.4, end: 0 },
+      }),
+    );
+  });
+
+  it("calls explode with configured ghost particle quantity", () => {
+    const scene = new Phaser.Scene({ key: "Test" }) as unknown as Phaser.Scene;
+    emitGhostTrailParticles(scene, 0, 0);
+
+    expect(mockExplode).toHaveBeenCalledWith(GHOST_TRAIL_PARTICLE_COUNT, 0, 0);
+  });
+
+  it("returns null when texture is missing", () => {
+    mockTexturesExists.mockReturnValue(false);
+    const scene = new Phaser.Scene({ key: "Test" }) as unknown as Phaser.Scene;
+    const emitter = emitGhostTrailParticles(scene, 0, 0);
+
+    expect(emitter).toBeNull();
+    expect(mockAddParticles).not.toHaveBeenCalled();
+  });
+
+  it("supports a custom ghost trail tint color", () => {
+    const scene = new Phaser.Scene({ key: "Test" }) as unknown as Phaser.Scene;
+    emitGhostTrailParticles(
+      scene,
+      25,
+      50,
+      0.5,
+      0x00ff00,
+    );
+
+    expect(mockAddParticles).toHaveBeenCalledWith(
+      25,
+      50,
+      "particle",
+      expect.objectContaining({
+        tint: 0x00ff00,
+      }),
+    );
+  });
+});
+
 // ── shakeCamera ──────────────────────────────────────────────────
 
 describe("shakeCamera", () => {
@@ -213,6 +277,24 @@ describe("effect constants are tuned for readability", () => {
   it("shake intensity is subtle (< 0.02)", () => {
     expect(SHAKE_INTENSITY).toBeGreaterThan(0);
     expect(SHAKE_INTENSITY).toBeLessThan(0.02);
+  });
+
+  it("ghost trail particle count is small", () => {
+    expect(GHOST_TRAIL_PARTICLE_COUNT).toBeGreaterThanOrEqual(1);
+    expect(GHOST_TRAIL_PARTICLE_COUNT).toBeLessThanOrEqual(6);
+  });
+
+  it("ghost trail particle lifespan is brief", () => {
+    expect(GHOST_TRAIL_PARTICLE_LIFESPAN).toBeGreaterThanOrEqual(150);
+    expect(GHOST_TRAIL_PARTICLE_LIFESPAN).toBeLessThanOrEqual(500);
+  });
+
+  it("ghost trail particle speeds are gentle", () => {
+    expect(GHOST_TRAIL_PARTICLE_SPEED_MIN).toBeGreaterThan(0);
+    expect(GHOST_TRAIL_PARTICLE_SPEED_MAX).toBeGreaterThan(
+      GHOST_TRAIL_PARTICLE_SPEED_MIN,
+    );
+    expect(GHOST_TRAIL_PARTICLE_SPEED_MAX).toBeLessThanOrEqual(300);
   });
 });
 
@@ -276,6 +358,17 @@ describe("effects.ts source file", () => {
 
   it("exports shakeCamera function", () => {
     expect(source).toMatch(/export\s+function\s+shakeCamera/);
+  });
+
+  it("exports emitGhostTrailParticles function", () => {
+    expect(source).toMatch(/export\s+function\s+emitGhostTrailParticles/);
+  });
+
+  it("exports ghost trail particle constants", () => {
+    expect(source).toContain("GHOST_TRAIL_PARTICLE_COUNT");
+    expect(source).toContain("GHOST_TRAIL_PARTICLE_LIFESPAN");
+    expect(source).toContain("GHOST_TRAIL_PARTICLE_SPEED_MIN");
+    expect(source).toContain("GHOST_TRAIL_PARTICLE_SPEED_MAX");
   });
 
   it("guards against missing texture in emitFoodParticles", () => {

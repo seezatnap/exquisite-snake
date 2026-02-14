@@ -2,7 +2,14 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import fs from "fs";
 import path from "path";
 import { gameBridge } from "@/game/bridge";
-import { GRID_COLS, GRID_ROWS } from "@/game/config";
+import { COLORS, GRID_COLS, GRID_ROWS } from "@/game/config";
+import {
+  DEFAULT_ECHO_DELAY_MS,
+  EchoGhost,
+  type EchoGhostRewindState,
+} from "@/game/entities/EchoGhost";
+import type { GridPos } from "@/game/utils/grid";
+import * as effects from "@/game/systems/effects";
 
 const ROOT = path.resolve(__dirname, "../..");
 
@@ -23,6 +30,7 @@ const mockSceneStart = vi.fn();
 const mockDestroy = vi.fn();
 const mockSetPosition = vi.fn();
 const mockKeyboardOn = vi.fn();
+const mockDelayedCall = vi.fn();
 
 function createMockSprite() {
   return {
@@ -59,7 +67,7 @@ vi.mock("phaser", () => {
       exists: vi.fn().mockReturnValue(true),
     };
     time = {
-      delayedCall: vi.fn(),
+      delayedCall: mockDelayedCall,
     };
     constructor(public config?: { key: string }) {}
   }
@@ -409,6 +417,164 @@ describe("MainScene – no local state fields (single source of truth)", () => {
   });
 });
 
+describe("MainScene – ghost food burst timing", () => {
+  it("schedules a ghost-food particle burst after the ghost delay", () => {
+    const scene = new MainScene();
+    const emitFoodSpy = vi.spyOn(effects, "emitFoodParticles");
+    scene.create();
+    scene.enterPhase("playing");
+
+    const food = scene.getFood();
+    const snake = scene.getSnake();
+    expect(food).not.toBeNull();
+    expect(snake).not.toBeNull();
+
+    const foodPos = food!.getPosition();
+    const foodSprite = food!.getSprite();
+    const burstX = 123;
+    const burstY = 456;
+    foodSprite.x = burstX;
+    foodSprite.y = burstY;
+
+    const startHead =
+      foodPos.row === 0
+        ? { col: foodPos.col, row: foodPos.row + 1 }
+        : { col: foodPos.col, row: foodPos.row - 1 };
+    const startDirection = foodPos.row === 0 ? "up" : "down";
+    snake!.reset(startHead, startDirection, snake!.getLength());
+
+    emitFoodSpy.mockClear();
+    mockDelayedCall.mockClear();
+
+    scene.update(0, snake!.getTicker().interval);
+    expect(scene.getScore()).toBe(1);
+
+    expect(mockDelayedCall).toHaveBeenCalledWith(
+      DEFAULT_ECHO_DELAY_MS,
+      expect.any(Function),
+    );
+
+    const delayedCallback = mockDelayedCall.mock.calls[0][1] as () => void;
+    expect(emitFoodSpy).toHaveBeenCalledTimes(1);
+    expect(emitFoodSpy).toHaveBeenLastCalledWith(scene, burstX, burstY);
+    emitFoodSpy.mockClear();
+
+    delayedCallback();
+    expect(emitFoodSpy).toHaveBeenCalledTimes(1);
+    expect(emitFoodSpy).toHaveBeenCalledWith(scene, burstX, burstY);
+    expect(scene.getScore()).toBe(1);
+  });
+});
+
+describe("MainScene – ghost rendering", () => {
+  const getEchoGhost = (scene: MainScene): EchoGhost | null => {
+    return (scene as unknown as { echoGhost: EchoGhost | null }).echoGhost;
+  };
+
+  it("renders a dashed ghost trail with particle emissions once active", () => {
+    const scene = new MainScene();
+    const emitGhostTrailSpy = vi.spyOn(
+      effects,
+      "emitGhostTrailParticles",
+    );
+
+    scene.create();
+    scene.enterPhase("playing");
+
+    const snake = scene.getSnake();
+    expect(snake).not.toBeNull();
+    snake!.reset({ col: 20, row: 15 }, "right", 1);
+
+    mockLineStyle.mockClear();
+    mockMoveTo.mockClear();
+    mockLineTo.mockClear();
+    mockStrokePath.mockClear();
+    emitGhostTrailSpy.mockClear();
+
+    const cycle = ["down", "left", "up", "right"] as const;
+    const interval = snake!.getTicker().interval;
+
+    for (let step = 1; step <= 40; step++) {
+      if (step > 1) {
+        snake!.bufferDirection(cycle[(step - 2) % cycle.length]);
+      }
+      scene.update(0, interval);
+    }
+
+    expect(scene.getPhase()).toBe("playing");
+    expect(emitGhostTrailSpy).toHaveBeenCalled();
+    expect(mockLineStyle).toHaveBeenCalled();
+    expect(mockMoveTo).toHaveBeenCalled();
+    expect(mockLineTo).toHaveBeenCalled();
+    expect(mockStrokePath).toHaveBeenCalled();
+
+    emitGhostTrailSpy.mockRestore();
+  });
+
+  it("renders ghost visuals with the current biome tint", () => {
+    const scene = new MainScene();
+    const emitGhostTrailSpy = vi.spyOn(
+      effects,
+      "emitGhostTrailParticles",
+    );
+    scene.create();
+    scene.enterPhase("playing");
+
+    const ghost = getEchoGhost(scene);
+    expect(ghost).not.toBeNull();
+
+    mockLineStyle.mockClear();
+    mockMoveTo.mockClear();
+    mockLineTo.mockClear();
+    mockStrokePath.mockClear();
+    emitGhostTrailSpy.mockClear();
+
+    for (let i = 0; i < 40; i++) {
+      ghost!.writePositions([{ col: i, row: 0 }]);
+      ghost!.advanceReplayProgress();
+    }
+
+    scene.update(0, 0);
+
+    expect(mockLineStyle).toHaveBeenCalledWith(
+      2,
+      COLORS.NEON_PURPLE,
+      expect.any(Number),
+    );
+
+    const ghostTrailCall = emitGhostTrailSpy.mock.calls.at(-1)!;
+    expect(ghostTrailCall[4]).toBe(COLORS.NEON_PURPLE);
+    emitGhostTrailSpy.mockRestore();
+  });
+
+  it("smoothly interpolates ghost tint during a biome change", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.enterPhase("playing");
+
+    const ghost = getEchoGhost(scene);
+    expect(ghost).not.toBeNull();
+    for (let i = 0; i < 40; i++) {
+      ghost!.writePositions([{ col: i, row: 0 }]);
+      ghost!.advanceReplayProgress();
+    }
+
+    mockLineStyle.mockClear();
+    scene.setEchoGhostBiomeTint(COLORS.NEON_CYAN, 100);
+
+    scene.update(0, 25);
+    scene.update(0, 25);
+    scene.update(0, 25);
+    scene.update(0, 25);
+
+    const colors = mockLineStyle.mock.calls.map((entry) => entry[1] as number);
+    expect(colors.length).toBeGreaterThan(1);
+    expect(colors[0]).not.toEqual(colors[colors.length - 1]);
+    expect(colors[colors.length - 1]).toBe(COLORS.NEON_CYAN);
+    expect(scene.getEchoGhostBiomeTint()).toBe(COLORS.NEON_CYAN);
+  });
+});
+
 describe("MainScene source file", () => {
   const source = fs.readFileSync(
     path.join(ROOT, "src/game/scenes/MainScene.ts"),
@@ -447,6 +613,11 @@ describe("MainScene source file", () => {
   it("imports Snake and Food entities", () => {
     expect(source).toContain("Snake");
     expect(source).toContain("Food");
+  });
+
+  it("imports ghost trail effect helpers from effects module", () => {
+    expect(source).toContain("emitGhostTrailParticles");
+    expect(source).toContain("systems/effects");
   });
 });
 
@@ -647,6 +818,32 @@ describe("MainScene – self collision", () => {
     expect(scene.getPhase()).toBe("gameOver");
     expect(snake.isAlive()).toBe(false);
   });
+
+  it("ends the run when snake collides with delayed echo ghost trail", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.enterPhase("playing");
+
+    const snake = scene.getSnake()!;
+    snake.reset({ col: 20, row: 15 }, "right", 2);
+    const interval = snake.getTicker().interval;
+    const moveCycle = ["right", "down", "left", "up"] as const;
+
+    for (let step = 1; step <= 40; step++) {
+      if (step > 1) {
+        snake.bufferDirection(moveCycle[(step - 1) % moveCycle.length]);
+      }
+
+      scene.update(0, interval);
+
+      if (step < 40) {
+        expect(scene.getPhase()).toBe("playing");
+      }
+    }
+
+    expect(scene.getPhase()).toBe("gameOver");
+    expect(snake.isAlive()).toBe(false);
+  });
 });
 
 // ── endRun kills the snake ──────────────────────────────────────
@@ -821,6 +1018,123 @@ describe("MainScene – update integration", () => {
     if (scene.getPhase() === "playing") {
       const newHead = snake.getHeadPosition();
       expect(newHead.col).not.toBe(initialHead.col);
+    }
+  });
+
+  const getEchoGhost = (scene: MainScene): EchoGhost | null => {
+    return (scene as unknown as { echoGhost: EchoGhost | null }).echoGhost;
+  };
+
+  const getGhostProgressTicks = (scene: MainScene): number => {
+    return (scene as unknown as { ghostProgressTicks: number }).ghostProgressTicks;
+  };
+
+  const getGhostReplayTicks = (scene: MainScene): number => {
+    return (scene as unknown as { ghostReplayTicks: number }).ghostReplayTicks;
+  };
+
+  const isGhostReplayActive = (scene: MainScene): boolean => {
+    return (scene as unknown as { isGhostReplayActive: boolean })
+      .isGhostReplayActive;
+  };
+
+  const cloneSegments = (segments: readonly GridPos[]): GridPos[] =>
+    segments.map((segment) => ({ ...segment }));
+
+  it("initializes echo ghost state for each run and tracks progression separately", () => {
+    const scene = new MainScene();
+    scene.create();
+
+    scene.enterPhase("playing");
+    const ghost = getEchoGhost(scene);
+
+    expect(ghost).toBeInstanceOf(EchoGhost);
+    expect(getGhostProgressTicks(scene)).toBe(0);
+    expect(getGhostReplayTicks(scene)).toBe(0);
+    expect(isGhostReplayActive(scene)).toBe(false);
+
+    // Restarting should create a fresh ghost instance with clean lifecycle counters.
+    scene.endRun();
+    scene.enterPhase("playing");
+
+    const restartedGhost = getEchoGhost(scene);
+    expect(restartedGhost).toBeInstanceOf(EchoGhost);
+    expect(restartedGhost).not.toBe(ghost);
+  });
+
+  it("writes snake snapshots each step and starts ghost replay after delay window", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.enterPhase("playing");
+
+    const snake = scene.getSnake()!;
+    const ghost = getEchoGhost(scene)!;
+
+    snake.reset({ col: 20, row: 15 }, "right", 1);
+    const firstRecordedTrail: GridPos[] = [];
+    const delayTicks = ghost.getDelayTicks();
+
+    for (let step = 1; step <= delayTicks; step++) {
+      if (step === 11) snake.bufferDirection("down");
+      if (step === 21) snake.bufferDirection("left");
+      if (step === 31) snake.bufferDirection("up");
+
+      scene.update(0, snake.getTicker().interval);
+      if (step === 1) {
+        firstRecordedTrail.push(...cloneSegments(snake.getSegments()));
+      }
+
+      expect(scene.getPhase()).toBe("playing");
+      expect(getGhostProgressTicks(scene)).toBe(step);
+
+      const delayed = ghost.readDelayedTrail();
+      if (step < delayTicks) {
+        expect(isGhostReplayActive(scene)).toBe(false);
+        expect(delayed).toEqual([]);
+        expect(getGhostReplayTicks(scene)).toBe(0);
+      } else {
+        expect(isGhostReplayActive(scene)).toBe(true);
+        expect(delayed).toEqual(firstRecordedTrail);
+      }
+    }
+
+    expect(getGhostReplayTicks(scene)).toBe(1);
+  });
+
+  it("can register and receive echo ghost rewind snapshots during updates", () => {
+    const scene = new MainScene();
+    scene.create();
+    const received: EchoGhostRewindState[] = [];
+
+    scene.setEchoGhostRewindStateHook((state) => {
+      received.push(state);
+    });
+    scene.enterPhase("playing");
+
+    scene.update(0, scene.getSnake()!.getTicker().interval);
+
+    expect(received.length).toBeGreaterThan(0);
+    expect(received[received.length - 1]).toMatchObject({
+      writeCount: 1,
+      replayState: "waiting",
+    });
+  });
+
+  it("exposes rewind capture / restore entrypoints on MainScene", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.enterPhase("playing");
+
+    scene.update(0, scene.getSnake()!.getTicker().interval);
+
+    const snapshot = scene.getEchoGhostRewindState();
+    expect(snapshot).not.toBeNull();
+
+    if (snapshot) {
+      scene.restoreEchoGhostRewindState(snapshot);
+      expect(scene.getEchoGhostRewindState()!.writeCount).toBe(
+        snapshot.writeCount,
+      );
     }
   });
 });

@@ -1,5 +1,5 @@
 import Phaser from "phaser";
-import { TEXTURE_KEYS } from "../config";
+import { COLORS, TEXTURE_KEYS } from "../config";
 
 // ── Particle burst configuration ────────────────────────────────
 
@@ -14,6 +14,18 @@ export const PARTICLE_SPEED_MAX = 180;
 
 /** Particle lifespan in ms. */
 export const PARTICLE_LIFESPAN = 350;
+
+/** Number of particles emitted per ghost trail burst. */
+export const GHOST_TRAIL_PARTICLE_COUNT = 2;
+
+/** Minimum speed of a ghost trail particle (px/s). */
+export const GHOST_TRAIL_PARTICLE_SPEED_MIN = 30;
+
+/** Maximum speed of a ghost trail particle (px/s). */
+export const GHOST_TRAIL_PARTICLE_SPEED_MAX = 100;
+
+/** Ghost trail particle lifespan in ms. */
+export const GHOST_TRAIL_PARTICLE_LIFESPAN = 280;
 
 // ── Screen-shake configuration ──────────────────────────────────
 
@@ -56,6 +68,46 @@ export function emitFoodParticles(
 
   // Destroy the emitter after particles expire to avoid leaks
   scene.time.delayedCall(PARTICLE_LIFESPAN + 50, () => {
+    emitter.destroy();
+  });
+
+  return emitter;
+}
+
+/**
+ * Emit a short, cool-down-neutral particle burst used as ghost trail residue.
+ *
+ * This keeps the ghost visually distinct from food bursts and avoids
+ * gameplay impact while preserving the existing particle system path.
+ */
+export function emitGhostTrailParticles(
+  scene: Phaser.Scene,
+  x: number,
+  y: number,
+  opacity = 1,
+  tintColor: number = COLORS.PARTICLE,
+): Phaser.GameObjects.Particles.ParticleEmitter | null {
+  if (!scene.textures.exists(TEXTURE_KEYS.PARTICLE)) return null;
+
+  const normalizedOpacity = Math.max(0, Math.min(1, opacity));
+
+  const emitter = scene.add.particles(x, y, TEXTURE_KEYS.PARTICLE, {
+    speed: {
+      min: GHOST_TRAIL_PARTICLE_SPEED_MIN,
+      max: GHOST_TRAIL_PARTICLE_SPEED_MAX,
+    },
+    angle: { min: 0, max: 360 },
+    lifespan: GHOST_TRAIL_PARTICLE_LIFESPAN,
+    quantity: GHOST_TRAIL_PARTICLE_COUNT,
+    scale: { start: 0.6, end: 0 },
+    alpha: { start: normalizedOpacity, end: 0 },
+    tint: tintColor,
+    emitting: false,
+  });
+
+  emitter.explode(GHOST_TRAIL_PARTICLE_COUNT, 0, 0);
+
+  scene.time.delayedCall(GHOST_TRAIL_PARTICLE_LIFESPAN + 50, () => {
     emitter.destroy();
   });
 
