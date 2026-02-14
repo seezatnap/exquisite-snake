@@ -1663,6 +1663,57 @@ describe("MainScene – entity management", () => {
     expect(delayedBurstArgs[1]).toBe(expectedGhostBurstPixel.y);
   });
 
+  it("QA-DEFECT-02: delayed ghost-food burst in Void Rift uses the pre-nudge eat cell", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.setBiomeCycleOrder([
+      Biome.VoidRift,
+      Biome.NeonCity,
+      Biome.IceCavern,
+      Biome.MoltenCore,
+    ]);
+    scene.setBiomeMechanicsConfig({
+      voidRift: { gravityPullCadenceSteps: 1 },
+    });
+    scene.enterPhase("playing");
+    expect(scene.getCurrentBiome()).toBe(Biome.VoidRift);
+
+    const food = scene.getFood()!;
+    const forcedFoodPos = { col: 10, row: 10 };
+    const forcedFoodPixel = gridToPixel(forcedFoodPos);
+    (food as unknown as { position: { col: number; row: number } }).position = {
+      ...forcedFoodPos,
+    };
+    food.getSprite().setPosition(forcedFoodPixel.x, forcedFoodPixel.y);
+
+    const snake = scene.getSnake()!;
+    snake.reset({ col: forcedFoodPos.col - 1, row: forcedFoodPos.row }, "right", 1);
+
+    const particlesAdd = (
+      scene as unknown as { add: { particles: ReturnType<typeof vi.fn> } }
+    ).add.particles;
+    particlesAdd.mockClear();
+    mockTimeDelayedCall.mockClear();
+
+    const interval = snake.getTicker().interval;
+    scene.update(0, interval);
+
+    expect(snake.getHeadPosition()).toEqual({ col: 11, row: 10 });
+    const delayedGhostBurstCall = mockTimeDelayedCall.mock.calls.find(
+      (call) => call[0] === 5_000,
+    );
+    expect(delayedGhostBurstCall).toBeDefined();
+
+    const delayedGhostBurstCallback = delayedGhostBurstCall![1] as () => void;
+    delayedGhostBurstCallback();
+
+    const delayedBurstArgs = particlesAdd.mock.calls.at(-1);
+    expect(delayedBurstArgs).toBeDefined();
+    const expectedGhostBurstPixel = gridToPixel(forcedFoodPos);
+    expect(delayedBurstArgs![0]).toBe(expectedGhostBurstPixel.x);
+    expect(delayedBurstArgs![1]).toBe(expectedGhostBurstPixel.y);
+  });
+
   it("skips delayed ghost-food burst when the target history sample is unavailable", () => {
     const scene = new MainScene();
     scene.create();
@@ -1897,6 +1948,74 @@ describe("MainScene – echo ghost collision", () => {
     expect(scene.getPhase()).toBe("gameOver");
     expect(snake.isAlive()).toBe(false);
     expect(mockCameraShake).toHaveBeenCalledTimes(1);
+  });
+
+  it("matches self-collision fatality side effects (parity with echo-collision)", () => {
+    const runSelfCollision = () => {
+      const scene = new MainScene();
+      scene.create();
+      scene.enterPhase("playing");
+
+      const snake = scene.getSnake()!;
+      const endRunSpy = vi.spyOn(scene, "endRun");
+      snake.reset({ col: 5, row: 5 }, "right", 5);
+
+      mockCameraShake.mockClear();
+      const interval = snake.getTicker().interval;
+      scene.update(0, interval);
+      snake.bufferDirection("down");
+      scene.update(0, interval);
+      snake.bufferDirection("left");
+      scene.update(0, interval);
+      snake.bufferDirection("up");
+      scene.update(0, interval);
+
+      return {
+        phase: scene.getPhase(),
+        snakeAlive: snake.isAlive(),
+        endRunCalls: endRunSpy.mock.calls.length,
+        cameraShakeCalls: mockCameraShake.mock.calls.length,
+      };
+    };
+
+    const runEchoCollision = () => {
+      const scene = new MainScene();
+      scene.create();
+      scene.enterPhase("playing");
+
+      const snake = scene.getSnake()!;
+      const echoGhost = scene.getEchoGhost()!;
+      const endRunSpy = vi.spyOn(scene, "endRun");
+      snake.reset({ col: 10, row: 10 }, "right", 1);
+
+      vi.spyOn(echoGhost, "isActive").mockReturnValue(true);
+      vi.spyOn(echoGhost, "getPlaybackSegments").mockReturnValue([
+        { col: 11, row: 10 },
+      ]);
+
+      mockCameraShake.mockClear();
+      const interval = snake.getTicker().interval;
+      scene.update(0, interval);
+
+      return {
+        phase: scene.getPhase(),
+        snakeAlive: snake.isAlive(),
+        endRunCalls: endRunSpy.mock.calls.length,
+        cameraShakeCalls: mockCameraShake.mock.calls.length,
+      };
+    };
+
+    const selfCollisionOutcome = runSelfCollision();
+    resetBridge();
+    const echoCollisionOutcome = runEchoCollision();
+
+    expect(selfCollisionOutcome).toEqual({
+      phase: "gameOver",
+      snakeAlive: false,
+      endRunCalls: 1,
+      cameraShakeCalls: 1,
+    });
+    expect(echoCollisionOutcome).toEqual(selfCollisionOutcome);
   });
 
   it("does not collide with playback segments while echo ghost is inactive", () => {
