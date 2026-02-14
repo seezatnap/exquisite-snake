@@ -12,6 +12,7 @@ import {
 import { gameBridge, type GamePhase } from "../bridge";
 import { loadHighScore, saveHighScore } from "../utils/storage";
 import {
+  DEFAULT_MOVE_INTERVAL_MS,
   isInBounds,
   gridEquals,
   gridToPixel,
@@ -225,6 +226,9 @@ function createBiomeMechanicsState(biome: Biome): BiomeMechanicsState {
 export class MainScene extends Phaser.Scene {
   /** The snake entity for the current run (null when not playing). */
   private snake: Snake | null = null;
+
+  /** Baseline snake movement interval used for additive speed modifiers. */
+  private baseMoveIntervalMs = DEFAULT_MOVE_INTERVAL_MS;
 
   /** The food entity for the current run (null when not playing). */
   private food: Food | null = null;
@@ -473,6 +477,7 @@ export class MainScene extends Phaser.Scene {
       DEFAULT_DIRECTION,
       DEFAULT_SNAKE_LENGTH,
     );
+    this.baseMoveIntervalMs = this.snake.getTicker().interval;
     this.applyBiomeMovementMechanics(this.biomeManager.getCurrentBiome());
     this.snake.setupInput();
     this.snake.setupTouchInput();
@@ -974,16 +979,27 @@ export class MainScene extends Phaser.Scene {
       return;
     }
 
+    const blockedFoodCells = this.getParasitePickupBlockedCells();
+    const activePickupPos = this.getActiveParasitePickupPosition();
+    if (activePickupPos) {
+      blockedFoodCells.push(activePickupPos);
+    }
+
     const movementResolution = this.parasiteManager.onMovementTick({
       actor: "snake",
       deltaMs: delta,
       currentMoveIntervalMs: this.snake.getTicker().interval,
+      baseMoveIntervalMs: this.baseMoveIntervalMs,
       snakeSegments: this.snake.getSegments(),
       foodPosition: this.food.getPosition(),
+      blockedFoodCells,
     });
 
     if (movementResolution.nextMoveIntervalMs !== this.snake.getTicker().interval) {
       this.snake.getTicker().setInterval(movementResolution.nextMoveIntervalMs);
+    }
+    if (movementResolution.pulledFoodPosition) {
+      this.food.setPosition(movementResolution.pulledFoodPosition);
     }
   }
 

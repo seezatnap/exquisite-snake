@@ -98,6 +98,17 @@ export class Food {
     this.sprite.setPosition(px.x, px.y);
   }
 
+  /**
+   * Force the food to a specific grid cell and synchronize sprite position.
+   *
+   * Used by deterministic systems such as parasite magnet pull behavior.
+   */
+  setPosition(next: GridPos): void {
+    this.position = { ...next };
+    const px = gridToPixel(this.position);
+    this.sprite.setPosition(px.x, px.y);
+  }
+
   // ── Eat detection & integration ─────────────────────────────────
 
   /**

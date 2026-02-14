@@ -31,8 +31,10 @@ export interface ParasiteMovementContext {
   actor: ParasiteActor;
   deltaMs: number;
   currentMoveIntervalMs: number;
+  baseMoveIntervalMs?: number;
   snakeSegments: readonly GridPos[];
   foodPosition: GridPos | null;
+  blockedFoodCells?: readonly GridPos[];
 }
 
 export interface ParasiteMovementResult {
@@ -40,6 +42,7 @@ export interface ParasiteMovementResult {
   magnetSegments: number;
   magnetRadiusTiles: number;
   magnetSpeedBonusPerSegment: number;
+  pulledFoodPosition: GridPos | null;
 }
 
 export interface ParasiteCollisionContext {
@@ -107,9 +110,11 @@ export interface ParasitePickupContactResult {
  */
 export class ParasiteManager {
   private state: ParasiteRuntimeState = createParasiteRuntimeState();
+  private previousMagnetSegmentCount = 0;
 
   resetRun(): void {
     this.state = createParasiteRuntimeState();
+    this.previousMagnetSegmentCount = 0;
   }
 
   /** Snapshot accessor for HUD/GameOver/QA integration and tests. */
@@ -279,16 +284,30 @@ export class ParasiteManager {
         magnetSegments: 0,
         magnetRadiusTiles: MAGNET_RADIUS_TILES,
         magnetSpeedBonusPerSegment: MAGNET_SPEED_BONUS_PER_SEGMENT,
+        pulledFoodPosition: null,
       };
     }
 
     const magnetSegments = this.getMagnetSegmentCount();
+    const baseMoveIntervalMs = Number.isFinite(context.baseMoveIntervalMs)
+      ? Math.max(1, context.baseMoveIntervalMs ?? context.currentMoveIntervalMs)
+      : context.currentMoveIntervalMs;
+    const speedMultiplier = 1 + magnetSegments * MAGNET_SPEED_BONUS_PER_SEGMENT;
+    let nextMoveIntervalMs = context.currentMoveIntervalMs;
+    if (magnetSegments > 0) {
+      nextMoveIntervalMs = baseMoveIntervalMs / speedMultiplier;
+    } else if (this.previousMagnetSegmentCount > 0) {
+      nextMoveIntervalMs = baseMoveIntervalMs;
+    }
+    const pulledFoodPosition = this.resolveMagnetFoodPull(context, magnetSegments);
+    this.previousMagnetSegmentCount = magnetSegments;
+
     return {
-      // Task #4 will apply speed scaling using magnet segment count.
-      nextMoveIntervalMs: context.currentMoveIntervalMs,
+      nextMoveIntervalMs,
       magnetSegments,
       magnetRadiusTiles: MAGNET_RADIUS_TILES,
       magnetSpeedBonusPerSegment: MAGNET_SPEED_BONUS_PER_SEGMENT,
+      pulledFoodPosition,
     };
   }
 
@@ -369,6 +388,7 @@ export class ParasiteManager {
 
   onRunEnd(): void {
     this.clearSplitterObstacles();
+    this.previousMagnetSegmentCount = 0;
   }
 
   getMagnetSegmentCount(): number {
@@ -489,5 +509,135 @@ export class ParasiteManager {
 
   private gridPosKey(pos: GridPos): string {
     return `${pos.col}:${pos.row}`;
+  }
+
+  private resolveMagnetFoodPull(
+    context: ParasiteMovementContext,
+    magnetSegments: number,
+  ): GridPos | null {
+    if (!context.foodPosition || magnetSegments <= 0) {
+      return null;
+    }
+    const foodPosition = context.foodPosition;
+
+    const anchorSegments = this.getMagnetAnchorSegments(context.snakeSegments);
+    if (anchorSegments.length <= 0) {
+      return null;
+    }
+
+    const inRangeAnchors = anchorSegments
+      .map((anchor, index) => ({
+        anchor,
+        index,
+        distance: this.getManhattanDistance(anchor, foodPosition),
+      }))
+      .filter((candidate) =>
+        candidate.distance > 0 && candidate.distance <= MAGNET_RADIUS_TILES
+      )
+      .sort((a, b) => a.distance - b.distance || a.index - b.index);
+
+    if (inRangeAnchors.length <= 0) {
+      return null;
+    }
+
+    const blockedCells = this.buildFoodBlockedCellSet(context);
+    blockedCells.delete(this.gridPosKey(foodPosition));
+
+    for (const candidate of inRangeAnchors) {
+      const stepOptions = this.getMagnetStepCandidates(
+        foodPosition,
+        candidate.anchor,
+      );
+      for (const step of stepOptions) {
+        if (!this.isFoodPullCellValid(step, blockedCells)) {
+          continue;
+        }
+        return step;
+      }
+    }
+
+    return null;
+  }
+
+  private getMagnetAnchorSegments(snakeSegments: readonly GridPos[]): GridPos[] {
+    if (snakeSegments.length <= 0) {
+      return [];
+    }
+
+    const bodyTailToHead = snakeSegments.slice(1).reverse();
+    const fallbackSegment = snakeSegments[snakeSegments.length - 1];
+    const anchors: GridPos[] = [];
+
+    for (let index = 0; index < this.state.activeSegments.length; index++) {
+      const parasiteSegment = this.state.activeSegments[index];
+      if (parasiteSegment.type !== ParasiteType.Magnet) {
+        continue;
+      }
+      const anchor = bodyTailToHead[index] ?? fallbackSegment;
+      if (anchor) {
+        anchors.push(anchor);
+      }
+    }
+
+    return anchors;
+  }
+
+  private buildFoodBlockedCellSet(
+    context: ParasiteMovementContext,
+  ): Set<string> {
+    const blocked = new Set<string>();
+
+    for (const segment of context.snakeSegments) {
+      blocked.add(this.gridPosKey(segment));
+    }
+    if (this.state.pickup) {
+      blocked.add(this.gridPosKey(this.state.pickup.position));
+    }
+    for (const obstacle of this.state.splitterObstacles) {
+      blocked.add(this.gridPosKey(obstacle.position));
+    }
+    for (const blockedPos of context.blockedFoodCells ?? []) {
+      blocked.add(this.gridPosKey(blockedPos));
+    }
+
+    return blocked;
+  }
+
+  private getMagnetStepCandidates(food: GridPos, anchor: GridPos): GridPos[] {
+    const deltaCol = anchor.col - food.col;
+    const deltaRow = anchor.row - food.row;
+    const colStep = Math.sign(deltaCol);
+    const rowStep = Math.sign(deltaRow);
+
+    const candidates: GridPos[] = [];
+    if (Math.abs(deltaCol) >= Math.abs(deltaRow) && colStep !== 0) {
+      candidates.push({ col: food.col + colStep, row: food.row });
+      if (rowStep !== 0) {
+        candidates.push({ col: food.col, row: food.row + rowStep });
+      }
+      return candidates;
+    }
+
+    if (rowStep !== 0) {
+      candidates.push({ col: food.col, row: food.row + rowStep });
+    }
+    if (colStep !== 0) {
+      candidates.push({ col: food.col + colStep, row: food.row });
+    }
+    return candidates;
+  }
+
+  private isFoodPullCellValid(pos: GridPos, blocked: Set<string>): boolean {
+    return (
+      pos.col >= 0 &&
+      pos.col < GRID_COLS &&
+      pos.row >= 0 &&
+      pos.row < GRID_ROWS &&
+      !blocked.has(this.gridPosKey(pos))
+    );
+  }
+
+  private getManhattanDistance(a: GridPos, b: GridPos): number {
+    return Math.abs(a.col - b.col) + Math.abs(a.row - b.row);
   }
 }

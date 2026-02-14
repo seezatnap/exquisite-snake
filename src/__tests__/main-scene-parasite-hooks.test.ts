@@ -186,6 +186,27 @@ describe("MainScene parasite hook wiring", () => {
     ).toBe(true);
   });
 
+  it("applies magnet pull + speed updates from movement hook results", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.enterPhase("playing");
+
+    const parasiteState = createParasiteRuntimeState();
+    parasiteState.activeSegments = [
+      { id: "segment-magnet", type: ParasiteType.Magnet, attachedAtMs: 0 },
+    ];
+    scene.getParasiteManager().restoreState(parasiteState);
+
+    const snake = scene.getSnake()!;
+    snake.reset({ col: 5, row: 5 }, "right", 3);
+    scene.getFood()!.setPosition({ col: 5, row: 6 });
+
+    scene.update(0, snake.getTicker().interval);
+
+    expect(scene.getFood()!.getPosition()).toEqual({ col: 4, row: 6 });
+    expect(snake.getTicker().interval).toBeCloseTo(125 / 1.1, 6);
+  });
+
   it("checks wall collisions through parasite manager before game-over finalization", () => {
     const scene = new MainScene();
     scene.create();

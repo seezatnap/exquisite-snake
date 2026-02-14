@@ -394,6 +394,7 @@ describe("ParasiteManager integration hooks", () => {
       foodPosition: { col: 12, row: 10 },
     });
     expect(movement.nextMoveIntervalMs).toBe(125);
+    expect(movement.pulledFoodPosition).toBeNull();
 
     const collision = manager.onCollisionCheck({
       actor: "snake",
@@ -506,6 +507,143 @@ describe("ParasiteManager integration hooks", () => {
       awardedPoints: 0,
       multiplier: 1,
     });
+  });
+
+  it("applies stacked magnet speed bonuses from base movement interval", () => {
+    const manager = new ParasiteManager();
+    const snapshot = createParasiteRuntimeState();
+    snapshot.activeSegments = [
+      { id: "segment-1", type: ParasiteType.Magnet, attachedAtMs: 10 },
+      { id: "segment-2", type: ParasiteType.Shield, attachedAtMs: 20 },
+      { id: "segment-3", type: ParasiteType.Magnet, attachedAtMs: 30 },
+    ];
+    manager.restoreState(snapshot);
+
+    const movement = manager.onMovementTick({
+      actor: "snake",
+      deltaMs: 16,
+      currentMoveIntervalMs: 125,
+      baseMoveIntervalMs: 125,
+      snakeSegments: [
+        { col: 8, row: 5 },
+        { col: 7, row: 5 },
+        { col: 6, row: 5 },
+        { col: 5, row: 5 },
+      ],
+      foodPosition: { col: 20, row: 20 },
+    });
+
+    expect(movement.magnetSegments).toBe(2);
+    expect(movement.nextMoveIntervalMs).toBeCloseTo(125 / 1.2, 6);
+  });
+
+  it("returns to base movement interval when no magnet segments remain", () => {
+    const manager = new ParasiteManager();
+    const withMagnet = createParasiteRuntimeState();
+    withMagnet.activeSegments = [
+      { id: "segment-1", type: ParasiteType.Magnet, attachedAtMs: 10 },
+    ];
+    manager.restoreState(withMagnet);
+
+    manager.onMovementTick({
+      actor: "snake",
+      deltaMs: 16,
+      currentMoveIntervalMs: 125,
+      baseMoveIntervalMs: 125,
+      snakeSegments: [
+        { col: 8, row: 5 },
+        { col: 7, row: 5 },
+        { col: 6, row: 5 },
+      ],
+      foodPosition: { col: 12, row: 10 },
+    });
+
+    manager.restoreState(createParasiteRuntimeState());
+
+    const movement = manager.onMovementTick({
+      actor: "snake",
+      deltaMs: 16,
+      currentMoveIntervalMs: 113.636,
+      baseMoveIntervalMs: 125,
+      snakeSegments: [
+        { col: 8, row: 5 },
+        { col: 7, row: 5 },
+        { col: 6, row: 5 },
+      ],
+      foodPosition: { col: 12, row: 10 },
+    });
+
+    expect(movement.magnetSegments).toBe(0);
+    expect(movement.nextMoveIntervalMs).toBe(125);
+  });
+
+  it("does not alter movement interval without magnets when no speed reset is pending", () => {
+    const manager = new ParasiteManager();
+
+    const movement = manager.onMovementTick({
+      actor: "snake",
+      deltaMs: 16,
+      currentMoveIntervalMs: 100,
+      baseMoveIntervalMs: 125,
+      snakeSegments: [
+        { col: 8, row: 5 },
+        { col: 7, row: 5 },
+        { col: 6, row: 5 },
+      ],
+      foodPosition: { col: 12, row: 10 },
+    });
+
+    expect(movement.magnetSegments).toBe(0);
+    expect(movement.nextMoveIntervalMs).toBe(100);
+  });
+
+  it("pulls food one tile toward an in-range magnet segment", () => {
+    const manager = new ParasiteManager();
+    const snapshot = createParasiteRuntimeState();
+    snapshot.activeSegments = [
+      { id: "segment-1", type: ParasiteType.Magnet, attachedAtMs: 1 },
+    ];
+    manager.restoreState(snapshot);
+
+    const movement = manager.onMovementTick({
+      actor: "snake",
+      deltaMs: 16,
+      currentMoveIntervalMs: 125,
+      baseMoveIntervalMs: 125,
+      snakeSegments: [
+        { col: 6, row: 5 },
+        { col: 5, row: 5 },
+        { col: 4, row: 5 },
+      ],
+      foodPosition: { col: 5, row: 6 },
+    });
+
+    expect(movement.pulledFoodPosition).toEqual({ col: 4, row: 6 });
+  });
+
+  it("skips magnet pull when all closer cells are invalid", () => {
+    const manager = new ParasiteManager();
+    const snapshot = createParasiteRuntimeState();
+    snapshot.activeSegments = [
+      { id: "segment-1", type: ParasiteType.Magnet, attachedAtMs: 1 },
+    ];
+    manager.restoreState(snapshot);
+
+    const movement = manager.onMovementTick({
+      actor: "snake",
+      deltaMs: 16,
+      currentMoveIntervalMs: 125,
+      baseMoveIntervalMs: 125,
+      snakeSegments: [
+        { col: 6, row: 5 },
+        { col: 5, row: 5 },
+        { col: 4, row: 5 },
+      ],
+      foodPosition: { col: 5, row: 6 },
+      blockedFoodCells: [{ col: 4, row: 6 }],
+    });
+
+    expect(movement.pulledFoodPosition).toBeNull();
   });
 
   it("exposes biome lifecycle hooks and config constants for MainScene integration", () => {
