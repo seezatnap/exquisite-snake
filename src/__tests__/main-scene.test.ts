@@ -464,6 +464,90 @@ describe("MainScene – ghost food burst timing", () => {
     expect(emitFoodSpy).toHaveBeenCalledWith(scene, burstX, burstY);
     expect(scene.getScore()).toBe(1);
   });
+
+  it("does not execute stale ghost-food burst callbacks after ending a run", () => {
+    const scene = new MainScene();
+    const emitFoodSpy = vi.spyOn(effects, "emitFoodParticles");
+    scene.create();
+    scene.enterPhase("playing");
+
+    const food = scene.getFood()!;
+    const snake = scene.getSnake()!;
+    const firstFoodSprite = food.getSprite();
+    firstFoodSprite.x = 123;
+    firstFoodSprite.y = 456;
+    const firstFoodPos = food.getPosition();
+    const firstStartHead =
+      firstFoodPos.row === 0
+        ? { col: firstFoodPos.col, row: firstFoodPos.row + 1 }
+        : { col: firstFoodPos.col, row: firstFoodPos.row - 1 };
+    const firstDirection = firstFoodPos.row === 0 ? "up" : "down";
+
+    snake.reset(firstStartHead, firstDirection, snake.getLength());
+    mockDelayedCall.mockClear();
+    emitFoodSpy.mockClear();
+
+    scene.update(0, snake.getTicker().interval);
+    const firstDelayedCallback = mockDelayedCall.mock.calls[0][1] as () => void;
+    scene.endRun();
+
+    emitFoodSpy.mockClear();
+    scene.enterPhase("playing");
+
+    const secondFood = scene.getFood()!;
+    const secondSnake = scene.getSnake()!;
+    const secondFoodSprite = secondFood.getSprite();
+    const secondFoodPos = secondFood.getPosition();
+    secondFoodSprite.x = 77;
+    secondFoodSprite.y = 88;
+    const secondStartHead =
+      secondFoodPos.row === 0
+        ? { col: secondFoodPos.col, row: secondFoodPos.row + 1 }
+        : { col: secondFoodPos.col, row: secondFoodPos.row - 1 };
+    const secondDirection = secondFoodPos.row === 0 ? "up" : "down";
+
+    secondSnake.reset(secondStartHead, secondDirection, secondSnake.getLength());
+    mockDelayedCall.mockClear();
+
+    scene.update(0, secondSnake.getTicker().interval);
+    const secondDelayedCallback = mockDelayedCall.mock.calls[0][1] as () => void;
+
+    emitFoodSpy.mockClear();
+    firstDelayedCallback();
+    expect(emitFoodSpy).not.toHaveBeenCalled();
+
+    secondDelayedCallback();
+    expect(emitFoodSpy).toHaveBeenCalledWith(scene, 77, 88);
+  });
+
+  it("clears scheduled ghost-food bursts when scene shuts down", () => {
+    const scene = new MainScene();
+    const emitFoodSpy = vi.spyOn(effects, "emitFoodParticles");
+    scene.create();
+    scene.enterPhase("playing");
+
+    const food = scene.getFood()!;
+    const snake = scene.getSnake()!;
+    const foodPos = food.getPosition();
+    const foodSprite = food.getSprite();
+    foodSprite.x = 999;
+    foodSprite.y = 111;
+    const startHead =
+      foodPos.row === 0 ? { col: foodPos.col, row: foodPos.row + 1 } : { col: foodPos.col, row: foodPos.row - 1 };
+    const startDirection = foodPos.row === 0 ? "up" : "down";
+
+    snake.reset(startHead, startDirection, snake.getLength());
+    mockDelayedCall.mockClear();
+    emitFoodSpy.mockClear();
+
+    scene.update(0, snake.getTicker().interval);
+    const delayedCallback = mockDelayedCall.mock.calls[0][1] as () => void;
+
+    scene.shutdown();
+    emitFoodSpy.mockClear();
+    delayedCallback();
+    expect(emitFoodSpy).not.toHaveBeenCalled();
+  });
 });
 
 describe("MainScene – ghost rendering", () => {
