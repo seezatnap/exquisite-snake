@@ -1,0 +1,219 @@
+import { describe, it, expect, vi, beforeEach } from "vitest";
+import { gameBridge } from "@/game/bridge";
+import { GRID_COLS } from "@/game/config";
+import { Biome } from "@/game/systems/BiomeManager";
+
+function createMockGraphics() {
+  return {
+    lineStyle: vi.fn(),
+    moveTo: vi.fn(),
+    lineTo: vi.fn(),
+    strokePath: vi.fn(),
+    fillStyle: vi.fn(),
+    fillRect: vi.fn(),
+    fillCircle: vi.fn(),
+    clear: vi.fn(),
+    destroy: vi.fn(),
+    setDepth: vi.fn(),
+  };
+}
+
+function createMockSprite() {
+  return {
+    destroy: vi.fn(),
+    setPosition: vi.fn(),
+    setDepth: vi.fn(),
+    x: 0,
+    y: 0,
+  };
+}
+
+function createMockText() {
+  return {
+    setOrigin: vi.fn(),
+    setDepth: vi.fn(),
+    setAlpha: vi.fn(),
+    setVisible: vi.fn(),
+    setText: vi.fn(),
+    setPosition: vi.fn(),
+    destroy: vi.fn(),
+  };
+}
+
+vi.mock("phaser", () => {
+  class MockScene {
+    scene = { start: vi.fn() };
+    add = {
+      graphics: vi.fn(() => createMockGraphics()),
+      sprite: vi.fn(() => createMockSprite()),
+      text: vi.fn(() => createMockText()),
+      particles: vi.fn(() => ({
+        explode: vi.fn(),
+        destroy: vi.fn(),
+      })),
+    };
+    input = {
+      keyboard: {
+        on: vi.fn(),
+        off: vi.fn(),
+      },
+    };
+    cameras = {
+      main: {
+        shake: vi.fn(),
+        setBackgroundColor: vi.fn(),
+      },
+    };
+    textures = {
+      exists: vi.fn().mockReturnValue(true),
+    };
+    time = {
+      delayedCall: vi.fn(),
+    };
+    children = {
+      depthSort: vi.fn(),
+    };
+    game = {
+      canvas: null,
+    };
+    constructor(public config?: { key: string }) {}
+  }
+  class MockGame {
+    constructor() {}
+    destroy() {}
+  }
+  return {
+    default: {
+      Game: MockGame,
+      Scene: MockScene,
+      AUTO: 0,
+      Scale: { FIT: 1, CENTER_BOTH: 1 },
+    },
+    Game: MockGame,
+    Scene: MockScene,
+    AUTO: 0,
+    Scale: { FIT: 1, CENTER_BOTH: 1 },
+  };
+});
+
+import { MainScene } from "@/game/scenes/MainScene";
+
+function resetBridge(): void {
+  gameBridge.setPhase("start");
+  gameBridge.setScore(0);
+  gameBridge.setHighScore(0);
+  gameBridge.setElapsedTime(0);
+  gameBridge.setCurrentBiome(Biome.NeonCity);
+  gameBridge.setBiomeVisitStats({
+    [Biome.NeonCity]: 1,
+    [Biome.IceCavern]: 0,
+    [Biome.MoltenCore]: 0,
+    [Biome.VoidRift]: 0,
+  });
+}
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  resetBridge();
+});
+
+describe("MainScene parasite hook wiring", () => {
+  it("resets parasite runtime state when a run starts", () => {
+    const scene = new MainScene();
+    scene.create();
+    const parasiteManager = scene.getParasiteManager();
+    const resetSpy = vi.spyOn(parasiteManager, "resetRun");
+
+    scene.enterPhase("playing");
+
+    expect(resetSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("routes movement integration through the parasite manager for snake ticks only", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.enterPhase("playing");
+
+    const movementSpy = vi.spyOn(
+      scene.getParasiteManager(),
+      "onMovementTick",
+    );
+    const interval = scene.getSnake()!.getTicker().interval;
+    scene.update(0, interval);
+
+    expect(movementSpy).toHaveBeenCalled();
+    expect(
+      movementSpy.mock.calls.every(([context]) => context.actor === "snake"),
+    ).toBe(true);
+  });
+
+  it("checks wall collisions through parasite manager before game-over finalization", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.enterPhase("playing");
+
+    const snake = scene.getSnake()!;
+    snake.reset({ col: GRID_COLS - 1, row: 10 }, "right", 1);
+    const collisionSpy = vi.spyOn(
+      scene.getParasiteManager(),
+      "onCollisionCheck",
+    );
+
+    scene.update(0, snake.getTicker().interval);
+
+    expect(collisionSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        actor: "snake",
+        kind: "wall",
+      }),
+    );
+    expect(scene.getPhase()).toBe("gameOver");
+  });
+
+  it("routes food score gains through parasite scoring hook with food source metadata", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.setRng(() => 0.5);
+    scene.enterPhase("playing");
+
+    const snake = scene.getSnake()!;
+    const foodPos = scene.getFood()!.getPosition();
+    expect(foodPos.col).toBeGreaterThan(0);
+    snake.reset({ col: foodPos.col - 1, row: foodPos.row }, "right", 1);
+
+    const scoreSpy = vi.spyOn(scene.getParasiteManager(), "onScoreEvent");
+    scene.update(0, snake.getTicker().interval);
+
+    expect(scoreSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        actor: "snake",
+        source: "food",
+      }),
+    );
+  });
+
+  it("invokes biome enter/exit/transition hooks on biome rotation", () => {
+    const scene = new MainScene();
+    scene.create();
+    const parasiteManager = scene.getParasiteManager();
+    const onEnter = vi.spyOn(parasiteManager, "onBiomeEnter");
+    const onExit = vi.spyOn(parasiteManager, "onBiomeExit");
+    const onTransition = vi.spyOn(parasiteManager, "onBiomeTransition");
+
+    scene.enterPhase("playing");
+    onEnter.mockClear();
+    onExit.mockClear();
+    onTransition.mockClear();
+    scene.getSnake()!.getTicker().setInterval(60_000);
+
+    scene.update(0, 45_000);
+
+    expect(onExit).toHaveBeenCalledWith(Biome.NeonCity);
+    expect(onTransition).toHaveBeenCalledWith({
+      from: Biome.NeonCity,
+      to: Biome.IceCavern,
+    });
+    expect(onEnter).toHaveBeenCalledWith(Biome.IceCavern);
+  });
+});
+
