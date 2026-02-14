@@ -20,4 +20,4 @@
 - [x] (#7) Add validation coverage and test plan artifacts for key echo ghost behavior: 5-second delay accuracy, fade-out/replay completion, collision fatality parity, delayed burst timing, and rewind hook availability [5 pts] (blocked by #1, #2, #3, #4, #5, #6) (A)
 
 ## Follow-up tasks (from sprint review)
-- [A] (#8) Fix delayed ghost-food burst targeting when food is eaten on a Void Rift gravity-nudge step: capture the eat-position before the nudge so the 5-second burst appears at the consumed cell, and add a regression test for this scenario.
+- [x] (#8) Fix delayed ghost-food burst targeting when food is eaten on a Void Rift gravity-nudge step: capture the eat-position before the nudge so the 5-second burst appears at the consumed cell, and add a regression test for this scenario. (A)
