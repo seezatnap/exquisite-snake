@@ -300,6 +300,40 @@ describe("Snake input buffering", () => {
 
     expect(snake.getHeadPosition()).toEqual({ col: 12, row: 10 });
   });
+
+  it("reports queued directions while inputs are buffered", () => {
+    const ticker = new MoveTicker(100);
+    const snake = createSnake({ col: 10, row: 10 }, "right", 3, ticker);
+
+    snake.bufferDirection("up");
+    expect(snake.hasQueuedDirection("up")).toBe(true);
+    expect(snake.hasQueuedDirection("left")).toBe(false);
+
+    snake.update(100); // consumes "up"
+    expect(snake.hasQueuedDirection("up")).toBe(false);
+  });
+
+  it("supports a direction guard that can reject biome-specific inputs", () => {
+    const ticker = new MoveTicker(100);
+    const snake = createSnake({ col: 10, row: 10 }, "right", 3, ticker);
+    snake.setDirectionInputGuard((dir) => dir !== "up");
+
+    snake.bufferDirection("up"); // rejected by guard
+    snake.update(100);
+
+    expect(snake.getDirection()).toBe("right");
+    expect(snake.getHeadPosition()).toEqual({ col: 11, row: 10 });
+  });
+
+  it("marks guard-rejected inputs as protected no-ops", () => {
+    const snake = createSnake({ col: 10, row: 10 }, "right", 3);
+    snake.setDirectionInputGuard(() => false);
+
+    snake.bufferDirection("up");
+
+    expect(snake.consumeRejectedOppositeDirectionInput()).toBe(true);
+    expect(snake.consumeRejectedOppositeDirectionInput()).toBe(false);
+  });
 });
 
 // ── Ice Cavern turn momentum ─────────────────────────────────────
@@ -446,6 +480,18 @@ describe("Snake anti-180-degree turn", () => {
 
     snake.update(100);
     expect(snake.getDirection()).toBe("left");
+  });
+
+  it("records and consumes rejected opposite-direction input flags", () => {
+    const ticker = new MoveTicker(100);
+    const snake = createSnake({ col: 10, row: 10 }, "right", 3, ticker);
+
+    snake.bufferDirection("left"); // rejected opposite
+    expect(snake.consumeRejectedOppositeDirectionInput()).toBe(true);
+    expect(snake.consumeRejectedOppositeDirectionInput()).toBe(false);
+
+    snake.bufferDirection("up"); // accepted
+    expect(snake.consumeRejectedOppositeDirectionInput()).toBe(false);
   });
 });
 

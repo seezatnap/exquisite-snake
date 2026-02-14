@@ -5,6 +5,8 @@ import {
   BIOME_ROTATION_INTERVAL_MS,
   BIOME_CONFIG,
   BiomeManager,
+  normalizeBiomeCycleOrder,
+  parseBiomeCycleOrder,
 } from "@/game/systems/BiomeManager";
 
 describe("BiomeManager constants", () => {
@@ -26,6 +28,32 @@ describe("BiomeManager constants", () => {
     expect(BIOME_CONFIG[Biome.IceCavern].label).toBe("Ice Cavern");
     expect(BIOME_CONFIG[Biome.MoltenCore].label).toBe("Molten Core");
     expect(BIOME_CONFIG[Biome.VoidRift].label).toBe("Void Rift");
+  });
+
+  it("parses a valid comma-separated biome order string", () => {
+    expect(
+      parseBiomeCycleOrder("void-rift,neon-city,ice-cavern,molten-core"),
+    ).toEqual([
+      Biome.VoidRift,
+      Biome.NeonCity,
+      Biome.IceCavern,
+      Biome.MoltenCore,
+    ]);
+  });
+
+  it("rejects malformed biome order strings", () => {
+    expect(parseBiomeCycleOrder("void-rift,void-rift,neon-city")).toBeNull();
+    expect(parseBiomeCycleOrder("void-rift,neon-city")).toBeNull();
+    expect(parseBiomeCycleOrder("void-rift,forest,neon-city,molten-core")).toBeNull();
+    expect(
+      parseBiomeCycleOrder("void-rift,neon-city,ice-cavern,molten-core,void-rift"),
+    ).toBeNull();
+  });
+
+  it("normalizes invalid biome orders back to the canonical default", () => {
+    expect(normalizeBiomeCycleOrder([Biome.VoidRift, Biome.NeonCity])).toEqual(
+      BIOME_CYCLE_ORDER,
+    );
   });
 });
 
@@ -166,5 +194,30 @@ describe("BiomeManager run lifecycle", () => {
     manager.startRun();
     expect(manager.getCurrentBiome()).toBe(Biome.NeonCity);
     expect(manager.getElapsedInBiomeMs()).toBe(0);
+  });
+
+  it("supports overriding cycle order to start from a different biome", () => {
+    const manager = new BiomeManager();
+    manager.setCycleOrder([
+      Biome.VoidRift,
+      Biome.NeonCity,
+      Biome.IceCavern,
+      Biome.MoltenCore,
+    ]);
+    manager.startRun();
+
+    expect(manager.getCurrentBiome()).toBe(Biome.VoidRift);
+    expect(manager.getNextBiome()).toBe(Biome.NeonCity);
+    expect(manager.getVisitStats()).toEqual({
+      [Biome.NeonCity]: 0,
+      [Biome.IceCavern]: 0,
+      [Biome.MoltenCore]: 0,
+      [Biome.VoidRift]: 1,
+    });
+
+    const transition = manager.update(BIOME_ROTATION_INTERVAL_MS);
+    expect(transition).toEqual([
+      { from: Biome.VoidRift, to: Biome.NeonCity },
+    ]);
   });
 });

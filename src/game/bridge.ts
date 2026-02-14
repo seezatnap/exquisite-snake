@@ -11,13 +11,18 @@ import {
   type BiomeVisitStats,
 } from "./systems/BiomeManager";
 
-function createInitialBiomeVisitStats(): BiomeVisitStats {
-  return {
+function createInitialBiomeVisitStats(firstBiome: Biome = Biome.NeonCity): BiomeVisitStats {
+  const stats: BiomeVisitStats = {
     [Biome.NeonCity]: 1,
     [Biome.IceCavern]: 0,
     [Biome.MoltenCore]: 0,
     [Biome.VoidRift]: 0,
   };
+  if (firstBiome !== Biome.NeonCity) {
+    stats[Biome.NeonCity] = 0;
+    stats[firstBiome] = 1;
+  }
+  return stats;
 }
 
 // ── Game phases ─────────────────────────────────────────────────
@@ -47,6 +52,11 @@ export interface GameBridgeEvents {
   biomeTransition: BiomeTransition;
   biomeEnter: Biome;
   biomeExit: Biome;
+}
+
+export interface ResetRunOptions {
+  currentBiome?: Biome;
+  biomeVisitStats?: BiomeVisitStats;
 }
 
 export type GameBridgeEventName = keyof GameBridgeEvents;
@@ -124,11 +134,16 @@ export class GameBridge {
   }
 
   /** Reset all per-run state (called on new game). */
-  resetRun(): void {
+  resetRun(options: ResetRunOptions = {}): void {
+    const currentBiome = options.currentBiome ?? Biome.NeonCity;
+    const visitStats = options.biomeVisitStats
+      ? { ...options.biomeVisitStats }
+      : createInitialBiomeVisitStats(currentBiome);
+
     this.state.score = 0;
     this.state.elapsedTime = 0;
-    this.state.currentBiome = Biome.NeonCity;
-    this.state.biomeVisitStats = createInitialBiomeVisitStats();
+    this.state.currentBiome = currentBiome;
+    this.state.biomeVisitStats = visitStats;
     this.emit("scoreChange", 0);
     this.emit("elapsedTimeChange", 0);
     this.emit("biomeChange", this.state.currentBiome);

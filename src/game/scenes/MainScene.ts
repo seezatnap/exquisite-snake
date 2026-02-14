@@ -13,6 +13,7 @@ import { loadHighScore, saveHighScore } from "../utils/storage";
 import {
   isInBounds,
   gridToPixel,
+  oppositeDirection,
   stepInDirection,
   type Direction,
   type GridPos,
@@ -22,7 +23,9 @@ import { Food } from "../entities/Food";
 import { emitFoodParticles, shakeCamera } from "../systems/effects";
 import {
   Biome,
+  BIOME_CONFIG,
   BiomeManager,
+  parseBiomeCycleOrder,
   type BiomeTransition,
   type BiomeVisitStats,
 } from "../systems/BiomeManager";
@@ -123,12 +126,20 @@ const BIOME_VISUAL_THEMES: Record<Biome, BiomeVisualTheme> = {
 
 const BIOME_LAYER_DEPTH = {
   TRANSITION_OVERLAY: 40,
+  SHIFT_COUNTDOWN: 50,
 } as const;
 
 const BIOME_TRANSITION_DURATION_MS = 320;
 const BIOME_TRANSITION_SHAKE_DURATION_MS = 110;
 const BIOME_TRANSITION_SHAKE_INTENSITY = 0.0035;
 const BIOME_TRANSITION_OVERLAY_ALPHA = 0.9;
+const BIOME_ORDER_QUERY_PARAM = "biomeOrder";
+const BIOME_SHIFT_COUNTDOWN_WINDOW_MS = 3_000;
+const BIOME_SHIFT_COUNTDOWN_ALPHA = 0.65;
+const BIOME_SHIFT_COUNTDOWN_SHAKE_X_PX = 10;
+const BIOME_SHIFT_COUNTDOWN_SHAKE_Y_PX = 7;
+const BIOME_SHIFT_COUNTDOWN_NUMBER_Y_OFFSET_PX = -40;
+const BIOME_SHIFT_COUNTDOWN_LABEL_Y_OFFSET_PX = 88;
 
 interface BiomeTransitionEffectState {
   from: Biome;
@@ -197,6 +208,15 @@ export class MainScene extends Phaser.Scene {
   /** Active biome transition wipe metadata (null when no transition is animating). */
   private biomeTransitionEffect: BiomeTransitionEffectState | null = null;
 
+  /** Large center-screen countdown number shown before a biome shift. */
+  private biomeShiftCountdownValueText: Phaser.GameObjects.Text | null = null;
+
+  /** Subtitle under the countdown (e.g. "BIOME SHIFT: ICE CAVERN"). */
+  private biomeShiftCountdownLabelText: Phaser.GameObjects.Text | null = null;
+
+  /** Running time used to animate the countdown shake jitter. */
+  private biomeShiftCountdownShakeElapsedMs = 0;
+
   /** Graphics object used for mechanic-linked overlays (lava pools / void vortex). */
   private biomeMechanicGraphics: Phaser.GameObjects.Graphics | null = null;
 
@@ -222,6 +242,7 @@ export class MainScene extends Phaser.Scene {
   // ── Phaser lifecycle ────────────────────────────────────────
 
   create(): void {
+    this.applyBiomeCycleOrderOverrideFromUrl();
     this.syncBiomeRuntimeToBridge();
     this.applyBiomeVisualTheme(this.biomeManager.getCurrentBiome());
     gameBridge.setHighScore(loadHighScore());
@@ -256,10 +277,14 @@ export class MainScene extends Phaser.Scene {
     this.gridGraphics = null;
     this.biomeMechanicGraphics?.destroy?.();
     this.biomeMechanicGraphics = null;
+    this.destroyBiomeShiftCountdown();
   }
 
   update(_time: number, delta: number): void {
-    if (gameBridge.getState().phase !== "playing") return;
+    if (gameBridge.getState().phase !== "playing") {
+      this.clearBiomeShiftCountdown();
+      return;
+    }
 
     gameBridge.setElapsedTime(gameBridge.getState().elapsedTime + delta);
     this.updateBiomeState(delta);
@@ -308,10 +333,14 @@ export class MainScene extends Phaser.Scene {
 
   /** Reset per-run state and begin a new game. */
   private startRun(): void {
-    gameBridge.resetRun();
     this.biomeManager.startRun();
+    gameBridge.resetRun({
+      currentBiome: this.biomeManager.getCurrentBiome(),
+      biomeVisitStats: this.biomeManager.getVisitStats(),
+    });
     this.resetMoltenCoreState();
     this.clearBiomeTransitionEffect();
+    this.clearBiomeShiftCountdown();
     this.voidGravityStepCounter = 0;
     this.voidVortexSpinRadians = 0;
     this.destroyBiomeMechanicGraphics();
@@ -326,6 +355,7 @@ export class MainScene extends Phaser.Scene {
     this.biomeManager.stopRun();
     this.resetMoltenCoreState();
     this.clearBiomeTransitionEffect();
+    this.clearBiomeShiftCountdown();
     this.destroyBiomeMechanicGraphics();
     if (this.snake?.isAlive()) {
       this.snake.kill();
@@ -385,6 +415,11 @@ export class MainScene extends Phaser.Scene {
 
     // Self-collision: head occupies a body segment
     if (this.snake.hasSelfCollision()) {
+      this.endRun();
+      return true;
+    }
+
+    if (this.isVoidRiftCenterHazard(head)) {
       this.endRun();
       return true;
     }
@@ -462,6 +497,23 @@ export class MainScene extends Phaser.Scene {
     this.setBiomeMechanicsConfig({ moltenCore: config });
   }
 
+  /** Override the run biome order (must be a full permutation of all biomes). */
+  setBiomeCycleOrder(order: readonly Biome[]): void {
+    this.biomeManager.setCycleOrder(order);
+    this.resetMoltenCoreState();
+    this.clearBiomeTransitionEffect();
+    this.clearBiomeShiftCountdown();
+    this.voidGravityStepCounter = 0;
+    this.voidVortexSpinRadians = 0;
+    this.destroyBiomeMechanicGraphics();
+
+    const currentBiome = this.biomeManager.getCurrentBiome();
+    this.syncBiomeRuntimeToBridge();
+    this.applyBiomeMovementMechanics(currentBiome);
+    this.applyBiomeVisualTheme(currentBiome);
+    this.updateBiomeMechanicVisuals(0);
+  }
+
   // ── Entity accessors (for tests and external integration) ────
 
   getSnake(): Snake | null {
@@ -477,6 +529,7 @@ export class MainScene extends Phaser.Scene {
   private updateBiomeState(delta: number): void {
     this.updateBiomeTransitionEffect(delta);
     const transitions = this.biomeManager.update(delta);
+    this.updateBiomeShiftCountdown(delta);
     if (transitions.length === 0) {
       return;
     }
@@ -624,6 +677,21 @@ export class MainScene extends Phaser.Scene {
     return `${pos.col}:${pos.row}`;
   }
 
+  private applyBiomeCycleOrderOverrideFromUrl(): void {
+    const search = globalThis?.location?.search;
+    if (typeof search !== "string" || search.length === 0) {
+      return;
+    }
+
+    const rawOrder = new URLSearchParams(search).get(BIOME_ORDER_QUERY_PARAM);
+    const parsedOrder = parseBiomeCycleOrder(rawOrder);
+    if (!parsedOrder) {
+      return;
+    }
+
+    this.biomeManager.setCycleOrder(parsedOrder);
+  }
+
   private syncBiomeRuntimeToBridge(): void {
     gameBridge.setCurrentBiome(this.biomeManager.getCurrentBiome());
     gameBridge.setBiomeVisitStats(this.biomeManager.getVisitStats());
@@ -637,6 +705,32 @@ export class MainScene extends Phaser.Scene {
       ? this.biomeMechanicsConfig.iceCavern.turnMomentumTiles
       : 0;
     this.snake.setTurnMomentumTiles(turnMomentumTiles);
+    this.applyVoidRiftInputGuard(biome);
+  }
+
+  private applyVoidRiftInputGuard(biome: Biome): void {
+    if (!this.snake) {
+      return;
+    }
+
+    if (biome !== Biome.VoidRift) {
+      this.snake.setDirectionInputGuard(null);
+      return;
+    }
+
+    this.snake.setDirectionInputGuard((dir) => {
+      const activeSnake = this.snake;
+      if (!activeSnake) {
+        return true;
+      }
+      const pullDirection = this.getVoidRiftPullDirection(
+        activeSnake.getHeadPosition(),
+      );
+      if (!pullDirection) {
+        return true;
+      }
+      return dir !== oppositeDirection(pullDirection);
+    });
   }
 
   private resolveFoodConsumption(): void {
@@ -661,14 +755,28 @@ export class MainScene extends Phaser.Scene {
     }
 
     this.voidGravityStepCounter += 1;
-    const cadenceSteps = this.biomeMechanicsConfig.voidRift.gravityPullCadenceSteps;
+    const head = this.snake.getHeadPosition();
+    const cadenceSteps = this.getVoidRiftGravityCadenceSteps(head);
     if (this.voidGravityStepCounter % cadenceSteps !== 0) {
       return false;
     }
 
-    const head = this.snake.getHeadPosition();
+    if (this.snake.consumeRejectedOppositeDirectionInput()) {
+      return false;
+    }
+
     const pullDirection = this.getVoidRiftPullDirection(head);
     if (!pullDirection) {
+      return false;
+    }
+
+    // If the player is steering against the pull, treat gravity as canceled
+    // for this cadence step to avoid accidental "forced reversal" deaths.
+    const counterPullDirection = oppositeDirection(pullDirection);
+    if (
+      this.snake.getDirection() === counterPullDirection ||
+      this.snake.hasQueuedDirection(counterPullDirection)
+    ) {
       return false;
     }
 
@@ -680,6 +788,29 @@ export class MainScene extends Phaser.Scene {
 
     this.snake.applyExternalNudge(pullDirection);
     return true;
+  }
+
+  private getVoidRiftGravityCadenceSteps(head: GridPos): number {
+    const baseCadence = this.biomeMechanicsConfig.voidRift.gravityPullCadenceSteps;
+    const distanceFromCenter =
+      Math.abs(head.col - VOID_RIFT_CENTER.col) +
+      Math.abs(head.row - VOID_RIFT_CENTER.row);
+
+    if (distanceFromCenter <= 6) {
+      return Math.max(1, baseCadence - 1);
+    }
+    if (distanceFromCenter >= 26) {
+      return baseCadence + 1;
+    }
+    return baseCadence;
+  }
+
+  private isVoidRiftCenterHazard(head: GridPos): boolean {
+    return (
+      this.biomeManager.getCurrentBiome() === Biome.VoidRift &&
+      head.col === VOID_RIFT_CENTER.col &&
+      head.row === VOID_RIFT_CENTER.row
+    );
   }
 
   private getVoidRiftPullDirection(head: GridPos): Direction | null {
@@ -944,6 +1075,117 @@ export class MainScene extends Phaser.Scene {
     this.biomeTransitionEffect = null;
     this.biomeTransitionOverlayGraphics?.destroy?.();
     this.biomeTransitionOverlayGraphics = null;
+  }
+
+  private ensureBiomeShiftCountdownText(): boolean {
+    if (this.biomeShiftCountdownValueText && this.biomeShiftCountdownLabelText) {
+      return true;
+    }
+
+    const addFactory = this.add as unknown as {
+      text?: (
+        x: number,
+        y: number,
+        text: string,
+        style?: Phaser.Types.GameObjects.Text.TextStyle,
+      ) => Phaser.GameObjects.Text;
+    };
+    if (typeof addFactory.text !== "function") {
+      return false;
+    }
+
+    if (!this.biomeShiftCountdownValueText) {
+      const valueText = addFactory.text(ARENA_WIDTH / 2, ARENA_HEIGHT / 2, "", {
+        fontFamily: '"Arial Black", "Impact", sans-serif',
+        fontSize: "216px",
+        color: "#ffffff",
+        stroke: "#05080f",
+        strokeThickness: 10,
+      });
+      valueText.setOrigin?.(0.5, 0.5);
+      valueText.setDepth?.(BIOME_LAYER_DEPTH.SHIFT_COUNTDOWN);
+      valueText.setAlpha?.(BIOME_SHIFT_COUNTDOWN_ALPHA);
+      valueText.setVisible?.(false);
+      this.biomeShiftCountdownValueText = valueText;
+    }
+
+    if (!this.biomeShiftCountdownLabelText) {
+      const labelText = addFactory.text(ARENA_WIDTH / 2, ARENA_HEIGHT / 2, "", {
+        fontFamily: '"Arial Black", "Impact", sans-serif',
+        fontSize: "36px",
+        color: "#ffffff",
+        stroke: "#05080f",
+        strokeThickness: 5,
+      });
+      labelText.setOrigin?.(0.5, 0.5);
+      labelText.setDepth?.(BIOME_LAYER_DEPTH.SHIFT_COUNTDOWN);
+      labelText.setAlpha?.(BIOME_SHIFT_COUNTDOWN_ALPHA);
+      labelText.setVisible?.(false);
+      this.biomeShiftCountdownLabelText = labelText;
+    }
+
+    return Boolean(
+      this.biomeShiftCountdownValueText && this.biomeShiftCountdownLabelText,
+    );
+  }
+
+  private clearBiomeShiftCountdown(): void {
+    this.biomeShiftCountdownShakeElapsedMs = 0;
+    this.biomeShiftCountdownValueText?.setVisible?.(false);
+    this.biomeShiftCountdownLabelText?.setVisible?.(false);
+  }
+
+  private destroyBiomeShiftCountdown(): void {
+    this.biomeShiftCountdownShakeElapsedMs = 0;
+    this.biomeShiftCountdownValueText?.destroy?.();
+    this.biomeShiftCountdownValueText = null;
+    this.biomeShiftCountdownLabelText?.destroy?.();
+    this.biomeShiftCountdownLabelText = null;
+  }
+
+  private updateBiomeShiftCountdown(delta: number): void {
+    const msUntilNextBiome = this.biomeManager.getMsUntilNextBiome();
+    const showCountdown = this.biomeManager.isRunning() &&
+      msUntilNextBiome > 0 &&
+      msUntilNextBiome <= BIOME_SHIFT_COUNTDOWN_WINDOW_MS;
+
+    if (!showCountdown) {
+      this.clearBiomeShiftCountdown();
+      return;
+    }
+
+    if (!this.ensureBiomeShiftCountdownText()) {
+      return;
+    }
+
+    this.biomeShiftCountdownShakeElapsedMs += Math.max(0, delta);
+    const shakeX =
+      Math.sin(this.biomeShiftCountdownShakeElapsedMs * 0.07) *
+      BIOME_SHIFT_COUNTDOWN_SHAKE_X_PX;
+    const shakeY =
+      Math.cos(this.biomeShiftCountdownShakeElapsedMs * 0.09) *
+      BIOME_SHIFT_COUNTDOWN_SHAKE_Y_PX;
+    const nextBiome = this.biomeManager.getNextBiome();
+    const countdownValue = Math.max(
+      1,
+      Math.min(3, Math.ceil(msUntilNextBiome / 1_000)),
+    );
+
+    this.biomeShiftCountdownValueText?.setText?.(String(countdownValue));
+    this.biomeShiftCountdownValueText?.setPosition?.(
+      ARENA_WIDTH / 2 + shakeX,
+      ARENA_HEIGHT / 2 + BIOME_SHIFT_COUNTDOWN_NUMBER_Y_OFFSET_PX + shakeY,
+    );
+    this.biomeShiftCountdownValueText?.setVisible?.(true);
+
+    this.biomeShiftCountdownLabelText?.setText?.(
+      `BIOME SHIFT: ${BIOME_CONFIG[nextBiome].label.toUpperCase()}`,
+    );
+    this.biomeShiftCountdownLabelText?.setPosition?.(
+      ARENA_WIDTH / 2 + shakeX * 0.45,
+      ARENA_HEIGHT / 2 + BIOME_SHIFT_COUNTDOWN_LABEL_Y_OFFSET_PX + shakeY * 0.45,
+    );
+    this.biomeShiftCountdownLabelText?.setVisible?.(true);
   }
 
   private drawBackdrop(biome: Biome, theme: BiomeVisualTheme): void {

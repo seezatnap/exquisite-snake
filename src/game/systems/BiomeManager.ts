@@ -19,6 +19,63 @@ export const BIOME_CYCLE_ORDER: readonly Biome[] = [
   Biome.VoidRift,
 ] as const;
 
+const BIOME_ID_SET = new Set<Biome>(Object.values(Biome));
+
+function isValidCycleOrder(order: readonly Biome[]): boolean {
+  if (order.length !== BIOME_CYCLE_ORDER.length) {
+    return false;
+  }
+  const unique = new Set(order);
+  if (unique.size !== BIOME_CYCLE_ORDER.length) {
+    return false;
+  }
+  for (const biome of order) {
+    if (!BIOME_ID_SET.has(biome)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+export function normalizeBiomeCycleOrder(
+  order: readonly Biome[] | null | undefined,
+): readonly Biome[] {
+  if (!order || !isValidCycleOrder(order)) {
+    return [...BIOME_CYCLE_ORDER];
+  }
+  return [...order];
+}
+
+export function parseBiomeCycleOrder(
+  rawOrder: string | null | undefined,
+): readonly Biome[] | null {
+  if (typeof rawOrder !== "string" || rawOrder.trim().length === 0) {
+    return null;
+  }
+
+  const tokens = rawOrder
+    .split(",")
+    .map((token) => token.trim().toLowerCase())
+    .filter((token) => token.length > 0);
+  if (tokens.length !== BIOME_CYCLE_ORDER.length) {
+    return null;
+  }
+
+  const parsedOrder: Biome[] = [];
+  for (const token of tokens) {
+    if (!BIOME_ID_SET.has(token as Biome)) {
+      return null;
+    }
+    parsedOrder.push(token as Biome);
+  }
+
+  if (!isValidCycleOrder(parsedOrder)) {
+    return null;
+  }
+
+  return parsedOrder;
+}
+
 export interface BiomeConfig {
   id: Biome;
   label: string;
@@ -84,14 +141,17 @@ export class BiomeManager {
   private cycleIndex = 0;
   private elapsedInBiomeMs = 0;
   private visitStats: BiomeVisitStats = createEmptyVisitStats();
+  private cycleOrder: readonly Biome[];
 
   constructor(
     private readonly intervalMs: number = BIOME_ROTATION_INTERVAL_MS,
+    cycleOrder: readonly Biome[] = BIOME_CYCLE_ORDER,
   ) {
+    this.cycleOrder = normalizeBiomeCycleOrder(cycleOrder);
     this.resetRun();
   }
 
-  /** Start a fresh run from Neon City with a clean timer/stats state. */
+  /** Start a fresh run from the first configured biome with clean timer/stats. */
   startRun(): void {
     this.resetRun();
     this.running = true;
@@ -104,7 +164,7 @@ export class BiomeManager {
 
   /**
    * Reset to initial run state.
-   * Neon City counts as visited once at run start.
+   * The first configured biome counts as visited once at run start.
    */
   resetRun(): void {
     this.running = false;
@@ -112,6 +172,20 @@ export class BiomeManager {
     this.elapsedInBiomeMs = 0;
     this.visitStats = createEmptyVisitStats();
     this.visitStats[this.getCurrentBiome()] = 1;
+  }
+
+  /**
+   * Configure biome cycle order for subsequent runs and reset run state.
+   * Invalid orders are ignored in favor of the canonical default order.
+   */
+  setCycleOrder(order: readonly Biome[]): void {
+    this.cycleOrder = normalizeBiomeCycleOrder(order);
+    this.resetRun();
+  }
+
+  /** Current active cycle order used by this manager instance. */
+  getCycleOrder(): readonly Biome[] {
+    return [...this.cycleOrder];
   }
 
   /**
@@ -137,7 +211,13 @@ export class BiomeManager {
 
   /** Current biome for the run. */
   getCurrentBiome(): Biome {
-    return BIOME_CYCLE_ORDER[this.cycleIndex];
+    return this.cycleOrder[this.cycleIndex];
+  }
+
+  /** Next biome in the active cycle order (wrapping at the end). */
+  getNextBiome(): Biome {
+    const nextIndex = (this.cycleIndex + 1) % this.cycleOrder.length;
+    return this.cycleOrder[nextIndex];
   }
 
   /** Milliseconds elapsed in the active biome. */
@@ -162,7 +242,7 @@ export class BiomeManager {
 
   private advanceBiome(): BiomeTransition {
     const from = this.getCurrentBiome();
-    this.cycleIndex = (this.cycleIndex + 1) % BIOME_CYCLE_ORDER.length;
+    this.cycleIndex = (this.cycleIndex + 1) % this.cycleOrder.length;
     const to = this.getCurrentBiome();
     this.visitStats[to] += 1;
 

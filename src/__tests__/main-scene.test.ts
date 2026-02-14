@@ -40,6 +40,13 @@ const mockDestroy = vi.fn();
 const mockSetPosition = vi.fn();
 const mockSpriteSetDepth = vi.fn();
 const mockKeyboardOn = vi.fn();
+const mockTextSetOrigin = vi.fn();
+const mockTextSetDepth = vi.fn();
+const mockTextSetAlpha = vi.fn();
+const mockTextSetVisible = vi.fn();
+const mockTextSetText = vi.fn();
+const mockTextSetPosition = vi.fn();
+const mockTextDestroy = vi.fn();
 
 function createMockSprite() {
   return {
@@ -51,12 +58,25 @@ function createMockSprite() {
   };
 }
 
+function createMockText() {
+  return {
+    setOrigin: mockTextSetOrigin,
+    setDepth: mockTextSetDepth,
+    setAlpha: mockTextSetAlpha,
+    setVisible: mockTextSetVisible,
+    setText: mockTextSetText,
+    setPosition: mockTextSetPosition,
+    destroy: mockTextDestroy,
+  };
+}
+
 vi.mock("phaser", () => {
   class MockScene {
     scene = { start: mockSceneStart };
     add = {
       graphics: mockAddGraphics,
       sprite: vi.fn(() => createMockSprite()),
+      text: vi.fn(() => createMockText()),
       particles: vi.fn(() => ({
         explode: vi.fn(),
         destroy: vi.fn(),
@@ -372,6 +392,49 @@ describe("MainScene", () => {
     });
   });
 
+  it("supports overriding biome order so Void Rift can be first for testing", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.setBiomeCycleOrder([
+      Biome.VoidRift,
+      Biome.NeonCity,
+      Biome.IceCavern,
+      Biome.MoltenCore,
+    ]);
+    scene.enterPhase("playing");
+
+    expect(scene.getCurrentBiome()).toBe(Biome.VoidRift);
+    expect(gameBridge.getState().currentBiome).toBe(Biome.VoidRift);
+    expect(scene.getBiomeVisitStats()).toEqual({
+      [Biome.NeonCity]: 0,
+      [Biome.IceCavern]: 0,
+      [Biome.MoltenCore]: 0,
+      [Biome.VoidRift]: 1,
+    });
+
+    scene.getSnake()!.getTicker().setInterval(60_000);
+    scene.update(0, 45_000); // Void -> Neon
+    expect(scene.getCurrentBiome()).toBe(Biome.NeonCity);
+  });
+
+  it("reads biome order override from URL query for quick manual testing", () => {
+    const originalUrl = window.location.href;
+    window.history.pushState(
+      {},
+      "",
+      `${window.location.origin}/?biomeOrder=void-rift,neon-city,ice-cavern,molten-core`,
+    );
+
+    const scene = new MainScene();
+    scene.create();
+    scene.enterPhase("playing");
+
+    expect(scene.getCurrentBiome()).toBe(Biome.VoidRift);
+    expect(gameBridge.getState().currentBiome).toBe(Biome.VoidRift);
+
+    window.history.pushState({}, "", originalUrl);
+  });
+
   it("startRun emits biome reset events once per run start", () => {
     const scene = new MainScene();
     scene.create();
@@ -500,6 +563,42 @@ describe("MainScene", () => {
     const swapOrder = mockSetBackgroundColor.mock.invocationCallOrder[0];
     const wipeOrder = mockFillRect.mock.invocationCallOrder[0];
     expect(swapOrder).toBeLessThan(wipeOrder);
+  });
+
+  it("shows a 3-2-1 center countdown with biome label before each biome shift", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.enterPhase("playing");
+    scene.getSnake()!.getTicker().setInterval(60_000);
+    mockTextSetText.mockClear();
+    mockTextSetVisible.mockClear();
+    mockTextSetPosition.mockClear();
+    mockTextSetAlpha.mockClear();
+    mockTextSetDepth.mockClear();
+
+    scene.update(0, 41_999); // 3001ms left → hidden
+    scene.update(0, 1); // 3000ms left → 3
+    scene.update(0, 1_000); // 2000ms left → 2
+    scene.update(0, 1_000); // 1000ms left → 1
+    scene.update(0, 1_000); // biome shifts → hidden
+
+    expect(mockTextSetAlpha).toHaveBeenCalledWith(0.65);
+    expect(mockTextSetDepth).toHaveBeenCalledWith(50);
+    expect(mockTextSetText).toHaveBeenCalledWith("3");
+    expect(mockTextSetText).toHaveBeenCalledWith("2");
+    expect(mockTextSetText).toHaveBeenCalledWith("1");
+    expect(mockTextSetText).toHaveBeenCalledWith("BIOME SHIFT: ICE CAVERN");
+    expect(mockTextSetVisible).toHaveBeenCalledWith(true);
+    expect(mockTextSetVisible).toHaveBeenCalledWith(false);
+
+    const hasCenterCountdownPosition = mockTextSetPosition.mock.calls.some(
+      ([x, y]) => Math.abs(x - 400) <= 20 && Math.abs(y - 260) <= 25,
+    );
+    const hasCenterLabelPosition = mockTextSetPosition.mock.calls.some(
+      ([x, y]) => Math.abs(x - 400) <= 20 && Math.abs(y - 388) <= 25,
+    );
+    expect(hasCenterCountdownPosition).toBe(true);
+    expect(hasCenterLabelPosition).toBe(true);
   });
 
   it("keeps redrawn grid behind food and snake sprites across biome transitions", () => {
@@ -830,6 +929,210 @@ describe("MainScene", () => {
 
     scene.update(0, 100); // step 3 + gravity pull toward center (down)
     expect(snake.getHeadPosition()).toEqual({ col: 13, row: 1 });
+  });
+
+  it("Void Rift pull is weaker far from center and stronger near center", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.setBiomeCycleOrder([
+      Biome.VoidRift,
+      Biome.NeonCity,
+      Biome.IceCavern,
+      Biome.MoltenCore,
+    ]);
+    scene.setBiomeMechanicsConfig({
+      voidRift: { gravityPullCadenceSteps: 3 },
+    });
+    scene.enterPhase("playing");
+    expect(scene.getCurrentBiome()).toBe(Biome.VoidRift);
+
+    const snake = scene.getSnake()!;
+    snake.getTicker().setInterval(100);
+
+    // Far from center (distance >= 26): effective cadence is slower (4).
+    snake.reset({ col: 2, row: 2 }, "right", 1);
+    scene.update(0, 100);
+    expect(snake.getHeadPosition()).toEqual({ col: 3, row: 2 });
+    scene.update(0, 100);
+    expect(snake.getHeadPosition()).toEqual({ col: 4, row: 2 });
+    scene.update(0, 100);
+    expect(snake.getHeadPosition()).toEqual({ col: 5, row: 2 });
+    scene.update(0, 100);
+    expect(snake.getHeadPosition()).toEqual({ col: 7, row: 2 });
+
+    // Near center (distance <= 6): effective cadence is faster (2).
+    snake.reset({ col: 17, row: 15 }, "up", 1);
+    scene.update(0, 100); // step 1: no pull yet
+    expect(snake.getHeadPosition()).toEqual({ col: 17, row: 14 });
+    scene.update(0, 100); // step 2: pull right applies
+    expect(snake.getHeadPosition()).toEqual({ col: 18, row: 13 });
+  });
+
+  it("touching the Void Rift center tile ends the run immediately", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.setBiomeCycleOrder([
+      Biome.VoidRift,
+      Biome.NeonCity,
+      Biome.IceCavern,
+      Biome.MoltenCore,
+    ]);
+    scene.setBiomeMechanicsConfig({
+      voidRift: { gravityPullCadenceSteps: 999_999 },
+    });
+    scene.enterPhase("playing");
+    expect(scene.getCurrentBiome()).toBe(Biome.VoidRift);
+
+    const snake = scene.getSnake()!;
+    snake.reset({ col: 19, row: 15 }, "right", 1);
+    snake.getTicker().setInterval(100);
+
+    scene.update(0, 100); // moves onto center (20,15)
+
+    expect(scene.getPhase()).toBe("gameOver");
+    expect(snake.isAlive()).toBe(false);
+  });
+
+  it("Void Rift treats opposite input as a no-op and skips gravity nudge that step", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.setBiomeCycleOrder([
+      Biome.VoidRift,
+      Biome.NeonCity,
+      Biome.IceCavern,
+      Biome.MoltenCore,
+    ]);
+    scene.setBiomeMechanicsConfig({
+      voidRift: { gravityPullCadenceSteps: 1 },
+    });
+    scene.setRng(() => 0.8); // tie-break toward vertical pull (up) at col10,row25
+    scene.enterPhase("playing");
+    expect(scene.getCurrentBiome()).toBe(Biome.VoidRift);
+
+    const snake = scene.getSnake()!;
+    snake.reset({ col: 10, row: 0 }, "right", 3);
+    snake.getTicker().setInterval(100);
+    snake.bufferDirection("left"); // rejected opposite input
+
+    scene.update(0, 100);
+
+    expect(scene.getPhase()).toBe("playing");
+    expect(snake.getDirection()).toBe("right");
+    expect(snake.getHeadPosition()).toEqual({ col: 11, row: 0 });
+  });
+
+  it("retains rejected opposite-input protection until the next gravity cadence step", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.setBiomeCycleOrder([
+      Biome.VoidRift,
+      Biome.NeonCity,
+      Biome.IceCavern,
+      Biome.MoltenCore,
+    ]);
+    scene.setBiomeMechanicsConfig({
+      voidRift: { gravityPullCadenceSteps: 3 },
+    });
+    scene.enterPhase("playing");
+    expect(scene.getCurrentBiome()).toBe(Biome.VoidRift);
+
+    const snake = scene.getSnake()!;
+    snake.reset({ col: 10, row: 0 }, "right", 1);
+    snake.getTicker().setInterval(100);
+    snake.bufferDirection("left"); // rejected opposite input
+
+    scene.update(0, 100); // step 1 (no gravity due)
+    expect(snake.getHeadPosition()).toEqual({ col: 11, row: 0 });
+
+    scene.update(0, 100); // step 2 (no gravity due)
+    expect(snake.getHeadPosition()).toEqual({ col: 12, row: 0 });
+
+    scene.update(0, 100); // step 3 (gravity would be due, but should be skipped)
+    expect(snake.getHeadPosition()).toEqual({ col: 13, row: 0 });
+  });
+
+  it("treats opposite-to-pull steering as a no-op and skips Void gravity", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.setBiomeCycleOrder([
+      Biome.VoidRift,
+      Biome.NeonCity,
+      Biome.IceCavern,
+      Biome.MoltenCore,
+    ]);
+    scene.setBiomeMechanicsConfig({
+      voidRift: { gravityPullCadenceSteps: 1 },
+    });
+    scene.setRng(() => 0.8); // tie-break toward vertical pull (up) at col10,row25
+    scene.enterPhase("playing");
+    expect(scene.getCurrentBiome()).toBe(Biome.VoidRift);
+
+    const snake = scene.getSnake()!;
+    snake.reset({ col: 10, row: 25 }, "right", 1);
+    snake.getTicker().setInterval(100);
+    snake.bufferDirection("down"); // opposite of upcoming pull (up) -> rejected
+
+    scene.update(0, 100);
+
+    expect(scene.getPhase()).toBe("playing");
+    expect(snake.getDirection()).toBe("right");
+    // Without no-op protection, gravity would have pulled this up to row 24.
+    expect(snake.getHeadPosition()).toEqual({ col: 11, row: 25 });
+  });
+
+  it("rejects opposite-to-pull input before movement in Void Rift", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.setBiomeCycleOrder([
+      Biome.VoidRift,
+      Biome.NeonCity,
+      Biome.IceCavern,
+      Biome.MoltenCore,
+    ]);
+    scene.setBiomeMechanicsConfig({
+      voidRift: { gravityPullCadenceSteps: 999_999 },
+    });
+    scene.enterPhase("playing");
+    expect(scene.getCurrentBiome()).toBe(Biome.VoidRift);
+
+    const snake = scene.getSnake()!;
+    snake.reset({ col: 10, row: 10 }, "up", 3); // pull direction here is RIGHT
+    snake.getTicker().setInterval(100);
+    snake.bufferDirection("left"); // opposite to pull; should be ignored
+
+    scene.update(0, 100);
+
+    expect(scene.getPhase()).toBe("playing");
+    expect(snake.getDirection()).toBe("up");
+    expect(snake.getHeadPosition()).toEqual({ col: 10, row: 9 });
+  });
+
+  it("treats opposite-to-pull input as a protected no-op when gravity is due", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.setBiomeCycleOrder([
+      Biome.VoidRift,
+      Biome.NeonCity,
+      Biome.IceCavern,
+      Biome.MoltenCore,
+    ]);
+    scene.setBiomeMechanicsConfig({
+      voidRift: { gravityPullCadenceSteps: 1 },
+    });
+    scene.enterPhase("playing");
+    expect(scene.getCurrentBiome()).toBe(Biome.VoidRift);
+
+    const snake = scene.getSnake()!;
+    snake.reset({ col: 10, row: 10 }, "up", 3); // pull is RIGHT from this position
+    snake.getTicker().setInterval(100);
+    snake.bufferDirection("left"); // opposite to pull; should become protected no-op
+
+    scene.update(0, 100);
+
+    expect(scene.getPhase()).toBe("playing");
+    expect(snake.getDirection()).toBe("up");
+    // Without protection, gravity would have nudged this to col 11.
+    expect(snake.getHeadPosition()).toEqual({ col: 10, row: 9 });
   });
 
   it("resets Void Rift pull cadence when the biome is re-entered", () => {

@@ -221,6 +221,26 @@ describe("GameBridge", () => {
     expect(bridge.getState().highScore).toBe(200);
   });
 
+  it("resetRun accepts a custom starting biome and visit stats", () => {
+    bridge.resetRun({
+      currentBiome: Biome.VoidRift,
+      biomeVisitStats: {
+        [Biome.NeonCity]: 0,
+        [Biome.IceCavern]: 0,
+        [Biome.MoltenCore]: 0,
+        [Biome.VoidRift]: 1,
+      },
+    });
+
+    expect(bridge.getState().currentBiome).toBe(Biome.VoidRift);
+    expect(bridge.getState().biomeVisitStats).toEqual({
+      [Biome.NeonCity]: 0,
+      [Biome.IceCavern]: 0,
+      [Biome.MoltenCore]: 0,
+      [Biome.VoidRift]: 1,
+    });
+  });
+
   // ── on / off ───────────────────────────────────────────────
 
   it("off removes a listener", () => {

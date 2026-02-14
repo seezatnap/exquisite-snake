@@ -35,6 +35,8 @@ const KEY_DIRECTION_MAP: Record<string, Direction> = {
   KeyD: "right",
 };
 
+type DirectionInputGuard = (dir: Direction) => boolean;
+
 // ── Snake entity ─────────────────────────────────────────────────
 
 export class Snake {
@@ -79,6 +81,12 @@ export class Snake {
 
   /** Stored keyboard handler reference for cleanup in destroy(). */
   private keydownHandler: ((event: { code: string }) => void) | null = null;
+
+  /** Optional scene-provided guard to reject biome-specific direction inputs. */
+  private directionInputGuard: DirectionInputGuard | null = null;
+
+  /** Whether an opposite-direction input was rejected since the last consumed step. */
+  private rejectedOppositeDirectionInput = false;
 
   constructor(
     scene: Phaser.Scene,
@@ -181,6 +189,10 @@ export class Snake {
    * - It's the same as the last buffered direction (or current direction)
    */
   bufferDirection(dir: Direction): void {
+    if (this.directionInputGuard && !this.directionInputGuard(dir)) {
+      this.rejectedOppositeDirectionInput = true;
+      return;
+    }
     if (this.inputBuffer.length >= INPUT_BUFFER_SIZE) return;
 
     const lastDir =
@@ -188,10 +200,31 @@ export class Snake {
         ? this.inputBuffer[this.inputBuffer.length - 1]
         : this.pendingTurn ?? this.direction;
 
-    // Reject same direction or opposite (180°)
-    if (dir === lastDir || dir === oppositeDirection(lastDir)) return;
+    // Reject same direction.
+    if (dir === lastDir) return;
+    // Reject opposite (180°) and mark it so callers can treat it as a no-op.
+    if (dir === oppositeDirection(lastDir)) {
+      this.rejectedOppositeDirectionInput = true;
+      return;
+    }
 
     this.inputBuffer.push(dir);
+  }
+
+  /** Install/remove a scene-provided direction guard. */
+  setDirectionInputGuard(guard: DirectionInputGuard | null): void {
+    this.directionInputGuard = guard;
+  }
+
+  /**
+   * Consume and clear whether an opposite-direction input was rejected.
+   *
+   * Call once per gameplay step to treat rejected opposite turns as explicit no-ops.
+   */
+  consumeRejectedOppositeDirectionInput(): boolean {
+    const rejected = this.rejectedOppositeDirectionInput;
+    this.rejectedOppositeDirectionInput = false;
+    return rejected;
   }
 
   /** Configure how many extra tiles to slide before each queued turn applies. */
@@ -349,6 +382,18 @@ export class Snake {
     return this.direction;
   }
 
+  /**
+   * Whether a direction is currently queued to be applied on a future step.
+   *
+   * Includes both the immediate input buffer and a pending delayed-turn state.
+   */
+  hasQueuedDirection(dir: Direction): boolean {
+    if (this.pendingTurn === dir) {
+      return true;
+    }
+    return this.inputBuffer.includes(dir);
+  }
+
   /** Check if the given grid position overlaps any body segment (not head). */
   isOnBody(pos: GridPos): boolean {
     for (let i = 1; i < this.segments.length; i++) {
@@ -396,6 +441,8 @@ export class Snake {
     }
     this.touchInput?.detach();
     this.touchInput = null;
+    this.directionInputGuard = null;
+    this.rejectedOppositeDirectionInput = false;
     for (const sprite of this.sprites) {
       sprite.destroy();
     }
@@ -424,6 +471,7 @@ export class Snake {
     this.pendingTurn = null;
     this.pendingTurnSlideTiles = 0;
     this.pendingGrowth = 0;
+    this.rejectedOppositeDirectionInput = false;
     this.ticker.reset();
 
     // Build new segments
