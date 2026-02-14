@@ -1,9 +1,13 @@
 import type { Biome } from "./BiomeManager";
+import { GRID_COLS, GRID_ROWS } from "../config";
 import type { GridPos } from "../utils/grid";
 import {
   MAGNET_RADIUS_TILES,
   MAGNET_SPEED_BONUS_PER_SEGMENT,
   PARASITE_MAX_SEGMENTS,
+  PARASITE_PICKUP_SPAWN_CHANCE_PER_INTERVAL,
+  PARASITE_PICKUP_SPAWN_INTERVAL_MS,
+  PARASITE_TYPES,
   SPLITTER_OBSTACLE_INTERVAL_MS,
   createParasiteRuntimeState,
   cloneParasiteRuntimeState,
@@ -76,6 +80,13 @@ export interface ParasiteBiomeTransitionContext {
   to: Biome;
 }
 
+export interface ParasitePickupSpawnContext {
+  snakeSegments: readonly GridPos[];
+  foodPosition: GridPos | null;
+  obstaclePositions?: readonly GridPos[];
+  rng?: () => number;
+}
+
 /**
  * Parasite system orchestrator.
  *
@@ -107,6 +118,50 @@ export class ParasiteManager {
     this.state.timers.pickupSpawnElapsedMs += safeDelta;
     this.state.timers.splitterObstacleElapsedMs += safeDelta;
     this.state.timers.glowPulseElapsedMs += safeDelta;
+  }
+
+  /**
+   * Spawn hook for on-board parasite pickups.
+   *
+   * Pickups are attempted on a fixed cadence with probability checks,
+   * and only occupy cells that are empty of snake, food, and obstacles.
+   */
+  updatePickupSpawn(context: ParasitePickupSpawnContext): void {
+    if (this.state.pickup) {
+      return;
+    }
+
+    const spawnAttempts = Math.floor(
+      this.state.timers.pickupSpawnElapsedMs / PARASITE_PICKUP_SPAWN_INTERVAL_MS,
+    );
+    if (spawnAttempts <= 0) {
+      return;
+    }
+
+    this.state.timers.pickupSpawnElapsedMs -=
+      spawnAttempts * PARASITE_PICKUP_SPAWN_INTERVAL_MS;
+
+    const rng = context.rng ?? Math.random;
+    for (let attempt = 0; attempt < spawnAttempts; attempt++) {
+      if (this.sampleUnit(rng) >= PARASITE_PICKUP_SPAWN_CHANCE_PER_INTERVAL) {
+        continue;
+      }
+
+      const position = this.pickRandomPickupCell(context, rng);
+      if (!position) {
+        return;
+      }
+
+      const type = this.pickRandomParasiteType(rng);
+      this.state.pickup = {
+        id: `pickup-${this.state.nextEntityId}`,
+        type,
+        position,
+        spawnedAtMs: this.state.timers.glowPulseElapsedMs,
+      };
+      this.state.nextEntityId += 1;
+      return;
+    }
   }
 
   /**
@@ -230,5 +285,68 @@ export class ParasiteManager {
       magnetSpeedBonusPerSegment: MAGNET_SPEED_BONUS_PER_SEGMENT,
       splitterObstacleIntervalMs: SPLITTER_OBSTACLE_INTERVAL_MS,
     };
+  }
+
+  private pickRandomPickupCell(
+    context: ParasitePickupSpawnContext,
+    rng: () => number,
+  ): GridPos | null {
+    const occupied = new Set<string>();
+
+    for (const segment of context.snakeSegments) {
+      occupied.add(this.gridPosKey(segment));
+    }
+    if (context.foodPosition) {
+      occupied.add(this.gridPosKey(context.foodPosition));
+    }
+
+    for (const obstacle of this.state.splitterObstacles) {
+      occupied.add(this.gridPosKey(obstacle.position));
+    }
+
+    const externalObstacles = context.obstaclePositions ?? [];
+    for (const obstacle of externalObstacles) {
+      occupied.add(this.gridPosKey(obstacle));
+    }
+
+    const freeCells: GridPos[] = [];
+    for (let col = 0; col < GRID_COLS; col++) {
+      for (let row = 0; row < GRID_ROWS; row++) {
+        const pos = { col, row };
+        if (!occupied.has(this.gridPosKey(pos))) {
+          freeCells.push(pos);
+        }
+      }
+    }
+
+    if (freeCells.length === 0) {
+      return null;
+    }
+
+    const cellIndex = Math.floor(this.sampleUnit(rng) * freeCells.length);
+    return freeCells[cellIndex];
+  }
+
+  private pickRandomParasiteType(rng: () => number): ParasiteType {
+    const index = Math.floor(this.sampleUnit(rng) * PARASITE_TYPES.length);
+    return PARASITE_TYPES[index] ?? PARASITE_TYPES[PARASITE_TYPES.length - 1];
+  }
+
+  private sampleUnit(rng: () => number): number {
+    const raw = rng();
+    if (!Number.isFinite(raw)) {
+      return 0;
+    }
+    if (raw <= 0) {
+      return 0;
+    }
+    if (raw >= 1) {
+      return 0.999999;
+    }
+    return raw;
+  }
+
+  private gridPosKey(pos: GridPos): string {
+    return `${pos.col}:${pos.row}`;
   }
 }

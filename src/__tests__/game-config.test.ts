@@ -84,6 +84,7 @@ describe("TEXTURE_KEYS", () => {
     expect(TEXTURE_KEYS.SNAKE_HEAD).toBe("snake-head");
     expect(TEXTURE_KEYS.SNAKE_BODY).toBe("snake-body");
     expect(TEXTURE_KEYS.FOOD).toBe("food");
+    expect(TEXTURE_KEYS.PARASITE_PICKUP).toBe("parasite-pickup");
     expect(TEXTURE_KEYS.PARTICLE).toBe("particle");
   });
 

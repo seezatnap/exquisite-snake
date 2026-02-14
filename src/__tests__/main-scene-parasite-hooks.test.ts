@@ -1,6 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { gameBridge } from "@/game/bridge";
+import { TEXTURE_KEYS } from "@/game/config";
 import { GRID_COLS } from "@/game/config";
+import { PARASITE_PICKUP_SPAWN_INTERVAL_MS } from "@/game/entities/Parasite";
 import { Biome } from "@/game/systems/BiomeManager";
 
 function createMockGraphics() {
@@ -23,6 +25,10 @@ function createMockSprite() {
     destroy: vi.fn(),
     setPosition: vi.fn(),
     setDepth: vi.fn(),
+    setVisible: vi.fn(),
+    setScale: vi.fn(),
+    setTint: vi.fn(),
+    setTexture: vi.fn(),
     x: 0,
     y: 0,
   };
@@ -215,5 +221,28 @@ describe("MainScene parasite hook wiring", () => {
     });
     expect(onEnter).toHaveBeenCalledWith(Biome.IceCavern);
   });
-});
 
+  it("spawns parasite pickups on empty cells and renders with a distinct texture key", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.setRng(() => 0);
+    scene.enterPhase("playing");
+
+    scene.update(0, PARASITE_PICKUP_SPAWN_INTERVAL_MS);
+
+    const pickup = scene.getParasiteManager().getState().pickup;
+    expect(pickup).not.toBeNull();
+    expect(scene.getSnake()!.isOnSnake(pickup!.position)).toBe(false);
+    expect(pickup!.position).not.toEqual(scene.getFood()!.getPosition());
+
+    const spriteCalls = (
+      scene.add.sprite as ReturnType<typeof vi.fn>
+    ).mock.calls;
+    expect(
+      spriteCalls.some(([, , texture]) => texture === TEXTURE_KEYS.PARASITE_PICKUP),
+    ).toBe(true);
+    expect(
+      spriteCalls.some(([, , texture]) => texture === TEXTURE_KEYS.FOOD),
+    ).toBe(true);
+  });
+});

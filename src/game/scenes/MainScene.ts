@@ -6,6 +6,7 @@ import {
   GRID_COLS,
   GRID_ROWS,
   COLORS,
+  TEXTURE_KEYS,
   RENDER_DEPTH,
 } from "../config";
 import { gameBridge, type GamePhase } from "../bridge";
@@ -22,6 +23,7 @@ import {
 import { Snake } from "../entities/Snake";
 import { Food } from "../entities/Food";
 import { EchoGhost, type EchoGhostSnapshot } from "../entities/EchoGhost";
+import { PARASITE_COLORS, type ParasitePickup } from "../entities/Parasite";
 import { emitFoodParticles, shakeCamera } from "../systems/effects";
 import {
   Biome,
@@ -205,6 +207,9 @@ export class MainScene extends Phaser.Scene {
   /** Delayed playback of historical snake path for Echo Ghost mechanics. */
   private echoGhost: EchoGhost | null = null;
 
+  /** Sprite used to render the currently active parasite pickup (if any). */
+  private parasitePickupSprite: Phaser.GameObjects.Sprite | null = null;
+
   /** Biome rotation/timing owner for the current run. */
   private readonly biomeManager = new BiomeManager();
 
@@ -364,6 +369,8 @@ export class MainScene extends Phaser.Scene {
 
       this.echoGhost.recordPath(this.snake.getSegments());
     }
+
+    this.updateParasitePickup();
   }
 
   // ── Phase management ────────────────────────────────────────
@@ -440,9 +447,11 @@ export class MainScene extends Phaser.Scene {
     this.snake.setupTouchInput();
     this.food = new Food(this, this.snake, this.rng);
     this.echoGhost = new EchoGhost();
+    this.ensureParasitePickupSprite();
     this.echoGhost.recordPath(this.snake.getSegments());
     this.ensureEchoGhostGraphics();
     this.clearEchoGhostVisualState();
+    this.syncParasitePickupSprite(null, 0);
   }
 
   /** Destroy existing snake and food entities. */
@@ -459,6 +468,7 @@ export class MainScene extends Phaser.Scene {
       this.echoGhost.reset();
       this.echoGhost = null;
     }
+    this.destroyParasitePickupSprite();
     this.destroyEchoGhostVisuals();
   }
 
@@ -932,6 +942,74 @@ export class MainScene extends Phaser.Scene {
     }
   }
 
+  private updateParasitePickup(): void {
+    if (!this.snake || !this.food) {
+      this.syncParasitePickupSprite(null, 0);
+      return;
+    }
+
+    this.parasiteManager.updatePickupSpawn({
+      snakeSegments: this.snake.getSegments(),
+      foodPosition: this.food.getPosition(),
+      obstaclePositions: this.getParasitePickupBlockedCells(),
+      rng: this.rng,
+    });
+
+    const parasiteState = this.parasiteManager.getState();
+    this.syncParasitePickupSprite(
+      parasiteState.pickup,
+      parasiteState.timers.glowPulseElapsedMs,
+    );
+  }
+
+  private getParasitePickupBlockedCells(): GridPos[] {
+    return Array.from(this.moltenLavaPools.values(), (pool) => ({ ...pool }));
+  }
+
+  private ensureParasitePickupSprite(): void {
+    if (this.parasitePickupSprite) {
+      return;
+    }
+
+    this.parasitePickupSprite = this.add.sprite(
+      0,
+      0,
+      TEXTURE_KEYS.PARASITE_PICKUP,
+    );
+    this.parasitePickupSprite.setDepth?.(RENDER_DEPTH.PARASITE_PICKUP);
+    this.parasitePickupSprite.setVisible?.(false);
+  }
+
+  private syncParasitePickupSprite(
+    pickup: ParasitePickup | null,
+    glowElapsedMs: number,
+  ): void {
+    this.ensureParasitePickupSprite();
+    if (!this.parasitePickupSprite) {
+      return;
+    }
+
+    if (!pickup) {
+      this.parasitePickupSprite.setVisible?.(false);
+      return;
+    }
+
+    const px = gridToPixel(pickup.position);
+    const pulse = 1 + Math.sin((glowElapsedMs / 260) * Math.PI * 2) * 0.08;
+
+    this.parasitePickupSprite.setTexture?.(TEXTURE_KEYS.PARASITE_PICKUP);
+    this.parasitePickupSprite.setPosition?.(px.x, px.y);
+    this.parasitePickupSprite.setTint?.(PARASITE_COLORS[pickup.type]);
+    this.parasitePickupSprite.setScale?.(pulse);
+    this.parasitePickupSprite.setDepth?.(RENDER_DEPTH.PARASITE_PICKUP);
+    this.parasitePickupSprite.setVisible?.(true);
+  }
+
+  private destroyParasitePickupSprite(): void {
+    this.parasitePickupSprite?.destroy?.();
+    this.parasitePickupSprite = null;
+  }
+
   private queueDelayedEchoGhostFoodBurst(
     targetSampleTimestampMs: number,
     delayMs: number,
@@ -1163,6 +1241,7 @@ export class MainScene extends Phaser.Scene {
   private syncGameplayLayering(): void {
     this.gridGraphics?.setDepth?.(RENDER_DEPTH.BIOME_GRID);
     this.food?.getSprite()?.setDepth?.(RENDER_DEPTH.FOOD);
+    this.parasitePickupSprite?.setDepth?.(RENDER_DEPTH.PARASITE_PICKUP);
     this.echoGhostGraphics?.setDepth?.(ECHO_GHOST_RENDER_DEPTH);
     this.snake?.setRenderDepth(RENDER_DEPTH.SNAKE);
     this.children?.depthSort?.();

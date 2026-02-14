@@ -26,6 +26,12 @@ export const MAGNET_RADIUS_TILES = 2;
 /** Additional snake speed multiplier per attached Magnet segment. */
 export const MAGNET_SPEED_BONUS_PER_SEGMENT = 0.1;
 
+/** Milliseconds between parasite pickup spawn attempts. */
+export const PARASITE_PICKUP_SPAWN_INTERVAL_MS = 3_000;
+
+/** Probability [0, 1] that a spawn attempt succeeds once interval elapses. */
+export const PARASITE_PICKUP_SPAWN_CHANCE_PER_INTERVAL = 0.3;
+
 /** Splitter obstacle spawn cadence while Splitter is attached. */
 export const SPLITTER_OBSTACLE_INTERVAL_MS = 10_000;
 
@@ -152,4 +158,3 @@ export function countActiveParasitesByType(
 ): number {
   return state.activeSegments.filter((segment) => segment.type === type).length;
 }
-
