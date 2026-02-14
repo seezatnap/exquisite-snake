@@ -109,13 +109,17 @@ export class MainScene extends Phaser.Scene {
       this.echoGhost?.writePositions(this.snake.getSegments());
       this.ghostProgressTicks += 1;
 
-      const replayReady = this.echoGhost?.isReplayReady() ?? false;
-      if (!this.isGhostReplayActive && replayReady) {
+      this.echoGhost?.advanceReplayProgress();
+
+      const replayState = this.echoGhost?.getReplayState();
+      if (!this.isGhostReplayActive && replayState === "active") {
         this.isGhostReplayActive = true;
       }
-
-      if (this.isGhostReplayActive) {
+      if (replayState === "active") {
         this.ghostReplayTicks += 1;
+      }
+      if (replayState === "exhausted") {
+        this.isGhostReplayActive = false;
       }
 
       // Ensure replay output is being generated only from the recorded path.

@@ -1,6 +1,9 @@
 import { DEFAULT_MOVE_INTERVAL_MS, type GridPos } from "../utils/grid";
 
 export const DEFAULT_ECHO_DELAY_MS = 5000;
+export const DEFAULT_ECHO_FADE_MS = 1000;
+
+type ReplayState = "waiting" | "active" | "fading" | "exhausted";
 
 type Snapshot = readonly GridPos[];
 
@@ -17,17 +20,25 @@ export class EchoGhost {
   private readonly tickIntervalMs: number;
   private readonly delayMs: number;
   private readonly delayTicks: number;
+  private readonly fadeMs: number;
+  private readonly fadeTicks: number;
   private readonly buffer: Array<Snapshot | null>;
   private writeIndex = 0;
   private writeCount = 0;
+  private replayState: ReplayState = "waiting";
+  private replayTicks = 0;
+  private fadeTicksElapsed = 0;
 
   constructor(
     tickIntervalMs: number = DEFAULT_MOVE_INTERVAL_MS,
     delayMs: number = DEFAULT_ECHO_DELAY_MS,
+    fadeMs: number = DEFAULT_ECHO_FADE_MS,
   ) {
     this.tickIntervalMs = Math.max(1, tickIntervalMs);
     this.delayMs = Math.max(1, delayMs);
+    this.fadeMs = Math.max(1, fadeMs);
     this.delayTicks = Math.max(1, Math.ceil(this.delayMs / this.tickIntervalMs));
+    this.fadeTicks = Math.max(1, Math.ceil(this.fadeMs / this.tickIntervalMs));
     this.buffer = new Array(this.delayTicks).fill(null);
   }
 
@@ -40,7 +51,7 @@ export class EchoGhost {
 
   /** Read the delayed ghost trail if replay delay has elapsed; otherwise returns empty. */
   readDelayedTrail(): GridPos[] {
-    if (!this.isReplayReady()) {
+    if (!this.isReplayActive()) {
       return [];
     }
 
@@ -48,6 +59,70 @@ export class EchoGhost {
     const delayed = this.buffer[delayedIndex];
 
     return delayed ? clonePath(delayed) : [];
+  }
+
+  /**
+   * Progress one replay-frame. Must be called once per movement tick after a
+   * ghost snapshot is written to keep playback bounded.
+   */
+  advanceReplayProgress(): void {
+    if (this.replayState === "exhausted" || !this.isReplayReady()) {
+      return;
+    }
+
+    if (this.replayState === "waiting") {
+      this.replayState = "active";
+    }
+
+    if (this.replayState === "active") {
+      this.replayTicks += 1;
+      if (this.replayTicks > this.delayTicks) {
+        this.replayState = "fading";
+        this.fadeTicksElapsed = 1;
+        if (this.fadeTicksElapsed >= this.fadeTicks) {
+          this.replayState = "exhausted";
+        }
+      }
+      return;
+    }
+
+    if (this.replayState === "fading") {
+      this.fadeTicksElapsed += 1;
+      if (this.fadeTicksElapsed >= this.fadeTicks) {
+        this.replayState = "exhausted";
+      }
+    }
+  }
+
+  /** Get the current playback lifecycle state. */
+  getReplayState(): ReplayState {
+    return this.replayState;
+  }
+
+  /** Whether the ghost should still be rendered as a trail this tick. */
+  isReplayActive(): boolean {
+    return this.replayState === "active";
+  }
+
+  /** Whether the replay has begun and is currently fading out. */
+  isReplayFading(): boolean {
+    return this.replayState === "fading";
+  }
+
+  /** Whether the replay trail and any growth are fully exhausted. */
+  isReplayExhausted(): boolean {
+    return this.replayState === "exhausted";
+  }
+
+  /** Alpha value to apply while fading out the ghost. Returns 1 during active replay. */
+  getReplayOpacity(): number {
+    if (this.replayState === "active") {
+      return 1;
+    }
+    if (this.replayState === "fading") {
+      return Math.max(0, 1 - this.fadeTicksElapsed / this.fadeTicks);
+    }
+    return 0;
   }
 
   /** Whether enough ticks have been recorded to start replay output. */
@@ -85,6 +160,9 @@ export class EchoGhost {
     this.writeIndex = 0;
     this.writeCount = 0;
     this.buffer.fill(null);
+    this.replayState = "waiting";
+    this.replayTicks = 0;
+    this.fadeTicksElapsed = 0;
   }
 
   private computeReadIndex(): number {
@@ -92,4 +170,3 @@ export class EchoGhost {
     return ((rawIndex % this.buffer.length) + this.buffer.length) % this.buffer.length;
   }
 }
-
