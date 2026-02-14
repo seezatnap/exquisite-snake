@@ -15,17 +15,17 @@
 
 ## Integration and Rendering
 
-- [ ] (#8) Integrate collision handling for parasite effects: splitter obstacles kill on contact, shield absorption resolves before game-over finalization, and collision ordering remains deterministic with existing wall/self checks [5 pts] (blocked by #5, #7)
+- [A] (#8) Integrate collision handling for parasite effects: splitter obstacles kill on contact, shield absorption resolves before game-over finalization, and collision ordering remains deterministic with existing wall/self checks [5 pts] (blocked by #5, #7)
 - [x] (#9) Add parasite segment visuals on the snake with pulsing glow and tiny type icon overlays (Magnet/Shield/Splitter), ensuring proper layering with existing snake and ghost rendering [5 pts] (blocked by #3) (C)
-- [ ] (#10) Enforce Echo Ghost exclusions so ghost entities neither collide with parasite pickups/obstacles nor receive parasite-driven effects (magnet pull, shield absorb, splitter multiplier) [5 pts] (blocked by #4, #5, #6, #7)
+- [A] (#10) Enforce Echo Ghost exclusions so ghost entities neither collide with parasite pickups/obstacles nor receive parasite-driven effects (magnet pull, shield absorb, splitter multiplier) [5 pts] (blocked by #4, #5, #6, #7)
 
 ## HUD and End Screen
 
-- [ ] (#11) Update HUD parasite inventory to display up to 3 active parasite icons with type indicators and live updates on attach/shed/break events, and add parasites-collected to Game Over stats output [5 pts] (blocked by #3, #9)
+- [B] (#11) Update HUD parasite inventory to display up to 3 active parasite icons with type indicators and live updates on attach/shed/break events, and add parasites-collected to Game Over stats output [5 pts] (blocked by #3, #9)
 
 ## Testing and QA
 
-- [ ] (#12) Add automated tests for ParasiteManager and ability rules: spawn-on-empty validation, FIFO cap behavior, magnet pull and speed stacking, shield absorb plus blocked-food state transitions, and splitter score multiplier [5 pts] (blocked by #4, #5, #6)
+- [B] (#12) Add automated tests for ParasiteManager and ability rules: spawn-on-empty validation, FIFO cap behavior, magnet pull and speed stacking, shield absorb plus blocked-food state transitions, and splitter score multiplier [5 pts] (blocked by #4, #5, #6)
 - [ ] (#13) Add integration/regression tests and QA checklist for splitter obstacle lifecycle and lethal collisions, Echo Ghost exclusion rules, HUD inventory updates, and Game Over parasites-collected display [5 pts] (blocked by #8, #10, #11)
 
 ## Follow-up tasks (from sprint review)
@@ -34,8 +34,8 @@
 
 ## Follow-up tasks (from sprint review)
 - [x] (#16) Complete runtime pickup consumption in `MainScene` by consuming when the snake head enters a pickup cell, removing the consumed pickup sprite, and applying inventory/FIFO plus parasites-collected updates from `ParasiteManager`. (C)
-- [ ] (#17) Update food respawn placement to exclude active parasite pickup cells (not just snake cells), and add regression coverage that food and parasite pickups never overlap after food is eaten.
+- [C] (#17) Update food respawn placement to exclude active parasite pickup cells (not just snake cells), and add regression coverage that food and parasite pickups never overlap after food is eaten.
 
 ## Follow-up tasks (from sprint review)
 - [ ] (#18) Extend food respawn placement to exclude active splitter-obstacle and Molten Core lava cells (not just snake), and add a regression test that post-eat food respawns never land on hazard/obstacle tiles. (blocked by #17)
-- [ ] (#19) Update Molten Core lava spawn candidate filtering to exclude active parasite pickup and splitter-obstacle cells, and add integration coverage that lava and parasite entities never overlap.
+- [C] (#19) Update Molten Core lava spawn candidate filtering to exclude active parasite pickup and splitter-obstacle cells, and add integration coverage that lava and parasite entities never overlap.
