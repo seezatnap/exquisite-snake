@@ -413,6 +413,7 @@ export class MainScene extends Phaser.Scene {
   endRun(): void {
     shakeCamera(this);
     this.biomeManager.stopRun();
+    this.parasiteManager.clearSplitterObstacles();
     this.resetMoltenCoreState();
     this.clearBiomeTransitionEffect();
     this.clearBiomeShiftCountdown();
@@ -471,20 +472,24 @@ export class MainScene extends Phaser.Scene {
       return;
     }
 
-    this.parasiteManager.advanceTimers(delta);
-    const spawn = this.parasiteManager.spawnPickupIfDue({
+    const timerTick = this.parasiteManager.advanceTimers(delta);
+    const spawnContext = {
       snakeSegments: this.snake.getSegments(),
       foodPosition: this.food.getPosition(),
       obstaclePositions: this.getLiveObstaclePositions(),
       rng: this.rng,
       nowMs: gameBridge.getState().elapsedTime,
-    });
+    };
+    const spawn = this.parasiteManager.spawnPickupIfDue(spawnContext);
 
-    if (!spawn) {
-      return;
+    if (spawn) {
+      this.renderSpawnedParasitePickup(spawn);
     }
 
-    this.renderSpawnedParasitePickup(spawn);
+    this.parasiteManager.spawnSplitterObstaclesForDueTicks(
+      spawnContext,
+      timerTick.splitterTicksDue,
+    );
   }
 
   private getLiveObstaclePositions(): GridPos[] {
@@ -731,6 +736,7 @@ export class MainScene extends Phaser.Scene {
     if (biome === Biome.MoltenCore) {
       this.resetMoltenCoreState();
     }
+    this.parasiteManager.clearSplitterObstacles();
 
     gameBridge.emitBiomeExit(biome);
     this.events?.emit?.("biomeExit", biome);

@@ -123,6 +123,8 @@ export interface ParasiteSpawnedPickup {
   render: ParasitePickupRenderIdentity;
 }
 
+export type ParasiteObstacleSpawnContext = ParasitePickupSpawnContext;
+
 export interface ParasitePickupConsumptionResult {
   consumedPickup: ParasitePickupState;
   attachedSegment: ParasiteSegmentState;
@@ -302,6 +304,13 @@ function sampleIndex(length: number, rng: () => number): number {
 
 function gridPosKey(position: GridPos): string {
   return `${position.col}:${position.row}`;
+}
+
+let splitterObstacleIdSequence = 0;
+
+function createSplitterObstacleId(): string {
+  splitterObstacleIdSequence += 1;
+  return `splitter-obstacle-${splitterObstacleIdSequence}`;
 }
 
 /**
@@ -490,6 +499,49 @@ export class ParasiteManager {
       activeSegments: this.getActiveSegments(),
       parasitesCollected: this.state.parasitesCollected,
     };
+  }
+
+  spawnSplitterObstaclesForDueTicks(
+    context: ParasiteObstacleSpawnContext,
+    splitterTicksDue: number,
+  ): ParasiteObstacleState[] {
+    const safeTicksDue = Number.isFinite(splitterTicksDue)
+      ? Math.max(0, Math.floor(splitterTicksDue))
+      : 0;
+    if (safeTicksDue <= 0 || !this.hasActiveSegmentType(ParasiteType.Splitter)) {
+      return [];
+    }
+
+    const rng = context.rng ?? Math.random;
+    const spawnedAtMs = normalizeTimestampMs(
+      context.nowMs ?? this.state.timers.elapsedRunMs,
+    );
+    const sourceSegmentId = this.state.inventory.segments.find((segment) =>
+      segment.type === ParasiteType.Splitter
+    )?.id ?? null;
+    const spawned: ParasiteObstacleState[] = [];
+
+    for (let tick = 0; tick < safeTicksDue; tick += 1) {
+      const candidates = this.getPickupSpawnCandidates(context);
+      if (candidates.length === 0) {
+        continue;
+      }
+
+      const obstacle: ParasiteObstacleState = {
+        id: createSplitterObstacleId(),
+        position: cloneGridPos(candidates[sampleIndex(candidates.length, rng)]),
+        spawnedAtMs,
+        sourceSegmentId,
+      };
+      this.state.splitterObstacles.push(obstacle);
+      spawned.push(cloneObstacleState(obstacle));
+    }
+
+    return spawned;
+  }
+
+  clearSplitterObstacles(): void {
+    this.state.splitterObstacles = [];
   }
 
   advanceTimers(deltaMs: number): ParasiteTimerTickResult {

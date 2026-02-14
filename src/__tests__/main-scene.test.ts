@@ -8,7 +8,10 @@ import {
   PARASITE_PICKUP_SPAWN_INTERVAL_MS,
   ParasiteManager,
 } from "@/game/systems/ParasiteManager";
-import { ParasiteType } from "@/game/entities/Parasite";
+import {
+  PARASITE_SPLITTER_INTERVAL_MS,
+  ParasiteType,
+} from "@/game/entities/Parasite";
 import { gridToPixel } from "@/game/utils/grid";
 
 const ROOT = path.resolve(__dirname, "../..");
@@ -515,6 +518,100 @@ describe("MainScene", () => {
     expect(parasiteState.pickups).toEqual([]);
     expect(parasiteState.timers.pickupSpawnElapsedMs).toBe(0);
     expect(getParasitePickupSpriteMap(scene).size).toBe(0);
+  });
+
+  it("spawns splitter obstacles every 10 seconds while splitter is attached", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.setRng(() => 0);
+    scene.enterPhase("playing");
+    scene.getSnake()!.getTicker().setInterval(1_000_000);
+    const parasiteManager = getParasiteManager(scene);
+    const seeded = parasiteManager.getState();
+    seeded.inventory.segments.push({
+      id: "segment-splitter",
+      type: ParasiteType.Splitter,
+      attachedAtMs: 0,
+      sourcePickupId: null,
+    });
+    parasiteManager.replaceState(seeded);
+
+    scene.update(0, PARASITE_SPLITTER_INTERVAL_MS - 1);
+    expect(parasiteManager.getState().splitterObstacles).toHaveLength(0);
+
+    scene.update(
+      PARASITE_SPLITTER_INTERVAL_MS - 1,
+      1,
+    );
+    expect(parasiteManager.getState().splitterObstacles).toHaveLength(1);
+
+    scene.update(
+      PARASITE_SPLITTER_INTERVAL_MS,
+      PARASITE_SPLITTER_INTERVAL_MS * 2,
+    );
+    const splitterObstacles = parasiteManager.getState().splitterObstacles;
+    expect(splitterObstacles).toHaveLength(3);
+    expect(
+      new Set(
+        splitterObstacles.map((obstacle) => `${obstacle.position.col}:${obstacle.position.row}`),
+      ).size,
+    ).toBe(3);
+
+    const snake = scene.getSnake()!;
+    const food = scene.getFood()!.getPosition();
+    for (const obstacle of splitterObstacles) {
+      expect(snake.isOnSnake(obstacle.position)).toBe(false);
+      expect(obstacle.position).not.toEqual(food);
+    }
+
+    scene.update(PARASITE_SPLITTER_INTERVAL_MS * 3, 500);
+    expect(parasiteManager.getState().splitterObstacles).toHaveLength(3);
+  });
+
+  it("clears splitter obstacles when a biome exits", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.enterPhase("playing");
+    const parasiteManager = getParasiteManager(scene);
+    const seeded = parasiteManager.getState();
+    seeded.splitterObstacles = [
+      {
+        id: "splitter-obstacle-1",
+        position: { col: 4, row: 4 },
+        spawnedAtMs: 10_000,
+        sourceSegmentId: "segment-1",
+      },
+    ];
+    parasiteManager.replaceState(seeded);
+
+    (
+      scene as unknown as {
+        handleBiomeExit: (biome: Biome) => void;
+      }
+    ).handleBiomeExit(Biome.NeonCity);
+
+    expect(parasiteManager.getState().splitterObstacles).toEqual([]);
+  });
+
+  it("clears splitter obstacles when the run ends", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.enterPhase("playing");
+    const parasiteManager = getParasiteManager(scene);
+    const seeded = parasiteManager.getState();
+    seeded.splitterObstacles = [
+      {
+        id: "splitter-obstacle-2",
+        position: { col: 8, row: 8 },
+        spawnedAtMs: 10_000,
+        sourceSegmentId: "segment-2",
+      },
+    ];
+    parasiteManager.replaceState(seeded);
+
+    scene.endRun();
+
+    expect(parasiteManager.getState().splitterObstacles).toEqual([]);
   });
 
   // ── Biome integration ──────────────────────────────────────
