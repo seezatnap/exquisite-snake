@@ -25,6 +25,10 @@ import { emitFoodParticles, shakeCamera } from "../systems/effects";
 import { GhostFoodBurstQueue } from "../systems/GhostFoodBurstQueue";
 import { EchoGhostRenderer } from "../systems/EchoGhostRenderer";
 import {
+  EchoRewindHook,
+  type EchoStateSnapshot,
+} from "../systems/RewindHook";
+import {
   Biome,
   BIOME_CONFIG,
   BiomeManager,
@@ -189,6 +193,9 @@ export class MainScene extends Phaser.Scene {
 
   /** Visual renderer for the echo ghost trail. */
   private echoGhostRenderer: EchoGhostRenderer | null = null;
+
+  /** Aggregated rewind hook for all echo-ghost-related state (Phase 6). */
+  private echoRewindHook = new EchoRewindHook(null, null);
 
   /** Biome rotation/timing owner for the current run. */
   private readonly biomeManager = new BiomeManager();
@@ -406,6 +413,7 @@ export class MainScene extends Phaser.Scene {
     this.echoGhost = new EchoGhost();
     this.ghostFoodBurstQueue = new GhostFoodBurstQueue();
     this.echoGhostRenderer = new EchoGhostRenderer(this);
+    this.echoRewindHook.setEntities(this.echoGhost, this.ghostFoodBurstQueue);
   }
 
   /** Destroy existing snake and food entities. */
@@ -430,6 +438,7 @@ export class MainScene extends Phaser.Scene {
       this.echoGhostRenderer.destroy();
       this.echoGhostRenderer = null;
     }
+    this.echoRewindHook.setEntities(null, null);
   }
 
   // ── Collision detection ───────────────────────────────────────
@@ -576,6 +585,21 @@ export class MainScene extends Phaser.Scene {
 
   getEchoGhostRenderer(): EchoGhostRenderer | null {
     return this.echoGhostRenderer;
+  }
+
+  /** Phase 6 integration point: get the aggregated echo rewind hook. */
+  getEchoRewindHook(): EchoRewindHook {
+    return this.echoRewindHook;
+  }
+
+  /** Convenience: snapshot all echo-ghost-related state for rewind. */
+  snapshotEchoState(): EchoStateSnapshot {
+    return this.echoRewindHook.snapshot();
+  }
+
+  /** Convenience: restore all echo-ghost-related state from a snapshot. */
+  restoreEchoState(snap: EchoStateSnapshot): void {
+    this.echoRewindHook.restore(snap);
   }
 
   // ── Arena grid ──────────────────────────────────────────────
