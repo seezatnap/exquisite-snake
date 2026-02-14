@@ -6,6 +6,9 @@ import { DEFAULT_MOVE_INTERVAL_MS } from "../utils/grid";
 /** How many milliseconds the ghost trails behind the live snake. */
 export const ECHO_DELAY_MS = 5000;
 
+/** Default fade-out duration in milliseconds. */
+export const FADE_DURATION_MS = 1000;
+
 /**
  * Derive the replay delay in ticks from the tick interval.
  * At the default 125 ms interval this yields 40 ticks.
@@ -15,6 +18,17 @@ export function delayTicks(tickIntervalMs: number): number {
 }
 
 // ── Types ────────────────────────────────────────────────────────
+
+/**
+ * Lifecycle state of the echo ghost.
+ *
+ * - `"warming"` — delay period has not yet elapsed; ghost is invisible.
+ * - `"active"`  — ghost is replaying buffered history at full opacity.
+ * - `"fading"`  — recording has stopped; ghost drains remaining frames
+ *                 while fading out.
+ * - `"inactive"` — all buffered frames exhausted after fade; ghost is gone.
+ */
+export type GhostLifecycleState = "warming" | "active" | "fading" | "inactive";
 
 /** A snapshot of the snake's segments at a single tick. */
 export interface GhostFrame {
@@ -41,6 +55,8 @@ export interface BufferSnapshot {
   readonly writeIndex: number;
   readonly count: number;
   readonly currentTick: number;
+  readonly recordingStoppedAtTick: number;
+  readonly lastRecordedTick: number;
 }
 
 // ── EchoGhost ────────────────────────────────────────────────────
@@ -72,6 +88,15 @@ export class EchoGhost implements RewindableBuffer {
   /** Total capacity of the circular buffer. */
   public readonly capacity: number;
 
+  /** Number of ticks over which the ghost fades out after recording stops. */
+  public readonly fadeDurationTicks: number;
+
+  /** The tick at which recording was stopped (or -1 if still recording). */
+  private recordingStoppedAtTick = -1;
+
+  /** The last recorded tick (highest tick with a valid frame). */
+  private lastRecordedTick = -1;
+
   /**
    * @param tickIntervalMs  Movement interval in milliseconds
    *                        (default: `DEFAULT_MOVE_INTERVAL_MS`).
@@ -96,6 +121,8 @@ export class EchoGhost implements RewindableBuffer {
       this.delayInTicks + 1,
       Math.ceil(bufferMs / tickIntervalMs),
     );
+
+    this.fadeDurationTicks = Math.max(1, Math.ceil(FADE_DURATION_MS / tickIntervalMs));
 
     this.buffer = new Array<GhostFrame | null>(this.capacity).fill(null);
   }
@@ -122,6 +149,7 @@ export class EchoGhost implements RewindableBuffer {
     if (this.count < this.capacity) {
       this.count++;
     }
+    this.lastRecordedTick = this.currentTick;
     this.currentTick++;
   }
 
@@ -192,6 +220,112 @@ export class EchoGhost implements RewindableBuffer {
     return this.frameAtTick(tick);
   }
 
+  // ── Lifecycle management ───────────────────────────────────────
+
+  /**
+   * Signal that recording has stopped (e.g. snake died or game paused).
+   * The ghost will continue replaying buffered frames and then fade out
+   * over `fadeDurationTicks` ticks.
+   *
+   * After calling this, use `advancePlayhead()` each tick to continue
+   * draining the buffer instead of `record()`.
+   *
+   * No-op if recording was already stopped.
+   */
+  stopRecording(): void {
+    if (this.recordingStoppedAtTick >= 0) return;
+    this.recordingStoppedAtTick = this.currentTick;
+  }
+
+  /**
+   * Whether recording has been stopped via `stopRecording()`.
+   */
+  isRecordingStopped(): boolean {
+    return this.recordingStoppedAtTick >= 0;
+  }
+
+  /**
+   * Advance the playhead by one tick without recording a new frame.
+   * Use this after `stopRecording()` to drain remaining buffered frames.
+   *
+   * Does nothing if recording has not been stopped yet.
+   */
+  advancePlayhead(): void {
+    if (this.recordingStoppedAtTick < 0) return;
+    this.currentTick++;
+  }
+
+  /**
+   * Return the current lifecycle state of the ghost.
+   *
+   * - `"warming"`: delay period not yet elapsed, ghost invisible.
+   * - `"active"`:  replaying buffered history at full opacity.
+   * - `"fading"`:  recording stopped, draining final frames with decreasing opacity.
+   * - `"inactive"`: all buffered frames exhausted, ghost fully gone.
+   */
+  getLifecycleState(): GhostLifecycleState {
+    // Before the delay elapses, the ghost is warming up
+    if (this.currentTick < this.delayInTicks) {
+      return "warming";
+    }
+
+    const trail = this.getGhostTrail();
+
+    // If recording is still happening, check if ghost has a trail
+    if (this.recordingStoppedAtTick < 0) {
+      return trail !== null ? "active" : "warming";
+    }
+
+    // Recording has stopped — check if we've exhausted all frames
+    if (trail === null) {
+      return "inactive";
+    }
+
+    // We still have a trail — are we in the fade window?
+    // The ghost replays up to lastRecordedTick. The replay target is
+    // currentTick - delayInTicks. When the target approaches lastRecordedTick,
+    // we start fading.
+    const replayTarget = this.currentTick - this.delayInTicks;
+    const remainingFrames = this.lastRecordedTick - replayTarget;
+
+    if (remainingFrames < this.fadeDurationTicks) {
+      return "fading";
+    }
+
+    return "active";
+  }
+
+  /**
+   * Return the ghost's current opacity (0.0–1.0).
+   *
+   * - `"warming"` / `"inactive"`: 0.0
+   * - `"active"`: 1.0
+   * - `"fading"`: linearly interpolated from 1.0 → 0.0 over `fadeDurationTicks`
+   */
+  getOpacity(): number {
+    const state = this.getLifecycleState();
+
+    if (state === "warming" || state === "inactive") {
+      return 0;
+    }
+
+    if (state === "active") {
+      return 1;
+    }
+
+    // Fading: linear interpolation from 1 → 0
+    const replayTarget = this.currentTick - this.delayInTicks;
+    const remainingFrames = this.lastRecordedTick - replayTarget;
+
+    // remainingFrames ranges from fadeDurationTicks-1 down to 0
+    // opacity = remainingFrames / (fadeDurationTicks - 1), but at least 0
+    if (this.fadeDurationTicks <= 1) {
+      return remainingFrames > 0 ? 1 : 0;
+    }
+
+    return Math.max(0, Math.min(1, remainingFrames / (this.fadeDurationTicks - 1)));
+  }
+
   // ── Rewind API (Phase 6 hook) ──────────────────────────────────
 
   /**
@@ -215,6 +349,8 @@ export class EchoGhost implements RewindableBuffer {
       writeIndex: this.writeIndex,
       count: this.count,
       currentTick: this.currentTick,
+      recordingStoppedAtTick: this.recordingStoppedAtTick,
+      lastRecordedTick: this.lastRecordedTick,
     };
   }
 
@@ -238,16 +374,20 @@ export class EchoGhost implements RewindableBuffer {
     this.writeIndex = snap.writeIndex;
     this.count = snap.count;
     this.currentTick = snap.currentTick;
+    this.recordingStoppedAtTick = snap.recordingStoppedAtTick;
+    this.lastRecordedTick = snap.lastRecordedTick;
   }
 
   // ── Reset ──────────────────────────────────────────────────────
 
-  /** Clear the buffer and reset the tick counter. */
+  /** Clear the buffer and reset the tick counter and lifecycle state. */
   reset(): void {
     this.buffer.fill(null);
     this.writeIndex = 0;
     this.count = 0;
     this.currentTick = 0;
+    this.recordingStoppedAtTick = -1;
+    this.lastRecordedTick = -1;
   }
 
   // ── Internal ───────────────────────────────────────────────────

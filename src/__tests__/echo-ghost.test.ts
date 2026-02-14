@@ -713,3 +713,448 @@ describe("EchoGhost edge cases", () => {
     expect(trail![0]).toEqual({ col: 0, row: 0 });
   });
 });
+
+// ── Lifecycle management ────────────────────────────────────────
+
+describe("EchoGhost lifecycle state", () => {
+  it("starts in warming state", () => {
+    const ghost = new EchoGhost(125);
+    expect(ghost.getLifecycleState()).toBe("warming");
+  });
+
+  it("stays in warming until delay ticks have been recorded", () => {
+    const ghost = new EchoGhost(125);
+    const delay = ghost.delayInTicks;
+
+    for (let i = 0; i < delay - 1; i++) {
+      ghost.record(seg([i, 0]));
+      expect(ghost.getLifecycleState()).toBe("warming");
+    }
+  });
+
+  it("transitions to active once delay is reached", () => {
+    const ghost = new EchoGhost(125);
+    const delay = ghost.delayInTicks;
+
+    for (let i = 0; i < delay; i++) {
+      ghost.record(seg([i, 0]));
+    }
+
+    expect(ghost.getLifecycleState()).toBe("active");
+  });
+
+  it("remains active during normal recording", () => {
+    const ghost = new EchoGhost(125);
+    const delay = ghost.delayInTicks;
+
+    for (let i = 0; i < delay + 20; i++) {
+      ghost.record(seg([i, 0]));
+    }
+
+    expect(ghost.getLifecycleState()).toBe("active");
+  });
+
+  it("returns warming state before delay even with no recording", () => {
+    const ghost = new EchoGhost(125);
+    expect(ghost.getLifecycleState()).toBe("warming");
+    expect(ghost.getOpacity()).toBe(0);
+  });
+});
+
+describe("EchoGhost stopRecording", () => {
+  it("marks recording as stopped", () => {
+    const ghost = new EchoGhost(125);
+    expect(ghost.isRecordingStopped()).toBe(false);
+
+    ghost.stopRecording();
+    expect(ghost.isRecordingStopped()).toBe(true);
+  });
+
+  it("is idempotent (calling twice has no extra effect)", () => {
+    const ghost = new EchoGhost(125);
+    const delay = ghost.delayInTicks;
+
+    for (let i = 0; i < delay + 5; i++) {
+      ghost.record(seg([i, 0]));
+    }
+
+    ghost.stopRecording();
+    const tick1 = ghost.getCurrentTick();
+
+    ghost.stopRecording();
+    expect(ghost.getCurrentTick()).toBe(tick1);
+  });
+
+  it("prevents further recording changes to lastRecordedTick", () => {
+    const ghost = new EchoGhost(125);
+    ghost.record(seg([0, 0]));
+    ghost.record(seg([1, 0]));
+    ghost.stopRecording();
+
+    // advancePlayhead should not change the lastRecordedTick
+    ghost.advancePlayhead();
+    ghost.advancePlayhead();
+
+    // The snapshot captures the internal lastRecordedTick
+    const snap = ghost.snapshot();
+    expect(snap.lastRecordedTick).toBe(1);
+  });
+});
+
+describe("EchoGhost advancePlayhead", () => {
+  it("does nothing when recording has not been stopped", () => {
+    const ghost = new EchoGhost(125);
+    ghost.record(seg([0, 0]));
+    const tickBefore = ghost.getCurrentTick();
+
+    ghost.advancePlayhead();
+    expect(ghost.getCurrentTick()).toBe(tickBefore);
+  });
+
+  it("advances currentTick after stopRecording", () => {
+    const ghost = new EchoGhost(125);
+    ghost.record(seg([0, 0]));
+    ghost.stopRecording();
+
+    const tickBefore = ghost.getCurrentTick();
+    ghost.advancePlayhead();
+    expect(ghost.getCurrentTick()).toBe(tickBefore + 1);
+  });
+
+  it("drains the buffer as playhead advances past recorded frames", () => {
+    const ghost = new EchoGhost(1000, 10); // delay=5, cap=10
+    const delay = ghost.delayInTicks;
+
+    // Record delay + 3 frames (ticks 0..7), ghost becomes active at tick 5
+    for (let i = 0; i < delay + 3; i++) {
+      ghost.record(seg([i, 0]));
+    }
+    expect(ghost.isActive()).toBe(true);
+
+    ghost.stopRecording();
+    // lastRecordedTick = 7, currentTick = 8
+
+    // Advance playhead until the ghost runs out of frames
+    // targetTick = currentTick - delay, and we have frames up to tick 7
+    // So when currentTick = 13, target = 8 → no frame → inactive
+    let advanceCount = 0;
+    while (ghost.getGhostTrail() !== null && advanceCount < 100) {
+      ghost.advancePlayhead();
+      advanceCount++;
+    }
+
+    expect(ghost.getGhostTrail()).toBeNull();
+    expect(ghost.getLifecycleState()).toBe("inactive");
+  });
+});
+
+describe("EchoGhost fade-out behavior", () => {
+  it("has correct fadeDurationTicks at default interval", () => {
+    const ghost = new EchoGhost(125);
+    // 1000ms / 125ms = 8 ticks
+    expect(ghost.fadeDurationTicks).toBe(8);
+  });
+
+  it("has correct fadeDurationTicks at different intervals", () => {
+    expect(new EchoGhost(100).fadeDurationTicks).toBe(10); // 1000/100
+    expect(new EchoGhost(200).fadeDurationTicks).toBe(5);  // 1000/200
+    expect(new EchoGhost(1000).fadeDurationTicks).toBe(1);  // 1000/1000
+    expect(new EchoGhost(500).fadeDurationTicks).toBe(2);  // 1000/500
+  });
+
+  it("fadeDurationTicks is at least 1", () => {
+    // Even with very large tick intervals
+    const ghost = new EchoGhost(2000);
+    expect(ghost.fadeDurationTicks).toBeGreaterThanOrEqual(1);
+  });
+
+  it("returns opacity 0 during warming", () => {
+    const ghost = new EchoGhost(125);
+    expect(ghost.getOpacity()).toBe(0);
+  });
+
+  it("returns opacity 1 during active state", () => {
+    const ghost = new EchoGhost(125);
+    const delay = ghost.delayInTicks;
+
+    for (let i = 0; i < delay + 10; i++) {
+      ghost.record(seg([i, 0]));
+    }
+
+    expect(ghost.getLifecycleState()).toBe("active");
+    expect(ghost.getOpacity()).toBe(1);
+  });
+
+  it("fades from 1 to 0 after stopRecording when approaching last frame", () => {
+    // Use 1000ms interval for simpler math: delay=5, fadeDuration=1
+    const ghost = new EchoGhost(1000, 10); // delay=5, cap=10
+    expect(ghost.delayInTicks).toBe(5);
+
+    // Record 10 frames (ticks 0..9)
+    for (let i = 0; i < 10; i++) {
+      ghost.record(seg([i, 0]));
+    }
+    // currentTick=10, lastRecordedTick=9
+    expect(ghost.getLifecycleState()).toBe("active");
+    expect(ghost.getOpacity()).toBe(1);
+
+    ghost.stopRecording();
+
+    // Advance until we start fading
+    // Target = currentTick - 5, remaining = 9 - target
+    // fadeDurationTicks = 1 at 1000ms interval
+    // When remaining < 1, we're fading → when remaining = 0
+
+    // At currentTick=10: target=5, remaining=4 → active
+    expect(ghost.getLifecycleState()).toBe("active");
+
+    // Advance to currentTick=14: target=9, remaining=0 → fading
+    ghost.advancePlayhead(); // 11: target=6, remaining=3 → active
+    ghost.advancePlayhead(); // 12: target=7, remaining=2 → active
+    ghost.advancePlayhead(); // 13: target=8, remaining=1 → active
+    ghost.advancePlayhead(); // 14: target=9, remaining=0 → fading
+    expect(ghost.getLifecycleState()).toBe("fading");
+
+    ghost.advancePlayhead(); // 15: target=10, no frame → inactive
+    expect(ghost.getLifecycleState()).toBe("inactive");
+    expect(ghost.getOpacity()).toBe(0);
+  });
+
+  it("fades gradually with longer fade duration", () => {
+    // Use 125ms interval: delay=40, fadeDuration=8
+    const ghost = new EchoGhost(125);
+    const delay = ghost.delayInTicks; // 40
+    const fadeTicks = ghost.fadeDurationTicks; // 8
+
+    // Record delay + fadeTicks + 10 frames to have plenty of buffer
+    const totalFrames = delay + fadeTicks + 10;
+    for (let i = 0; i < totalFrames; i++) {
+      ghost.record(seg([i, 0]));
+    }
+    // lastRecordedTick = totalFrames - 1
+
+    ghost.stopRecording();
+    expect(ghost.getLifecycleState()).toBe("active");
+    expect(ghost.getOpacity()).toBe(1);
+
+    // Advance until remaining = fadeTicks - 1 (entering fade)
+    // target = currentTick - delay
+    // remaining = lastRecordedTick - target
+    // We want remaining = fadeTicks - 1
+    // lastRecordedTick - (currentTick - delay) = fadeTicks - 1
+    // currentTick = lastRecordedTick + delay - fadeTicks + 1
+    const lastRec = totalFrames - 1;
+    const targetTick = lastRec + delay - fadeTicks + 1;
+    const ticksToAdvance = targetTick - ghost.getCurrentTick();
+
+    for (let i = 0; i < ticksToAdvance; i++) {
+      ghost.advancePlayhead();
+    }
+
+    expect(ghost.getLifecycleState()).toBe("fading");
+    // At remaining = fadeTicks - 1, opacity should be 1.0
+    expect(ghost.getOpacity()).toBe(1);
+
+    // Advance one more — opacity should decrease
+    ghost.advancePlayhead();
+    expect(ghost.getLifecycleState()).toBe("fading");
+    const opacity = ghost.getOpacity();
+    expect(opacity).toBeLessThan(1);
+    expect(opacity).toBeGreaterThan(0);
+
+    // Advance until inactive
+    let prevOpacity = opacity;
+    let steps = 0;
+    while (ghost.getLifecycleState() === "fading" && steps < 100) {
+      ghost.advancePlayhead();
+      const currentOpacity = ghost.getOpacity();
+      expect(currentOpacity).toBeLessThanOrEqual(prevOpacity);
+      prevOpacity = currentOpacity;
+      steps++;
+    }
+
+    expect(ghost.getLifecycleState()).toBe("inactive");
+    expect(ghost.getOpacity()).toBe(0);
+  });
+
+  it("opacity is 0 after all frames are exhausted", () => {
+    const ghost = new EchoGhost(1000, 10); // delay=5, cap=10
+    const delay = ghost.delayInTicks;
+
+    for (let i = 0; i < delay + 2; i++) {
+      ghost.record(seg([i, 0]));
+    }
+
+    ghost.stopRecording();
+
+    // Drain all frames
+    for (let i = 0; i < 20; i++) {
+      ghost.advancePlayhead();
+    }
+
+    expect(ghost.getLifecycleState()).toBe("inactive");
+    expect(ghost.getOpacity()).toBe(0);
+    expect(ghost.getGhostTrail()).toBeNull();
+  });
+});
+
+describe("EchoGhost bounded playback / rolling window", () => {
+  it("does not grow buffer beyond capacity during continuous recording", () => {
+    const ghost = new EchoGhost(125);
+    const capacity = ghost.capacity;
+
+    // Record 3x the capacity
+    for (let i = 0; i < capacity * 3; i++) {
+      ghost.record(seg([i % 40, 0]));
+      expect(ghost.getCount()).toBeLessThanOrEqual(capacity);
+    }
+  });
+
+  it("maintains rolling replay window (oldest frames are overwritten)", () => {
+    const ghost = new EchoGhost(125);
+    const capacity = ghost.capacity;
+    const delay = ghost.delayInTicks;
+
+    // Record well past the buffer capacity
+    for (let i = 0; i < capacity + delay + 10; i++) {
+      ghost.record(seg([i, 0]));
+    }
+
+    // Ghost trail should still be available (rolling window)
+    expect(ghost.isActive()).toBe(true);
+    const trail = ghost.getGhostTrail();
+    expect(trail).not.toBeNull();
+
+    // Very old frames should be gone
+    expect(ghost.getFrameAtTick(0)).toBeNull();
+  });
+
+  it("ghost does not extend indefinitely after stopRecording", () => {
+    const ghost = new EchoGhost(1000, 10); // delay=5, cap=10
+    const delay = ghost.delayInTicks;
+
+    // Record enough to activate
+    for (let i = 0; i < delay + 5; i++) {
+      ghost.record(seg([i, 0]));
+    }
+    expect(ghost.isActive()).toBe(true);
+
+    ghost.stopRecording();
+
+    // The ghost should eventually become inactive
+    let active = true;
+    let ticks = 0;
+    while (active && ticks < 200) {
+      ghost.advancePlayhead();
+      active = ghost.isActive();
+      ticks++;
+    }
+
+    expect(active).toBe(false);
+    expect(ghost.getLifecycleState()).toBe("inactive");
+    // Should not take more than the number of recorded frames + delay
+    expect(ticks).toBeLessThanOrEqual(delay + 5 + 1);
+  });
+});
+
+describe("EchoGhost lifecycle reset", () => {
+  it("reset clears lifecycle state back to warming", () => {
+    const ghost = new EchoGhost(125);
+    const delay = ghost.delayInTicks;
+
+    // Get to active state
+    for (let i = 0; i < delay + 5; i++) {
+      ghost.record(seg([i, 0]));
+    }
+    expect(ghost.getLifecycleState()).toBe("active");
+
+    ghost.reset();
+    expect(ghost.getLifecycleState()).toBe("warming");
+    expect(ghost.isRecordingStopped()).toBe(false);
+    expect(ghost.getOpacity()).toBe(0);
+  });
+
+  it("reset clears fading state", () => {
+    const ghost = new EchoGhost(1000, 10);
+    const delay = ghost.delayInTicks;
+
+    for (let i = 0; i < delay + 5; i++) {
+      ghost.record(seg([i, 0]));
+    }
+    ghost.stopRecording();
+
+    // Advance into fading
+    for (let i = 0; i < 5; i++) {
+      ghost.advancePlayhead();
+    }
+
+    ghost.reset();
+    expect(ghost.getLifecycleState()).toBe("warming");
+    expect(ghost.isRecordingStopped()).toBe(false);
+  });
+
+  it("reset from inactive allows re-recording", () => {
+    const ghost = new EchoGhost(1000, 10);
+    const delay = ghost.delayInTicks;
+
+    // Record, stop, drain to inactive
+    for (let i = 0; i < delay + 2; i++) {
+      ghost.record(seg([i, 0]));
+    }
+    ghost.stopRecording();
+    for (let i = 0; i < 20; i++) {
+      ghost.advancePlayhead();
+    }
+    expect(ghost.getLifecycleState()).toBe("inactive");
+
+    ghost.reset();
+
+    // Re-record and verify lifecycle works again
+    for (let i = 0; i < delay; i++) {
+      ghost.record(seg([100 + i, 5]));
+    }
+    expect(ghost.getLifecycleState()).toBe("active");
+    expect(ghost.getOpacity()).toBe(1);
+  });
+});
+
+describe("EchoGhost snapshot/restore with lifecycle", () => {
+  it("snapshot preserves lifecycle state (recording stopped)", () => {
+    const ghost = new EchoGhost(1000, 10);
+    const delay = ghost.delayInTicks;
+
+    for (let i = 0; i < delay + 3; i++) {
+      ghost.record(seg([i, 0]));
+    }
+    ghost.stopRecording();
+    ghost.advancePlayhead();
+
+    const snap = ghost.snapshot();
+    expect(snap.recordingStoppedAtTick).toBeGreaterThanOrEqual(0);
+    expect(snap.lastRecordedTick).toBe(delay + 2);
+
+    // Mutate state
+    ghost.reset();
+
+    // Restore
+    ghost.restore(snap);
+    expect(ghost.isRecordingStopped()).toBe(true);
+  });
+
+  it("snapshot preserves active lifecycle (recording not stopped)", () => {
+    const ghost = new EchoGhost(1000, 10);
+    const delay = ghost.delayInTicks;
+
+    for (let i = 0; i < delay + 3; i++) {
+      ghost.record(seg([i, 0]));
+    }
+
+    const snap = ghost.snapshot();
+    ghost.stopRecording();
+    ghost.reset();
+
+    ghost.restore(snap);
+    expect(ghost.isRecordingStopped()).toBe(false);
+    expect(ghost.getLifecycleState()).toBe("active");
+  });
+});
