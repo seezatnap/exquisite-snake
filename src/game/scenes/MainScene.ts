@@ -23,6 +23,11 @@ import {
 import { Snake } from "../entities/Snake";
 import { Food } from "../entities/Food";
 import { EchoGhost, type EchoGhostSnapshot } from "../entities/EchoGhost";
+import {
+  PARASITE_COLOR_BY_TYPE,
+  ParasiteType,
+  type ParasiteSegmentState,
+} from "../entities/Parasite";
 import { emitFoodParticles, shakeCamera } from "../systems/effects";
 import {
   Biome,
@@ -158,6 +163,14 @@ const ECHO_GHOST_TRAIL_SPAWN_INTERVAL_MS = 90;
 const ECHO_GHOST_TRAIL_LIFESPAN_MS = 420;
 const ECHO_GHOST_TRAIL_MAX_PARTICLES = 40;
 const ECHO_GHOST_TRAIL_RADIUS_PX = TILE_SIZE * 0.24;
+const PARASITE_SEGMENT_GLOW_RENDER_DEPTH = RENDER_DEPTH.SNAKE + 1;
+const PARASITE_SEGMENT_ICON_RENDER_DEPTH = RENDER_DEPTH.SNAKE + 2;
+const PARASITE_SEGMENT_PULSE_DURATION_MS = 900;
+const PARASITE_SEGMENT_ICON_LABEL_BY_TYPE: Record<ParasiteType, string> = {
+  [ParasiteType.Magnet]: "MG",
+  [ParasiteType.Shield]: "SH",
+  [ParasiteType.Splitter]: "SP",
+};
 
 interface BiomeTransitionEffectState {
   from: Biome;
@@ -174,6 +187,10 @@ interface EchoGhostTrailParticle {
   ageMs: number;
   lifespanMs: number;
   radiusPx: number;
+}
+interface ParasiteSegmentRenderBinding {
+  segment: ParasiteSegmentState;
+  position: GridPos;
 }
 
 function createBiomeMechanicsState(biome: Biome): BiomeMechanicsState {
@@ -214,6 +231,12 @@ export class MainScene extends Phaser.Scene {
 
   /** Rendered parasite pickup sprites keyed by pickup id. */
   private parasitePickupSprites = new Map<string, Phaser.GameObjects.Sprite>();
+
+  /** Graphics object used to render pulsing parasite glows on attached segments. */
+  private parasiteSegmentGlowGraphics: Phaser.GameObjects.Graphics | null = null;
+
+  /** Tiny type icons keyed by attached parasite segment id. */
+  private parasiteSegmentIconOverlays = new Map<string, Phaser.GameObjects.Text>();
 
   /** Delayed playback of historical snake path for Echo Ghost mechanics. */
   private echoGhost: EchoGhost | null = null;
@@ -335,12 +358,14 @@ export class MainScene extends Phaser.Scene {
     this.destroyEchoGhostVisuals();
     this.destroyBiomeShiftCountdown();
     this.destroyParasitePickupSprites();
+    this.destroyParasiteSegmentVisuals();
   }
 
   update(_time: number, delta: number): void {
     if (gameBridge.getState().phase !== "playing") {
       this.clearBiomeShiftCountdown();
       this.clearEchoGhostVisualState();
+      this.clearParasiteSegmentVisualState();
       return;
     }
 
@@ -356,6 +381,7 @@ export class MainScene extends Phaser.Scene {
     this.syncMagnetSpeedWithActiveSegments();
 
     const stepped = this.snake.update(delta);
+    this.updateParasiteSegmentVisuals();
 
     if (stepped) {
       if (this.checkCollisions()) {
@@ -475,6 +501,7 @@ export class MainScene extends Phaser.Scene {
     this.destroyEchoGhostVisuals();
     this.destroyParasitePickupSprites();
     this.resetMagnetSpeedState();
+    this.destroyParasiteSegmentVisuals();
   }
 
   private updateParasitePickupSpawning(delta: number): void {
@@ -520,6 +547,151 @@ export class MainScene extends Phaser.Scene {
       sprite.destroy();
     }
     this.parasitePickupSprites.clear();
+  }
+
+  private updateParasiteSegmentVisuals(): void {
+    if (!this.snake) {
+      this.clearParasiteSegmentVisualState();
+      return;
+    }
+
+    const bindings = this.mapParasiteSegmentsToSnakeBody(
+      this.parasiteManager.getActiveSegments(),
+      this.snake.getSegments(),
+    );
+
+    if (bindings.length === 0) {
+      this.clearParasiteSegmentVisualState();
+      return;
+    }
+
+    if (!this.ensureParasiteSegmentGlowGraphics()) {
+      return;
+    }
+
+    const boundSegmentIds = new Set(bindings.map(({ segment }) => segment.id));
+    for (const [segmentId, icon] of this.parasiteSegmentIconOverlays.entries()) {
+      if (!boundSegmentIds.has(segmentId)) {
+        icon.destroy();
+        this.parasiteSegmentIconOverlays.delete(segmentId);
+      }
+    }
+
+    const glow = this.parasiteSegmentGlowGraphics!;
+    glow.clear?.();
+    const elapsedMs = gameBridge.getState().elapsedTime;
+
+    for (let index = 0; index < bindings.length; index += 1) {
+      const binding = bindings[index]!;
+      const center = gridToPixel(binding.position);
+      const tint = PARASITE_COLOR_BY_TYPE[binding.segment.type];
+      const pulsePhase =
+        ((elapsedMs + index * 140) % PARASITE_SEGMENT_PULSE_DURATION_MS) /
+        PARASITE_SEGMENT_PULSE_DURATION_MS;
+      const pulse = 0.5 + Math.sin(pulsePhase * Math.PI * 2) * 0.5;
+      const glowAlpha = 0.18 + pulse * 0.24;
+      const glowRadius = TILE_SIZE * (0.32 + pulse * 0.16);
+
+      glow.fillStyle?.(tint, glowAlpha);
+      glow.fillCircle?.(center.x, center.y, glowRadius);
+      glow.fillStyle?.(tint, glowAlpha * 0.55);
+      glow.fillCircle?.(center.x, center.y, glowRadius * 0.62);
+
+      let icon = this.parasiteSegmentIconOverlays.get(binding.segment.id);
+      if (!icon) {
+        icon = this.createParasiteSegmentIcon(binding.segment.type);
+        if (icon) {
+          this.parasiteSegmentIconOverlays.set(binding.segment.id, icon);
+        }
+      }
+
+      icon?.setText?.(PARASITE_SEGMENT_ICON_LABEL_BY_TYPE[binding.segment.type]);
+      icon?.setPosition?.(center.x, center.y);
+      icon?.setAlpha?.(0.75 + pulse * 0.25);
+      icon?.setVisible?.(true);
+      icon?.setDepth?.(PARASITE_SEGMENT_ICON_RENDER_DEPTH);
+    }
+  }
+
+  private mapParasiteSegmentsToSnakeBody(
+    activeSegments: readonly ParasiteSegmentState[],
+    snakeSegments: readonly GridPos[],
+  ): ParasiteSegmentRenderBinding[] {
+    if (activeSegments.length === 0 || snakeSegments.length <= 1) {
+      return [];
+    }
+
+    const bodyFromTail = snakeSegments.slice(1).reverse();
+    const slotCount = Math.min(activeSegments.length, bodyFromTail.length);
+    const bindings: ParasiteSegmentRenderBinding[] = [];
+
+    for (let index = 0; index < slotCount; index += 1) {
+      bindings.push({
+        segment: activeSegments[index]!,
+        position: { ...bodyFromTail[index]! },
+      });
+    }
+
+    return bindings;
+  }
+
+  private createParasiteSegmentIcon(
+    type: ParasiteType,
+  ): Phaser.GameObjects.Text | undefined {
+    const addFactory = this.add as unknown as {
+      text?: (
+        x: number,
+        y: number,
+        text: string,
+        style?: Phaser.Types.GameObjects.Text.TextStyle,
+      ) => Phaser.GameObjects.Text;
+    };
+    if (typeof addFactory.text !== "function") {
+      return undefined;
+    }
+
+    const icon = addFactory.text(0, 0, PARASITE_SEGMENT_ICON_LABEL_BY_TYPE[type], {
+      fontFamily: "monospace",
+      fontSize: `${Math.max(8, Math.floor(TILE_SIZE * 0.38))}px`,
+      fontStyle: "700",
+      color: "#041014",
+      align: "center",
+    });
+    icon.setOrigin?.(0.5, 0.5);
+    icon.setDepth?.(PARASITE_SEGMENT_ICON_RENDER_DEPTH);
+    return icon;
+  }
+
+  private ensureParasiteSegmentGlowGraphics(): boolean {
+    if (this.parasiteSegmentGlowGraphics) {
+      return true;
+    }
+
+    const addFactory = this.add as unknown as {
+      graphics?: () => Phaser.GameObjects.Graphics;
+    };
+    if (typeof addFactory.graphics !== "function") {
+      return false;
+    }
+
+    const graphics = addFactory.graphics();
+    graphics.setDepth?.(PARASITE_SEGMENT_GLOW_RENDER_DEPTH);
+    this.parasiteSegmentGlowGraphics = graphics;
+    return true;
+  }
+
+  private clearParasiteSegmentVisualState(): void {
+    this.parasiteSegmentGlowGraphics?.clear?.();
+    for (const icon of this.parasiteSegmentIconOverlays.values()) {
+      icon.destroy();
+    }
+    this.parasiteSegmentIconOverlays.clear();
+  }
+
+  private destroyParasiteSegmentVisuals(): void {
+    this.clearParasiteSegmentVisualState();
+    this.parasiteSegmentGlowGraphics?.destroy?.();
+    this.parasiteSegmentGlowGraphics = null;
   }
 
   // ── Collision detection ───────────────────────────────────────
@@ -1233,6 +1405,12 @@ export class MainScene extends Phaser.Scene {
     }
     this.echoGhostGraphics?.setDepth?.(ECHO_GHOST_RENDER_DEPTH);
     this.snake?.setRenderDepth(RENDER_DEPTH.SNAKE);
+    this.parasiteSegmentGlowGraphics?.setDepth?.(
+      PARASITE_SEGMENT_GLOW_RENDER_DEPTH,
+    );
+    for (const icon of this.parasiteSegmentIconOverlays.values()) {
+      icon.setDepth?.(PARASITE_SEGMENT_ICON_RENDER_DEPTH);
+    }
     this.children?.depthSort?.();
   }
 

@@ -205,6 +205,14 @@ function setActiveParasiteSegments(
   parasiteManager.replaceState(nextState);
 }
 
+function getParasiteSegmentIconMap(scene: MainScene): Map<string, unknown> {
+  return (
+    scene as unknown as {
+      parasiteSegmentIconOverlays: Map<string, unknown>;
+    }
+  ).parasiteSegmentIconOverlays;
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   resetBridge();
@@ -587,6 +595,87 @@ describe("MainScene", () => {
     expect(parasiteState.pickups).toEqual([]);
     expect(parasiteState.timers.pickupSpawnElapsedMs).toBe(0);
     expect(getParasitePickupSpriteMap(scene).size).toBe(0);
+  });
+
+  it("renders parasite segment glows/icons on snake body with dedicated type markers", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.enterPhase("playing");
+
+    const snake = scene.getSnake()!;
+    snake.reset({ col: 10, row: 10 }, "right", 6);
+    snake.getTicker().setInterval(60_000);
+
+    const parasiteState = getParasiteManager(scene).getState();
+    parasiteState.inventory.segments = [
+      {
+        id: "seg-magnet",
+        type: ParasiteType.Magnet,
+        attachedAtMs: 100,
+        sourcePickupId: "pickup-magnet",
+      },
+      {
+        id: "seg-shield",
+        type: ParasiteType.Shield,
+        attachedAtMs: 200,
+        sourcePickupId: "pickup-shield",
+      },
+      {
+        id: "seg-splitter",
+        type: ParasiteType.Splitter,
+        attachedAtMs: 300,
+        sourcePickupId: "pickup-splitter",
+      },
+    ];
+    getParasiteManager(scene).replaceState(parasiteState);
+
+    mockAddGraphics.mockClear();
+    mockGraphicsSetDepth.mockClear();
+    mockTextSetText.mockClear();
+    mockTextSetDepth.mockClear();
+    mockFillCircle.mockClear();
+
+    scene.update(0, 16);
+
+    expect(mockAddGraphics).toHaveBeenCalledTimes(1);
+    expect(mockGraphicsSetDepth).toHaveBeenCalledWith(RENDER_DEPTH.SNAKE + 1);
+    expect(mockTextSetDepth).toHaveBeenCalledWith(RENDER_DEPTH.SNAKE + 2);
+    expect(mockTextSetText).toHaveBeenCalledWith("MG");
+    expect(mockTextSetText).toHaveBeenCalledWith("SH");
+    expect(mockTextSetText).toHaveBeenCalledWith("SP");
+    expect(mockFillCircle).toHaveBeenCalled();
+    expect(getParasiteSegmentIconMap(scene).size).toBe(3);
+  });
+
+  it("cleans parasite segment icon overlays when active segments are removed", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.enterPhase("playing");
+    scene.getSnake()!.getTicker().setInterval(60_000);
+
+    const seededState = getParasiteManager(scene).getState();
+    seededState.inventory.segments = [
+      {
+        id: "seg-magnet",
+        type: ParasiteType.Magnet,
+        attachedAtMs: 100,
+        sourcePickupId: "pickup-magnet",
+      },
+    ];
+    getParasiteManager(scene).replaceState(seededState);
+    scene.update(0, 16);
+
+    expect(getParasiteSegmentIconMap(scene).size).toBe(1);
+
+    const clearedState = getParasiteManager(scene).getState();
+    clearedState.inventory.segments = [];
+    getParasiteManager(scene).replaceState(clearedState);
+
+    mockTextDestroy.mockClear();
+    scene.update(16, 16);
+
+    expect(getParasiteSegmentIconMap(scene).size).toBe(0);
+    expect(mockTextDestroy).toHaveBeenCalled();
   });
 
   // ── Biome integration ──────────────────────────────────────
