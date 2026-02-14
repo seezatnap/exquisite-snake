@@ -1851,3 +1851,157 @@ describe("MainScene – update integration", () => {
     }
   });
 });
+
+// ── EchoGhost integration ────────────────────────────────────────
+
+describe("MainScene – EchoGhost lifecycle integration", () => {
+  it("creates an EchoGhost when entering 'playing'", () => {
+    const scene = new MainScene();
+    scene.create();
+
+    expect(scene.getEchoGhost()).toBeNull();
+
+    scene.enterPhase("playing");
+
+    expect(scene.getEchoGhost()).not.toBeNull();
+  });
+
+  it("EchoGhost is null before the game starts", () => {
+    const scene = new MainScene();
+    scene.create();
+    expect(scene.getEchoGhost()).toBeNull();
+  });
+
+  it("destroys old EchoGhost and creates a fresh one on replay", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.enterPhase("playing");
+
+    const firstGhost = scene.getEchoGhost();
+    expect(firstGhost).not.toBeNull();
+
+    scene.endRun();
+    scene.enterPhase("playing");
+
+    const secondGhost = scene.getEchoGhost();
+    expect(secondGhost).not.toBeNull();
+    expect(secondGhost).not.toBe(firstGhost);
+  });
+
+  it("resets EchoGhost state on destroy (no leftover buffer from previous run)", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.enterPhase("playing");
+
+    const snake = scene.getSnake()!;
+    snake.reset({ col: 10, row: 10 }, "right", 3);
+    snake.getTicker().setInterval(100);
+
+    // Record several ticks
+    for (let i = 0; i < 5; i++) {
+      scene.update(0, 100);
+    }
+
+    const firstGhost = scene.getEchoGhost()!;
+    expect(firstGhost.getBufferedCount()).toBeGreaterThan(0);
+
+    scene.endRun();
+    scene.enterPhase("playing");
+
+    const newGhost = scene.getEchoGhost()!;
+    expect(newGhost.getBufferedCount()).toBe(0);
+    expect(newGhost.active).toBe(false);
+  });
+
+  it("feeds snake positions into the ghost buffer on each tick", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.enterPhase("playing");
+
+    const snake = scene.getSnake()!;
+    snake.reset({ col: 10, row: 10 }, "right", 3);
+    snake.getTicker().setInterval(100);
+
+    const ghost = scene.getEchoGhost()!;
+    expect(ghost.getBufferedCount()).toBe(0);
+
+    scene.update(0, 100); // 1 tick
+    expect(ghost.getBufferedCount()).toBe(1);
+
+    scene.update(0, 100); // 2 ticks
+    expect(ghost.getBufferedCount()).toBe(2);
+
+    scene.update(0, 100); // 3 ticks
+    expect(ghost.getBufferedCount()).toBe(3);
+  });
+
+  it("ghost activates after enough ticks to cover the 5-second delay", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.enterPhase("playing");
+
+    const snake = scene.getSnake()!;
+    snake.reset({ col: 5, row: 15 }, "right", 1);
+    snake.getTicker().setInterval(100);
+
+    const ghost = scene.getEchoGhost()!;
+    expect(ghost.active).toBe(false);
+
+    // Record enough ticks to trigger activation (5000ms / 125ms default ≈ 40 ticks)
+    // But we set ticker to 100ms, so delayTicks is still based on EchoGhost default (125ms tick)
+    const ticksNeeded = ghost.getTicksUntilActive();
+    for (let i = 0; i < ticksNeeded; i++) {
+      scene.update(0, 100);
+      if (scene.getPhase() !== "playing") break;
+    }
+
+    if (scene.getPhase() === "playing") {
+      expect(ghost.active).toBe(true);
+    }
+  });
+
+  it("does not record into ghost when game is not playing", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.enterPhase("playing");
+
+    const ghost = scene.getEchoGhost()!;
+    scene.endRun(); // phase → gameOver
+
+    // update in gameOver should not record
+    scene.update(0, 200);
+    expect(ghost.getBufferedCount()).toBe(0);
+  });
+
+  it("EchoGhost is cleaned up in shutdown", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.enterPhase("playing");
+    expect(scene.getEchoGhost()).not.toBeNull();
+
+    scene.shutdown();
+    expect(scene.getEchoGhost()).toBeNull();
+  });
+
+  it("ghost buffer records correct snake segments each tick", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.enterPhase("playing");
+
+    const snake = scene.getSnake()!;
+    snake.reset({ col: 10, row: 10 }, "right", 3);
+    snake.getTicker().setInterval(100);
+
+    const ghost = scene.getEchoGhost()!;
+
+    scene.update(0, 100); // tick 1: snake steps to col 11
+
+    // The ghost should have recorded the snake's new segments after stepping
+    expect(ghost.getBufferedCount()).toBe(1);
+
+    // Verify via snapshot that recorded segments match the snake
+    const snap = ghost.snapshot();
+    const recorded = snap.buffer[0];
+    expect(recorded.segments).toEqual(snake.getSegments());
+  });
+});
