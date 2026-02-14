@@ -35,3 +35,7 @@
 ## Follow-up tasks (from sprint review)
 - [x] (#16) Complete runtime pickup consumption in `MainScene` by consuming when the snake head enters a pickup cell, removing the consumed pickup sprite, and applying inventory/FIFO plus parasites-collected updates from `ParasiteManager`. (C)
 - [ ] (#17) Update food respawn placement to exclude active parasite pickup cells (not just snake cells), and add regression coverage that food and parasite pickups never overlap after food is eaten.
+
+## Follow-up tasks (from sprint review)
+- [ ] (#18) Extend food respawn placement to exclude active splitter-obstacle and Molten Core lava cells (not just snake), and add a regression test that post-eat food respawns never land on hazard/obstacle tiles. (blocked by #17)
+- [ ] (#19) Update Molten Core lava spawn candidate filtering to exclude active parasite pickup and splitter-obstacle cells, and add integration coverage that lava and parasite entities never overlap.
