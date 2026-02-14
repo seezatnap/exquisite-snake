@@ -15,6 +15,7 @@ import { Food } from "../entities/Food";
 import { EchoGhost } from "../entities/EchoGhost";
 import { emitFoodParticles, shakeCamera } from "../systems/effects";
 import { RewindManager } from "../systems/RewindManager";
+import { MoveTicker } from "../utils/grid";
 
 // ── Default spawn configuration ─────────────────────────────────
 
@@ -50,6 +51,14 @@ export class MainScene extends Phaser.Scene {
 
   /** Rewind manager — Phase 6 hook for snapshotting/restoring game state. */
   private rewindManager: RewindManager = new RewindManager();
+
+  /**
+   * Ticker used to advance the ghost playhead at the same rate as the
+   * snake's movement after game-over.  This drives the drain/fade-out
+   * animation so the ghost doesn't freeze when the update loop would
+   * otherwise exit early due to the phase being "gameOver".
+   */
+  private ghostDrainTicker: MoveTicker = new MoveTicker();
 
   /**
    * Injectable RNG function for deterministic replay sessions.
@@ -92,7 +101,23 @@ export class MainScene extends Phaser.Scene {
   }
 
   update(_time: number, delta: number): void {
-    if (gameBridge.getState().phase !== "playing") return;
+    const { phase } = gameBridge.getState();
+
+    // During game-over, continue advancing the ghost playhead so it
+    // drains remaining buffered frames and fades out gracefully.
+    if (phase === "gameOver") {
+      if (
+        this.echoGhost &&
+        this.echoGhost.getLifecycleState() !== "inactive"
+      ) {
+        if (this.ghostDrainTicker.advance(delta)) {
+          this.echoGhost.advancePlayhead();
+        }
+      }
+      return;
+    }
+
+    if (phase !== "playing") return;
 
     gameBridge.setElapsedTime(gameBridge.getState().elapsedTime + delta);
 
@@ -148,6 +173,7 @@ export class MainScene extends Phaser.Scene {
     gameBridge.resetRun();
     this.destroyEntities();
     this.createEntities();
+    this.ghostDrainTicker.reset();
   }
 
   /** End the current run: kill snake, persist high-score, transition to gameOver. */
@@ -156,10 +182,12 @@ export class MainScene extends Phaser.Scene {
     if (this.snake?.isAlive()) {
       this.snake.kill();
     }
-    // Stop recording so the ghost can drain remaining frames and fade out
+    // Stop recording so the ghost can drain remaining frames and fade out.
+    // Reset the drain ticker so advancePlayhead() ticks at the correct cadence.
     if (this.echoGhost) {
       this.echoGhost.stopRecording();
     }
+    this.ghostDrainTicker.reset();
     const { score, highScore } = gameBridge.getState();
     if (score > highScore) {
       gameBridge.setHighScore(score);
