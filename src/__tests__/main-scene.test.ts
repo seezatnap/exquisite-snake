@@ -160,6 +160,8 @@ function resetBridge(): void {
     [Biome.MoltenCore]: 0,
     [Biome.VoidRift]: 0,
   });
+  gameBridge.setActiveParasites([]);
+  gameBridge.setParasitesCollected(0);
 }
 
 function injectMoltenLavaPool(
@@ -619,6 +621,8 @@ describe("MainScene", () => {
     expect(after.parasitesCollected).toBe(1);
     expect(getParasitePickupSpriteMap(scene).has("pickup-1")).toBe(false);
     expect(pickupSpriteDestroy).toHaveBeenCalledTimes(1);
+    expect(gameBridge.getState().activeParasites).toEqual([ParasiteType.Shield]);
+    expect(gameBridge.getState().parasitesCollected).toBe(1);
   });
 
   it("applies runtime FIFO shedding and parasites-collected updates when consuming a fourth pickup", () => {
@@ -696,6 +700,12 @@ describe("MainScene", () => {
     expect(after.parasitesCollected).toBe(4);
     expect(getParasitePickupSpriteMap(scene).has("pickup-4")).toBe(false);
     expect(pickupSpriteDestroy).toHaveBeenCalledTimes(1);
+    expect(gameBridge.getState().activeParasites).toEqual([
+      ParasiteType.Shield,
+      ParasiteType.Splitter,
+      ParasiteType.Magnet,
+    ]);
+    expect(gameBridge.getState().parasitesCollected).toBe(4);
   });
 
   it("keeps respawned food off active parasite pickup cells after food is eaten", () => {
@@ -807,6 +817,8 @@ describe("MainScene", () => {
     expect(parasiteState.pickups).toEqual([]);
     expect(parasiteState.timers.pickupSpawnElapsedMs).toBe(0);
     expect(getParasitePickupSpriteMap(scene).size).toBe(0);
+    expect(gameBridge.getState().activeParasites).toEqual([]);
+    expect(gameBridge.getState().parasitesCollected).toBe(0);
   });
 
   it("renders parasite segment glows/icons on snake body with dedicated type markers", () => {
@@ -2438,6 +2450,8 @@ describe("MainScene – wall collision", () => {
     expect(snake.getHeadPosition()).toEqual({ col: GRID_COLS - 1, row: 15 });
     expect(parasiteState.inventory.segments).toEqual([]);
     expect(parasiteState.blockedFoodCharges).toBe(1);
+    expect(gameBridge.getState().activeParasites).toEqual([]);
+    expect(gameBridge.getState().parasitesCollected).toBe(0);
 
     scene.update(interval, interval);
     expect(scene.getPhase()).toBe("gameOver");
@@ -2617,6 +2631,8 @@ describe("MainScene – self collision", () => {
     expect(snake.getHeadPosition()).toEqual(preCollisionHead);
     expect(parasiteState.inventory.segments).toEqual([]);
     expect(parasiteState.blockedFoodCharges).toBe(1);
+    expect(gameBridge.getState().activeParasites).toEqual([]);
+    expect(gameBridge.getState().parasitesCollected).toBe(0);
   });
 
   it("ends the run when snake collides with itself", () => {

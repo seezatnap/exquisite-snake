@@ -10,6 +10,10 @@ import {
   type BiomeTransition,
   type BiomeVisitStats,
 } from "./systems/BiomeManager";
+import {
+  PARASITE_MAX_SEGMENTS,
+  type ParasiteType,
+} from "./entities/Parasite";
 
 function createInitialBiomeVisitStats(firstBiome: Biome = Biome.NeonCity): BiomeVisitStats {
   const stats: BiomeVisitStats = {
@@ -39,6 +43,10 @@ export interface GameState {
   currentBiome: Biome;
   /** Per-biome visit counts for the current run. */
   biomeVisitStats: BiomeVisitStats;
+  /** Active parasite segments by type, in attach order (max 3). */
+  activeParasites: ParasiteType[];
+  /** Total parasite pickups collected during the current run. */
+  parasitesCollected: number;
 }
 
 // ── Event map: event name → payload ─────────────────────────────
@@ -49,6 +57,8 @@ export interface GameBridgeEvents {
   elapsedTimeChange: number;
   biomeChange: Biome;
   biomeVisitStatsChange: BiomeVisitStats;
+  parasiteInventoryChange: ParasiteType[];
+  parasitesCollectedChange: number;
   biomeTransition: BiomeTransition;
   biomeEnter: Biome;
   biomeExit: Biome;
@@ -63,6 +73,17 @@ export type GameBridgeEventName = keyof GameBridgeEvents;
 
 type Listener<T> = (value: T) => void;
 
+function normalizeParasiteInventory(types: readonly ParasiteType[]): ParasiteType[] {
+  return [...types].slice(0, PARASITE_MAX_SEGMENTS);
+}
+
+function normalizeParasitesCollected(value: number): number {
+  if (!Number.isFinite(value)) {
+    return 0;
+  }
+  return Math.max(0, Math.floor(value));
+}
+
 /**
  * Typed event emitter that also holds the latest snapshot of game state
  * so late-subscribing React components can read the current value
@@ -76,6 +97,8 @@ export class GameBridge {
     elapsedTime: 0,
     currentBiome: Biome.NeonCity,
     biomeVisitStats: createInitialBiomeVisitStats(),
+    activeParasites: [],
+    parasitesCollected: 0,
   };
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -118,6 +141,18 @@ export class GameBridge {
     this.emit("biomeVisitStatsChange", nextStats);
   }
 
+  setActiveParasites(activeParasites: readonly ParasiteType[]): void {
+    const nextActiveParasites = normalizeParasiteInventory(activeParasites);
+    this.state.activeParasites = nextActiveParasites;
+    this.emit("parasiteInventoryChange", nextActiveParasites);
+  }
+
+  setParasitesCollected(parasitesCollected: number): void {
+    const nextValue = normalizeParasitesCollected(parasitesCollected);
+    this.state.parasitesCollected = nextValue;
+    this.emit("parasitesCollectedChange", nextValue);
+  }
+
   /**
    * Emit a biome transition record for subscribers that need both endpoints.
    */
@@ -144,10 +179,14 @@ export class GameBridge {
     this.state.elapsedTime = 0;
     this.state.currentBiome = currentBiome;
     this.state.biomeVisitStats = visitStats;
+    this.state.activeParasites = [];
+    this.state.parasitesCollected = 0;
     this.emit("scoreChange", 0);
     this.emit("elapsedTimeChange", 0);
     this.emit("biomeChange", this.state.currentBiome);
     this.emit("biomeVisitStatsChange", this.state.biomeVisitStats);
+    this.emit("parasiteInventoryChange", this.state.activeParasites);
+    this.emit("parasitesCollectedChange", this.state.parasitesCollected);
   }
 
   // ── Pub / Sub ───────────────────────────────────────────────
