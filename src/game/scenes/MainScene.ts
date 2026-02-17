@@ -1696,6 +1696,17 @@ export class MainScene extends Phaser.Scene {
     return keys;
   }
 
+  private getActivePortalEndpointPositions(): GridPos[] {
+    const endpoints = this.portalManager.getActivePortalEndpoints();
+    if (!endpoints) {
+      return [];
+    }
+    return endpoints.map((endpoint) => ({
+      col: endpoint.position.col,
+      row: endpoint.position.row,
+    }));
+  }
+
   private gridPosKey(pos: GridPos): string {
     return `${pos.col}:${pos.row}`;
   }
@@ -1768,8 +1779,12 @@ export class MainScene extends Phaser.Scene {
     const ghostSampleTimestampMs = this.echoGhost.getElapsedMs();
     const ghostDelayMs = this.echoGhost.getDelayMs();
     const runIdAtEat = this.activeRunId;
+    const blockedPortalEndpoints = this.getActivePortalEndpointPositions();
     const eaten = this.food.checkEat(this.snake, (points) =>
       this.addScore(points),
+      {
+        blockedCells: blockedPortalEndpoints,
+      },
     );
     if (eaten) {
       emitFoodParticles(this, fx, fy);
