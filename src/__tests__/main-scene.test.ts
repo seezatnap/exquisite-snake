@@ -593,6 +593,134 @@ describe("MainScene", () => {
     expect(snake.getPortalTraversalSnapshots()).toEqual([]);
   });
 
+  it("renders an emergency flash hook when collapse forces instant teleport completion", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.setRng(() => 0);
+    scene.enterPhase("playing");
+
+    const snake = scene.getSnake()!;
+    snake.reset({ col: 10, row: 10 }, "right", 4);
+    snake.getTicker().setInterval(100);
+
+    const collapseTransition = {
+      from: "active",
+      to: "collapsing",
+      elapsedMs: 8_000,
+    } as const;
+    const portalPairId = "portal-pair-collapse-emergency-flash";
+    const portalUpdateSpy = vi.spyOn(scene.getPortalManager(), "update");
+    portalUpdateSpy
+      .mockReturnValueOnce({
+        spawnedPairs: [],
+        lifecycleTransitions: [],
+        despawnedPairIds: [],
+        orderedEvents: [],
+      })
+      .mockReturnValueOnce({
+        spawnedPairs: [],
+        lifecycleTransitions: [{ pairId: portalPairId, transition: collapseTransition }],
+        despawnedPairIds: [portalPairId],
+        orderedEvents: [
+          {
+            type: "lifecycleTransition",
+            pairId: portalPairId,
+            transition: collapseTransition,
+          },
+          { type: "despawned", pairId: portalPairId },
+        ],
+      });
+
+    vi.spyOn(scene.getPortalManager(), "getExitPositionForEntryCell").mockImplementation(
+      (entryCell) => {
+        if (entryCell.col === 11 && entryCell.row === 10) {
+          return { col: 3, row: 4 };
+        }
+        return null;
+      },
+    );
+
+    scene.update(0, 100); // step into portal; traversal starts
+    mockFillCircle.mockClear();
+
+    scene.update(0, 50); // collapse forces emergency teleport completion
+
+    expect(hasFillCircleAt(gridToPixel({ col: 11, row: 10 }))).toBe(true);
+    expect(hasFillCircleAt(gridToPixel({ col: 3, row: 4 }))).toBe(true);
+  });
+
+  it("temporarily disables collisions for ~0.5s after forced teleport, then restores them", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.setRng(() => 0);
+    scene.enterPhase("playing");
+
+    const snake = scene.getSnake()!;
+    snake.reset({ col: 10, row: 10 }, "right", 4);
+    snake.getTicker().setInterval(100);
+
+    const collapseTransition = {
+      from: "active",
+      to: "collapsing",
+      elapsedMs: 8_000,
+    } as const;
+    const portalPairId = "portal-pair-collapse-collision-grace";
+    const portalUpdateSpy = vi.spyOn(scene.getPortalManager(), "update");
+    portalUpdateSpy
+      .mockReturnValueOnce({
+        spawnedPairs: [],
+        lifecycleTransitions: [],
+        despawnedPairIds: [],
+        orderedEvents: [],
+      })
+      .mockReturnValueOnce({
+        spawnedPairs: [],
+        lifecycleTransitions: [{ pairId: portalPairId, transition: collapseTransition }],
+        despawnedPairIds: [portalPairId],
+        orderedEvents: [
+          {
+            type: "lifecycleTransition",
+            pairId: portalPairId,
+            transition: collapseTransition,
+          },
+          { type: "despawned", pairId: portalPairId },
+        ],
+      })
+      .mockReturnValue({
+        spawnedPairs: [],
+        lifecycleTransitions: [],
+        despawnedPairIds: [],
+        orderedEvents: [],
+      });
+
+    vi.spyOn(scene.getPortalManager(), "getExitPositionForEntryCell").mockImplementation(
+      (entryCell) => {
+        if (entryCell.col === 11 && entryCell.row === 10) {
+          return { col: GRID_COLS - 1, row: 10 };
+        }
+        return null;
+      },
+    );
+
+    scene.update(0, 100); // step into portal; traversal starts
+    scene.update(0, 50); // collapse forces emergency teleport completion
+
+    scene.update(0, 100); // head is now out-of-bounds, but still protected
+    expect(scene.getPhase()).toBe("playing");
+    expect(snake.getHeadPosition().col).toBe(GRID_COLS);
+
+    scene.update(0, 100);
+    expect(scene.getPhase()).toBe("playing");
+    scene.update(0, 100);
+    expect(scene.getPhase()).toBe("playing");
+    scene.update(0, 100);
+    expect(scene.getPhase()).toBe("playing");
+
+    scene.update(0, 100); // grace window elapsed, wall collision should resolve
+    expect(scene.getPhase()).toBe("gameOver");
+    expect(snake.isAlive()).toBe(false);
+  });
+
   it("renders split-snake mirror positions on the entry side while threading is active", () => {
     const scene = new MainScene();
     scene.create();
