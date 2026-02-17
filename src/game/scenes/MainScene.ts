@@ -1624,10 +1624,12 @@ export class MainScene extends Phaser.Scene {
     }
 
     const foodPos = this.food.getPosition();
+    const activePortalEndpointKeys = this.getActivePortalEndpointKeys();
     const candidates: GridPos[] = [];
 
     for (let col = 0; col < GRID_COLS; col++) {
       for (let row = 0; row < GRID_ROWS; row++) {
+        const key = `${col}:${row}`;
         const pos: GridPos = { col, row };
         if (this.snake.isOnSnake(pos)) {
           continue;
@@ -1635,7 +1637,10 @@ export class MainScene extends Phaser.Scene {
         if (foodPos.col === col && foodPos.row === row) {
           continue;
         }
-        if (this.moltenLavaPools.has(this.gridPosKey(pos))) {
+        if (this.moltenLavaPools.has(key)) {
+          continue;
+        }
+        if (activePortalEndpointKeys.has(key)) {
           continue;
         }
         candidates.push(pos);
@@ -1678,6 +1683,17 @@ export class MainScene extends Phaser.Scene {
       }
       this.moltenLavaPools.delete(firstKey);
     }
+  }
+
+  private getActivePortalEndpointKeys(): Set<string> {
+    const keys = new Set<string>();
+    const endpoints = this.portalManager.getActivePortalEndpoints();
+    if (!endpoints) {
+      return keys;
+    }
+    keys.add(this.gridPosKey(endpoints[0].position));
+    keys.add(this.gridPosKey(endpoints[1].position));
+    return keys;
   }
 
   private gridPosKey(pos: GridPos): string {

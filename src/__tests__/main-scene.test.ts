@@ -721,6 +721,174 @@ describe("MainScene", () => {
     expect(snake.isAlive()).toBe(false);
   });
 
+  it("preserves Ice Cavern momentum turn delay across portal traversal", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.setBiomeCycleOrder([
+      Biome.IceCavern,
+      Biome.NeonCity,
+      Biome.MoltenCore,
+      Biome.VoidRift,
+    ]);
+    scene.enterPhase("playing");
+    expect(scene.getCurrentBiome()).toBe(Biome.IceCavern);
+
+    const snake = scene.getSnake()!;
+    snake.reset({ col: 10, row: 10 }, "right", 3);
+    snake.getTicker().setInterval(100);
+    snake.bufferDirection("up");
+
+    vi.spyOn(scene.getPortalManager(), "update").mockReturnValue({
+      spawnedPairs: [],
+      lifecycleTransitions: [],
+      despawnedPairIds: [],
+      orderedEvents: [],
+    });
+    vi.spyOn(scene.getPortalManager(), "getExitPositionForEntryCell").mockImplementation(
+      (entryCell) => {
+        if (entryCell.col === 11 && entryCell.row === 10) {
+          return { col: 18, row: 12 };
+        }
+        return null;
+      },
+    );
+
+    scene.update(0, 100); // slide tile 1 + teleport
+    expect(snake.getDirection()).toBe("right");
+    expect(snake.getHeadPosition()).toEqual({ col: 18, row: 12 });
+
+    scene.update(0, 100); // slide tile 2
+    expect(snake.getDirection()).toBe("right");
+    expect(snake.getHeadPosition()).toEqual({ col: 19, row: 12 });
+
+    scene.update(0, 100); // delayed turn applies
+    expect(snake.getDirection()).toBe("up");
+    expect(snake.getHeadPosition()).toEqual({ col: 19, row: 11 });
+  });
+
+  it("applies Molten Core lava hazards immediately after portal exit", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.setBiomeCycleOrder([
+      Biome.MoltenCore,
+      Biome.NeonCity,
+      Biome.IceCavern,
+      Biome.VoidRift,
+    ]);
+    scene.enterPhase("playing");
+    scene.setMoltenLavaConfig({
+      spawnChancePerInterval: 0,
+      burnTailSegments: 3,
+    });
+    expect(scene.getCurrentBiome()).toBe(Biome.MoltenCore);
+
+    const snake = scene.getSnake()!;
+    snake.reset({ col: 10, row: 10 }, "right", 6);
+    snake.getTicker().setInterval(100);
+    injectMoltenLavaPool(scene, { col: 3, row: 4 });
+
+    vi.spyOn(scene.getPortalManager(), "update").mockReturnValue({
+      spawnedPairs: [],
+      lifecycleTransitions: [],
+      despawnedPairIds: [],
+      orderedEvents: [],
+    });
+    vi.spyOn(scene.getPortalManager(), "getExitPositionForEntryCell").mockImplementation(
+      (entryCell) => {
+        if (entryCell.col === 11 && entryCell.row === 10) {
+          return { col: 3, row: 4 };
+        }
+        return null;
+      },
+    );
+
+    scene.update(0, 100);
+
+    expect(scene.getPhase()).toBe("playing");
+    expect(snake.getHeadPosition()).toEqual({ col: 3, row: 4 });
+    expect(snake.getLength()).toBe(3);
+  });
+
+  it("applies Void Rift gravity from the post-teleport exit position", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.setBiomeCycleOrder([
+      Biome.VoidRift,
+      Biome.NeonCity,
+      Biome.IceCavern,
+      Biome.MoltenCore,
+    ]);
+    scene.setBiomeMechanicsConfig({
+      voidRift: { gravityPullCadenceSteps: 1 },
+    });
+    scene.enterPhase("playing");
+    expect(scene.getCurrentBiome()).toBe(Biome.VoidRift);
+
+    const snake = scene.getSnake()!;
+    snake.reset({ col: 10, row: 10 }, "right", 1);
+    snake.getTicker().setInterval(100);
+
+    vi.spyOn(scene.getPortalManager(), "update").mockReturnValue({
+      spawnedPairs: [],
+      lifecycleTransitions: [],
+      despawnedPairIds: [],
+      orderedEvents: [],
+    });
+    vi.spyOn(scene.getPortalManager(), "getExitPositionForEntryCell").mockImplementation(
+      (entryCell) => {
+        if (entryCell.col === 11 && entryCell.row === 10) {
+          return { col: 23, row: 25 };
+        }
+        return null;
+      },
+    );
+
+    scene.update(0, 100);
+
+    expect(scene.getPhase()).toBe("playing");
+    expect(snake.getDirection()).toBe("right");
+    expect(snake.getHeadPosition()).toEqual({ col: 23, row: 24 });
+  });
+
+  it("excludes active portal endpoints from Molten Core lava spawn candidates", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.setBiomeCycleOrder([
+      Biome.MoltenCore,
+      Biome.NeonCity,
+      Biome.IceCavern,
+      Biome.VoidRift,
+    ]);
+    scene.setRng(() => 0.9);
+    scene.enterPhase("playing");
+    scene.setRng(() => 0);
+    scene.setMoltenLavaConfig({
+      spawnIntervalMs: 1,
+      spawnChancePerInterval: 1,
+      maxPools: 1,
+    });
+
+    vi.spyOn(scene.getPortalManager(), "getActivePortalEndpoints").mockReturnValue([
+      {
+        id: "portal-pair-integration:a",
+        pairId: "portal-pair-integration",
+        linkedEndpointId: "portal-pair-integration:b",
+        position: { col: 0, row: 0 },
+      },
+      {
+        id: "portal-pair-integration:b",
+        pairId: "portal-pair-integration",
+        linkedEndpointId: "portal-pair-integration:a",
+        position: { col: 1, row: 0 },
+      },
+    ]);
+
+    scene.update(0, 1);
+
+    expect(scene.getCurrentBiome()).toBe(Biome.MoltenCore);
+    expect(scene.getMoltenLavaPools()).toEqual([{ col: 0, row: 1 }]);
+  });
+
   it("renders split-snake mirror positions on the entry side while threading is active", () => {
     const scene = new MainScene();
     scene.create();
