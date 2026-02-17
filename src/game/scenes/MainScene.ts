@@ -43,6 +43,8 @@ import {
 } from "../systems/biomeMechanics";
 import { PortalManager, type PortalManagerOptions } from "../systems/PortalManager";
 import { PortalRenderer } from "../systems/PortalRenderer";
+import { SplitSnakeRenderer } from "../systems/SplitSnakeRenderer";
+import type { PortalPair } from "../entities/Portal";
 
 // ── Default spawn configuration ─────────────────────────────────
 
@@ -211,6 +213,9 @@ export class MainScene extends Phaser.Scene {
   /** Renders swirling vortex visuals for active portal pairs. */
   private portalRenderer: PortalRenderer = new PortalRenderer();
 
+  /** Renders split-snake visual effects during portal transit. */
+  private splitSnakeRenderer: SplitSnakeRenderer = new SplitSnakeRenderer();
+
   /** Shared balancing knobs for Ice, Molten, and Void biome mechanics. */
   private biomeMechanicsConfig: BiomeMechanicsConfig = cloneBiomeMechanicsConfig(
     DEFAULT_BIOME_MECHANICS_CONFIG,
@@ -312,6 +317,7 @@ export class MainScene extends Phaser.Scene {
     }
     this.portalManager.reset();
     this.portalRenderer.destroy();
+    this.splitSnakeRenderer.destroy();
     this.biomeManager.stopRun();
     this.resetMoltenCoreState();
     this.clearBiomeTransitionEffect();
@@ -410,6 +416,7 @@ export class MainScene extends Phaser.Scene {
     this.destroyEntities();
     this.createEntities();
     this.portalRenderer.reset();
+    this.splitSnakeRenderer.reset();
     this.portalManager.setRng(this.rng);
     this.updatePortalOccupancyCheckers();
     this.portalManager.startRun();
@@ -420,6 +427,7 @@ export class MainScene extends Phaser.Scene {
     shakeCamera(this);
     this.portalManager.stopRun();
     this.portalRenderer.reset();
+    this.splitSnakeRenderer.reset();
     this.biomeManager.stopRun();
     this.resetMoltenCoreState();
     this.clearBiomeTransitionEffect();
@@ -633,6 +641,10 @@ export class MainScene extends Phaser.Scene {
     return this.portalRenderer;
   }
 
+  getSplitSnakeRenderer(): SplitSnakeRenderer {
+    return this.splitSnakeRenderer;
+  }
+
   /**
    * Rewind integration hook: capture the active EchoGhost buffer/timing snapshot.
    */
@@ -712,16 +724,50 @@ export class MainScene extends Phaser.Scene {
    * Called early in the update loop (before movement/collision) so that
    * spawn, active, and collapse state changes are settled before any
    * downstream system queries portal occupancy.
+   *
+   * When a portal collapses while the snake is mid-transit through it,
+   * all remaining unthreaded body segments are force-teleported to the
+   * exit side instantly.
    */
   private updatePortals(delta: number): void {
     const collapsed = this.portalManager.update(delta);
     if (collapsed.length > 0) {
+      this.handleCollapsedPortals(collapsed);
       this.portalRenderer.notifyCollapsed(collapsed, this);
       this.events?.emit?.("portalCollapsed", collapsed);
     }
 
     // Render portal visuals (swirling vortex) for active pairs
     this.portalRenderer.update(this, delta, this.portalManager.getActivePairs());
+
+    // Render split-snake effects during portal transit
+    this.splitSnakeRenderer.update(
+      this,
+      delta,
+      this.snake?.getSegments() ?? [],
+      this.snake?.getPortalTransit() ?? null,
+    );
+  }
+
+  /**
+   * Handle portal pairs that just collapsed. If the snake is currently
+   * mid-transit through any of them, force-complete the transit by
+   * teleporting remaining body segments to the exit side.
+   */
+  private handleCollapsedPortals(collapsed: readonly PortalPair[]): void {
+    if (!this.snake) return;
+
+    const transit = this.snake.getPortalTransit();
+    if (!transit) return;
+
+    const isTransitPortalCollapsed = collapsed.some(
+      (pair) => pair.id === transit.portalPairId,
+    );
+
+    if (isTransitPortalCollapsed) {
+      this.snake.forceCompleteTransit();
+      this.events?.emit?.("portalCollapseMidTransit", transit);
+    }
   }
 
   /**
