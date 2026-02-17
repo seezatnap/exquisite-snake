@@ -22,7 +22,7 @@
 ## Mechanics Integration
 
 - [x] (#11) Integrate portal traversal with biome mechanics (ice momentum, lava pools, gravity wells) so pre- and post-teleport movement/hazard behavior remains correct [5 pts] (blocked by #7) (A)
-- [ ] (#12) Enforce exclusions and invariants: echo ghost replays raw position history without using portals, and food plus food-related mechanics are never pulled/routed through portals [5 pts] (blocked by #11)
+- [A] (#12) Enforce exclusions and invariants: echo ghost replays raw position history without using portals, and food plus food-related mechanics are never pulled/routed through portals [5 pts] (blocked by #11)
 
 ## Testing & Validation
 
