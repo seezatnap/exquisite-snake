@@ -554,7 +554,8 @@ describe("MainScene", () => {
     scene.update(0, 45_000); // Neon -> Ice
 
     expect(scene.getCurrentBiome()).toBe(Biome.IceCavern);
-    expect(mockAddGraphics).toHaveBeenCalledTimes(4);
+    // 5 graphics objects: backdrop + tilemap + grid + transition overlay + portal renderer
+    expect(mockAddGraphics).toHaveBeenCalledTimes(5);
     expect(mockSetBackgroundColor).toHaveBeenCalledWith(0x081624);
     expect(mockLineStyle).toHaveBeenCalledWith(2, 0x8fdcff, 0.16);
     expect(mockLineStyle).toHaveBeenCalledWith(1, 0x8ed5ff, 0.16);
