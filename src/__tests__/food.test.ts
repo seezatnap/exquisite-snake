@@ -201,6 +201,21 @@ describe("Food safe spawn", () => {
 
     food.destroy();
   });
+
+  it("findSafePosition excludes optional blocked cells", () => {
+    const snake = createSnake({ col: 10, row: 10 }, "right", 1);
+    const scene = createScene();
+    const food = new Food(scene, snake, fixedRng(0));
+    const blockedCells = [
+      { col: 0, row: 0 },
+      { col: 0, row: 1 },
+    ];
+
+    const pos = food.findSafePosition(snake, blockedCells);
+    expect(blockedCells).not.toContainEqual(pos);
+
+    food.destroy();
+  });
 });
 
 // ── Respawn ──────────────────────────────────────────────────────
@@ -341,6 +356,28 @@ describe("Food checkEat", () => {
 
     expect(onScore).toHaveBeenCalledTimes(1);
     expect(onScore).toHaveBeenCalledWith(1);
+
+    food.destroy();
+  });
+
+  it("respawns away from blocked cells when checkEat receives constraints", () => {
+    const scene = createScene();
+    const snake = new Snake(scene, { col: 0, row: 0 }, "right", 1);
+    const food = new Food(createScene(), snake, fixedRng(0));
+
+    const foodPos = food.getPosition();
+    const scene2 = createScene();
+    const snakeAtFood = new Snake(scene2, foodPos, "right", 1);
+
+    food.checkEat(snakeAtFood, vi.fn(), {
+      blockedCells: [
+        { col: 0, row: 0 },
+        { col: 0, row: 1 },
+      ],
+    });
+
+    expect(food.getPosition()).not.toEqual({ col: 0, row: 0 });
+    expect(food.getPosition()).not.toEqual({ col: 0, row: 1 });
 
     food.destroy();
   });
