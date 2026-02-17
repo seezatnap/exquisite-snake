@@ -34,3 +34,6 @@
 
 ## Follow-up tasks (from sprint review)
 - [x] (#16) Optimize `pickRandomEmptyPortalPairCells` to avoid full O(n^2) `validPairs` materialization (on a 40x30 grid this currently builds 719,400 pairs and spikes ~60MB heap), while preserving the no-false-null guarantee from #15; add a regression test that exercises large-board selection without exhaustive pair allocation. (A)
+
+## Follow-up tasks (from sprint review)
+- [ ] (#17) Fix `Food.findSafePosition` so portal endpoint exclusions remain strict when blocked endpoints are the only free cells (near-full board); do not fall back to spawning food on blocked endpoint cells, and add a regression test for this edge case.
