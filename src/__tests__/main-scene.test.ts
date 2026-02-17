@@ -424,6 +424,15 @@ describe("MainScene", () => {
       { col: 10, row: 10 },
       { col: 9, row: 10 },
     ]);
+    expect(snake.isPortalThreadingActive()).toBe(true);
+    expect(snake.getPortalTraversalSnapshots()).toEqual([
+      {
+        entry: { col: 11, row: 10 },
+        exit: { col: 3, row: 4 },
+        stepsElapsed: 0,
+        remainingBodySegments: 2,
+      },
+    ]);
   });
 
   it("preserves movement cadence by evaluating portal traversal only on stepped ticks", () => {

@@ -37,6 +37,19 @@ const KEY_DIRECTION_MAP: Record<string, Direction> = {
 
 type DirectionInputGuard = (dir: Direction) => boolean;
 
+interface PortalTraversalThread {
+  entry: GridPos;
+  exit: GridPos;
+  stepsElapsed: number;
+}
+
+export interface PortalTraversalSnapshot {
+  entry: GridPos;
+  exit: GridPos;
+  stepsElapsed: number;
+  remainingBodySegments: number;
+}
+
 // ── Snake entity ─────────────────────────────────────────────────
 
 export class Snake {
@@ -87,6 +100,9 @@ export class Snake {
 
   /** Whether an opposite-direction input was rejected since the last consumed step. */
   private rejectedOppositeDirectionInput = false;
+
+  /** Active portal traversals waiting for body segments to finish threading through. */
+  private portalTraversalThreads: PortalTraversalThread[] = [];
 
   constructor(
     scene: Phaser.Scene,
@@ -316,6 +332,35 @@ export class Snake {
     this.interpolateSprites();
   }
 
+  /**
+   * Start a portal traversal at the current head position and queue body threading.
+   *
+   * The head moves immediately to `exitCell`. Remaining body segments continue to
+   * transit one-by-one over subsequent advances.
+   */
+  beginPortalTraversal(entryCell: GridPos, exitCell: GridPos): void {
+    if (!this.alive) {
+      return;
+    }
+
+    this.teleportHeadTo(exitCell);
+    if (this.segments.length <= 1) {
+      return;
+    }
+
+    this.portalTraversalThreads.push({
+      entry: {
+        col: entryCell.col,
+        row: entryCell.row,
+      },
+      exit: {
+        col: exitCell.col,
+        row: exitCell.row,
+      },
+      stepsElapsed: 0,
+    });
+  }
+
   private advanceSegments(direction: Direction): void {
     // Save previous positions for interpolation
     this.prevSegments = this.segments.map((s) => ({ ...s }));
@@ -335,6 +380,40 @@ export class Snake {
     } else {
       this.segments.pop();
     }
+
+    this.resolvePortalThreadingAfterAdvance();
+  }
+
+  private resolvePortalThreadingAfterAdvance(): void {
+    if (this.portalTraversalThreads.length === 0) {
+      return;
+    }
+
+    this.snapTeleportedBodyInterpolationToPortalExit();
+    for (const traversal of this.portalTraversalThreads) {
+      traversal.stepsElapsed += 1;
+    }
+    this.pruneCompletedPortalTraversalThreads();
+  }
+
+  private snapTeleportedBodyInterpolationToPortalExit(): void {
+    const segmentCount = Math.min(this.segments.length, this.prevSegments.length);
+    for (let i = 1; i < segmentCount; i++) {
+      if (manhattanDistance(this.prevSegments[i], this.segments[i]) <= 1) {
+        continue;
+      }
+      this.prevSegments[i] = {
+        col: this.segments[i].col,
+        row: this.segments[i].row,
+      };
+    }
+  }
+
+  private pruneCompletedPortalTraversalThreads(): void {
+    const bodySegmentCount = Math.max(0, this.segments.length - 1);
+    this.portalTraversalThreads = this.portalTraversalThreads.filter(
+      (traversal) => traversal.stepsElapsed < bodySegmentCount,
+    );
   }
 
   /**
@@ -380,6 +459,7 @@ export class Snake {
       this.sprites.pop()?.destroy();
     }
 
+    this.pruneCompletedPortalTraversalThreads();
     return true;
   }
 
@@ -393,6 +473,31 @@ export class Snake {
   /** Get all segment grid positions (head first). */
   getSegments(): readonly GridPos[] {
     return this.segments;
+  }
+
+  /** Get active portal body-threading traversals (oldest first). */
+  getPortalTraversalSnapshots(): readonly PortalTraversalSnapshot[] {
+    const bodySegmentCount = Math.max(0, this.segments.length - 1);
+    return this.portalTraversalThreads.map((traversal) => ({
+      entry: {
+        col: traversal.entry.col,
+        row: traversal.entry.row,
+      },
+      exit: {
+        col: traversal.exit.col,
+        row: traversal.exit.row,
+      },
+      stepsElapsed: traversal.stepsElapsed,
+      remainingBodySegments: Math.max(
+        0,
+        bodySegmentCount - traversal.stepsElapsed,
+      ),
+    }));
+  }
+
+  /** Whether any portal traversal is still threading body segments. */
+  isPortalThreadingActive(): boolean {
+    return this.portalTraversalThreads.length > 0;
   }
 
   /** Get the number of segments (head + body). */
@@ -466,6 +571,7 @@ export class Snake {
     this.touchInput = null;
     this.directionInputGuard = null;
     this.rejectedOppositeDirectionInput = false;
+    this.portalTraversalThreads = [];
     for (const sprite of this.sprites) {
       sprite.destroy();
     }
@@ -495,6 +601,7 @@ export class Snake {
     this.pendingTurnSlideTiles = 0;
     this.pendingGrowth = 0;
     this.rejectedOppositeDirectionInput = false;
+    this.portalTraversalThreads = [];
     this.ticker.reset();
 
     // Build new segments
@@ -513,4 +620,8 @@ export class Snake {
     // Create new sprites
     this.createSprites();
   }
+}
+
+function manhattanDistance(a: GridPos, b: GridPos): number {
+  return Math.abs(a.col - b.col) + Math.abs(a.row - b.row);
 }
