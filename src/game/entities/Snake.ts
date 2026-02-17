@@ -258,6 +258,20 @@ export class Snake {
     }
   }
 
+  /**
+   * Clear any in-progress ice momentum slide, applying the pending turn
+   * immediately instead. Called after portal teleport so the snake does
+   * not continue sliding in the pre-teleport direction after a spatial
+   * discontinuity.
+   */
+  clearPendingMomentum(): void {
+    if (this.pendingTurn !== null) {
+      this.direction = this.pendingTurn;
+      this.pendingTurn = null;
+      this.pendingTurnSlideTiles = 0;
+    }
+  }
+
   // ── Movement ───────────────────────────────────────────────────
 
   /**

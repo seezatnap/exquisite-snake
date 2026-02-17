@@ -374,8 +374,15 @@ export class MainScene extends Phaser.Scene {
     const stepped = this.snake.update(delta);
 
     if (stepped) {
-      this.resolvePortalHeadTraversal();
+      const portalTraversed = this.resolvePortalHeadTraversal();
       this.resolvePortalBodyThreading();
+
+      // After portal teleport, clear ice momentum so the snake doesn't
+      // continue sliding in the pre-teleport direction after a spatial
+      // discontinuity.
+      if (portalTraversed) {
+        this.clearIceMomentumAfterPortal();
+      }
 
       if (this.checkCollisions()) {
         return; // Game over — stop processing this frame
@@ -383,8 +390,11 @@ export class MainScene extends Phaser.Scene {
 
       this.resolveFoodConsumption();
 
-      const gravityApplied = this.applyVoidRiftGravityNudgeIfDue();
+      const gravityApplied = this.applyVoidRiftGravityNudgeIfDue(portalTraversed);
       if (gravityApplied) {
+        // If gravity pushes the head onto a portal, resolve the traversal
+        this.resolvePortalHeadTraversal();
+
         if (this.checkCollisions()) {
           this.echoGhost.recordPath(this.snake.getSegments());
           return;
@@ -792,6 +802,7 @@ export class MainScene extends Phaser.Scene {
 
     if (isTransitPortalCollapsed) {
       this.snake.forceCompleteTransit();
+      this.snake.clearPendingMomentum();
       this.emergencyCollisionImmunityMs = EMERGENCY_COLLISION_IMMUNITY_MS;
       emitEmergencyTeleportFlash(this);
       this.events?.emit?.("portalCollapseMidTransit", transit);
@@ -818,19 +829,22 @@ export class MainScene extends Phaser.Scene {
    * If so, teleport the head to the linked exit portal, preserving
    * the current direction and movement cadence, and initiate body
    * threading so segments transit one-by-one through the portal.
+   *
+   * Returns `true` if a portal traversal occurred.
    */
-  private resolvePortalHeadTraversal(): void {
-    if (!this.snake) return;
+  private resolvePortalHeadTraversal(): boolean {
+    if (!this.snake) return false;
 
     const head = this.snake.getHeadPosition();
     const pair = this.portalManager.getPairAtPosition(head);
-    if (!pair || !pair.isTraversable()) return;
+    if (!pair || !pair.isTraversable()) return false;
 
     const exitPos = pair.getLinkedExit(head);
-    if (!exitPos) return;
+    if (!exitPos) return false;
 
     this.snake.teleportHead(exitPos, pair.id, head);
     this.events?.emit?.("portalTraversed", { pair, entry: head, exit: exitPos });
+    return true;
   }
 
   /**
@@ -985,6 +999,17 @@ export class MainScene extends Phaser.Scene {
     this.applyVoidRiftInputGuard(biome);
   }
 
+  /**
+   * After a portal teleport, clear any in-progress ice momentum slide
+   * so the pending turn applies immediately at the exit position.
+   * This prevents the snake from sliding in the pre-teleport direction
+   * after the spatial discontinuity of a portal traversal.
+   */
+  private clearIceMomentumAfterPortal(): void {
+    if (!this.snake) return;
+    this.snake.clearPendingMomentum();
+  }
+
   private applyVoidRiftInputGuard(biome: Biome): void {
     if (!this.snake) {
       return;
@@ -1068,7 +1093,12 @@ export class MainScene extends Phaser.Scene {
     });
   }
 
-  private applyVoidRiftGravityNudgeIfDue(): boolean {
+  /**
+   * @param skipNudge — When true the step counter still advances but the
+   *   actual gravity displacement is suppressed. Used when a portal
+   *   teleport already displaced the snake on this step.
+   */
+  private applyVoidRiftGravityNudgeIfDue(skipNudge = false): boolean {
     if (!this.snake || this.biomeManager.getCurrentBiome() !== Biome.VoidRift) {
       return false;
     }
@@ -1077,6 +1107,12 @@ export class MainScene extends Phaser.Scene {
     const head = this.snake.getHeadPosition();
     const cadenceSteps = this.getVoidRiftGravityCadenceSteps(head);
     if (this.voidGravityStepCounter % cadenceSteps !== 0) {
+      return false;
+    }
+
+    // Portal teleport already displaced the snake this step — skip the
+    // actual nudge but still count the step for cadence tracking.
+    if (skipNudge) {
       return false;
     }
 
