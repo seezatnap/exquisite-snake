@@ -889,6 +889,140 @@ describe("MainScene", () => {
     expect(scene.getMoltenLavaPools()).toEqual([{ col: 0, row: 1 }]);
   });
 
+  it("keeps food on the entry tile when snake traversal teleports through a portal", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.enterPhase("playing");
+
+    const snake = scene.getSnake()!;
+    const food = scene.getFood()!;
+    snake.reset({ col: 10, row: 10 }, "right", 1);
+    snake.getTicker().setInterval(100);
+
+    const forcedFoodPos = { col: 11, row: 10 };
+    const forcedFoodPixel = gridToPixel(forcedFoodPos);
+    (food as unknown as { position: { col: number; row: number } }).position = {
+      ...forcedFoodPos,
+    };
+    food.getSprite().setPosition(forcedFoodPixel.x, forcedFoodPixel.y);
+
+    vi.spyOn(scene.getPortalManager(), "update").mockReturnValue({
+      spawnedPairs: [],
+      lifecycleTransitions: [],
+      despawnedPairIds: [],
+      orderedEvents: [],
+    });
+    vi.spyOn(scene.getPortalManager(), "getExitPositionForEntryCell").mockImplementation(
+      (entryCell) => {
+        if (entryCell.col === 11 && entryCell.row === 10) {
+          return { col: 3, row: 4 };
+        }
+        return null;
+      },
+    );
+
+    mockTimeDelayedCall.mockClear();
+    scene.update(0, 100);
+
+    expect(snake.getHeadPosition()).toEqual({ col: 3, row: 4 });
+    expect(scene.getScore()).toBe(0);
+    expect(snake.getLength()).toBe(1);
+    expect(food.getPosition()).toEqual(forcedFoodPos);
+    expect(mockTimeDelayedCall).not.toHaveBeenCalled();
+  });
+
+  it("keeps food respawns off active portal endpoint cells", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.setRng(() => 0);
+    scene.enterPhase("playing");
+
+    const snake = scene.getSnake()!;
+    const food = scene.getFood()!;
+    snake.reset({ col: 10, row: 10 }, "right", 1);
+    snake.getTicker().setInterval(100);
+
+    const forcedFoodPos = { col: 11, row: 10 };
+    const forcedFoodPixel = gridToPixel(forcedFoodPos);
+    (food as unknown as { position: { col: number; row: number } }).position = {
+      ...forcedFoodPos,
+    };
+    food.getSprite().setPosition(forcedFoodPixel.x, forcedFoodPixel.y);
+
+    const endpointA = {
+      id: "portal-pair-invariant:a",
+      pairId: "portal-pair-invariant",
+      linkedEndpointId: "portal-pair-invariant:b",
+      position: { col: 0, row: 0 },
+    };
+    const endpointB = {
+      id: "portal-pair-invariant:b",
+      pairId: "portal-pair-invariant",
+      linkedEndpointId: "portal-pair-invariant:a",
+      position: { col: 1, row: 0 },
+    };
+
+    vi.spyOn(scene.getPortalManager(), "update").mockReturnValue({
+      spawnedPairs: [],
+      lifecycleTransitions: [],
+      despawnedPairIds: [],
+      orderedEvents: [],
+    });
+    vi.spyOn(scene.getPortalManager(), "getExitPositionForEntryCell").mockReturnValue(null);
+    vi.spyOn(scene.getPortalManager(), "getActivePortalEndpoints").mockReturnValue([
+      endpointA,
+      endpointB,
+    ]);
+
+    scene.update(0, 100);
+
+    const respawnedFood = food.getPosition();
+    expect(respawnedFood).not.toEqual(endpointA.position);
+    expect(respawnedFood).not.toEqual(endpointB.position);
+    expect(scene.getScore()).toBe(1);
+  });
+
+  it("replays echo ghost history at recorded portal-exit cells without portal rerouting", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.enterPhase("playing");
+
+    const snake = scene.getSnake()!;
+    const ghost = scene.getEchoGhost()!;
+    snake.reset({ col: 10, row: 10 }, "right", 1);
+    snake.getTicker().setInterval(100);
+    ghost.reset();
+
+    vi.spyOn(scene.getPortalManager(), "update").mockReturnValue({
+      spawnedPairs: [],
+      lifecycleTransitions: [],
+      despawnedPairIds: [],
+      orderedEvents: [],
+    });
+    const portalExitSpy = vi
+      .spyOn(scene.getPortalManager(), "getExitPositionForEntryCell")
+      .mockImplementation((entryCell) => {
+        if (entryCell.col === 11 && entryCell.row === 10) {
+          return { col: 3, row: 4 };
+        }
+        if (entryCell.col === 3 && entryCell.row === 4) {
+          return { col: 20, row: 20 };
+        }
+        return null;
+      });
+
+    scene.update(0, 100);
+    expect(snake.getHeadPosition()).toEqual({ col: 3, row: 4 });
+    expect(portalExitSpy).toHaveBeenCalledTimes(1);
+
+    snake.getTicker().setInterval(60_000);
+    scene.update(0, 5_000);
+
+    expect(portalExitSpy).toHaveBeenCalledTimes(1);
+    expect(ghost.isActive()).toBe(true);
+    expect(ghost.getPlaybackSegments()).toEqual([{ col: 3, row: 4 }]);
+  });
+
   it("renders split-snake mirror positions on the entry side while threading is active", () => {
     const scene = new MainScene();
     scene.create();
