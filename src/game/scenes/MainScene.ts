@@ -43,6 +43,7 @@ import {
 } from "../systems/biomeMechanics";
 import { PortalManager, type PortalManagerOptions } from "../systems/PortalManager";
 import { PortalRenderer } from "../systems/PortalRenderer";
+import { SplitSnakeRenderer } from "../systems/SplitSnakeRenderer";
 import type { PortalPair } from "../entities/Portal";
 
 // ── Default spawn configuration ─────────────────────────────────
@@ -212,6 +213,9 @@ export class MainScene extends Phaser.Scene {
   /** Renders swirling vortex visuals for active portal pairs. */
   private portalRenderer: PortalRenderer = new PortalRenderer();
 
+  /** Renders split-snake visual effects during portal transit. */
+  private splitSnakeRenderer: SplitSnakeRenderer = new SplitSnakeRenderer();
+
   /** Shared balancing knobs for Ice, Molten, and Void biome mechanics. */
   private biomeMechanicsConfig: BiomeMechanicsConfig = cloneBiomeMechanicsConfig(
     DEFAULT_BIOME_MECHANICS_CONFIG,
@@ -313,6 +317,7 @@ export class MainScene extends Phaser.Scene {
     }
     this.portalManager.reset();
     this.portalRenderer.destroy();
+    this.splitSnakeRenderer.destroy();
     this.biomeManager.stopRun();
     this.resetMoltenCoreState();
     this.clearBiomeTransitionEffect();
@@ -411,6 +416,7 @@ export class MainScene extends Phaser.Scene {
     this.destroyEntities();
     this.createEntities();
     this.portalRenderer.reset();
+    this.splitSnakeRenderer.reset();
     this.portalManager.setRng(this.rng);
     this.updatePortalOccupancyCheckers();
     this.portalManager.startRun();
@@ -421,6 +427,7 @@ export class MainScene extends Phaser.Scene {
     shakeCamera(this);
     this.portalManager.stopRun();
     this.portalRenderer.reset();
+    this.splitSnakeRenderer.reset();
     this.biomeManager.stopRun();
     this.resetMoltenCoreState();
     this.clearBiomeTransitionEffect();
@@ -634,6 +641,10 @@ export class MainScene extends Phaser.Scene {
     return this.portalRenderer;
   }
 
+  getSplitSnakeRenderer(): SplitSnakeRenderer {
+    return this.splitSnakeRenderer;
+  }
+
   /**
    * Rewind integration hook: capture the active EchoGhost buffer/timing snapshot.
    */
@@ -728,6 +739,14 @@ export class MainScene extends Phaser.Scene {
 
     // Render portal visuals (swirling vortex) for active pairs
     this.portalRenderer.update(this, delta, this.portalManager.getActivePairs());
+
+    // Render split-snake effects during portal transit
+    this.splitSnakeRenderer.update(
+      this,
+      delta,
+      this.snake?.getSegments() ?? [],
+      this.snake?.getPortalTransit() ?? null,
+    );
   }
 
   /**
