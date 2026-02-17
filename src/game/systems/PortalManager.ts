@@ -39,10 +39,27 @@ export interface PortalLifecycleTransitionEvent {
   transition: PortalLifecycleTransition;
 }
 
+export type PortalManagerEvent =
+  | {
+      type: "spawned";
+      pairId: string;
+      endpoints: readonly [GridPos, GridPos];
+    }
+  | {
+      type: "lifecycleTransition";
+      pairId: string;
+      transition: PortalLifecycleTransition;
+    }
+  | {
+      type: "despawned";
+      pairId: string;
+    };
+
 export interface PortalManagerUpdateResult {
   spawnedPairs: PortalSpawnEvent[];
   lifecycleTransitions: PortalLifecycleTransitionEvent[];
   despawnedPairIds: string[];
+  orderedEvents: PortalManagerEvent[];
 }
 
 export const DEFAULT_PORTAL_SPAWN_INTERVAL_RANGE_MS: PortalSpawnIntervalRangeMs = {
@@ -138,7 +155,11 @@ export class PortalManager {
       );
       const advancedMs = Math.max(0, timeToNextEventMs);
       if (advancedMs > 0) {
-        this.advanceTimers(advancedMs, result.lifecycleTransitions);
+        this.advanceTimers(
+          advancedMs,
+          result.lifecycleTransitions,
+          result.orderedEvents,
+        );
         remainingMs -= advancedMs;
       }
 
@@ -178,6 +199,7 @@ export class PortalManager {
   private advanceTimers(
     deltaMs: number,
     transitions: PortalLifecycleTransitionEvent[],
+    orderedEvents: PortalManagerEvent[],
   ): void {
     this.msUntilNextSpawn = Math.max(0, this.msUntilNextSpawn - deltaMs);
     if (!this.activePortal) {
@@ -188,6 +210,11 @@ export class PortalManager {
     const portalTransitions = this.activePortal.advance(deltaMs);
     for (const transition of portalTransitions) {
       transitions.push({ pairId, transition });
+      orderedEvents.push({
+        type: "lifecycleTransition",
+        pairId,
+        transition,
+      });
     }
   }
 
@@ -198,7 +225,12 @@ export class PortalManager {
     let handledEvent = false;
 
     if (this.activePortal?.isCollapsed()) {
-      result.despawnedPairIds.push(this.activePortal.getPairId());
+      const despawnedPairId = this.activePortal.getPairId();
+      result.despawnedPairIds.push(despawnedPairId);
+      result.orderedEvents.push({
+        type: "despawned",
+        pairId: despawnedPairId,
+      });
       this.activePortal = null;
       handledEvent = true;
     }
@@ -209,11 +241,20 @@ export class PortalManager {
         const spawnedPortal = this.trySpawnPortal(spawnContext);
         if (spawnedPortal) {
           const [a, b] = spawnedPortal.getEndpoints();
-          result.spawnedPairs.push({
+          const spawnEvent = {
             pairId: spawnedPortal.getPairId(),
             endpoints: [
               cloneGridPos(a.position),
               cloneGridPos(b.position),
+            ] as const,
+          };
+          result.spawnedPairs.push(spawnEvent);
+          result.orderedEvents.push({
+            type: "spawned",
+            pairId: spawnEvent.pairId,
+            endpoints: [
+              cloneGridPos(spawnEvent.endpoints[0]),
+              cloneGridPos(spawnEvent.endpoints[1]),
             ] as const,
           });
         }
@@ -263,6 +304,7 @@ function createEmptyUpdateResult(): PortalManagerUpdateResult {
     spawnedPairs: [],
     lifecycleTransitions: [],
     despawnedPairIds: [],
+    orderedEvents: [],
   };
 }
 

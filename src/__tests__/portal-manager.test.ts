@@ -45,6 +45,16 @@ describe("PortalManager spawn cadence", () => {
         { col: 1, row: 1 },
       ],
     });
+    expect(spawnResult.orderedEvents).toEqual([
+      {
+        type: "spawned",
+        pairId: "portal-pair-1",
+        endpoints: [
+          { col: 1, row: 0 },
+          { col: 1, row: 1 },
+        ],
+      },
+    ]);
 
     const activePortal = manager.getActivePortal();
     expect(activePortal?.getState()).toBe("active");
@@ -79,6 +89,22 @@ describe("PortalManager portal lifecycle", () => {
       },
     ]);
     expect(collapseResult.despawnedPairIds).toEqual(["portal-pair-1"]);
+    expect(collapseResult.orderedEvents).toEqual([
+      {
+        type: "lifecycleTransition",
+        pairId: "portal-pair-1",
+        transition: { from: "active", to: "collapsing", elapsedMs: 8_000 },
+      },
+      {
+        type: "lifecycleTransition",
+        pairId: "portal-pair-1",
+        transition: { from: "collapsing", to: "collapsed", elapsedMs: 8_000 },
+      },
+      {
+        type: "despawned",
+        pairId: "portal-pair-1",
+      },
+    ]);
     expect(manager.getActivePortal()).toBeNull();
   });
 
@@ -117,6 +143,52 @@ describe("PortalManager portal lifecycle", () => {
     ]);
     expect(result.despawnedPairIds).toEqual(["portal-pair-1", "portal-pair-2"]);
     expect(result.lifecycleTransitions).toHaveLength(4);
+    expect(result.orderedEvents).toEqual([
+      {
+        type: "spawned",
+        pairId: "portal-pair-1",
+        endpoints: [
+          { col: 0, row: 0 },
+          { col: 0, row: 1 },
+        ],
+      },
+      {
+        type: "lifecycleTransition",
+        pairId: "portal-pair-1",
+        transition: { from: "active", to: "collapsing", elapsedMs: 8_000 },
+      },
+      {
+        type: "lifecycleTransition",
+        pairId: "portal-pair-1",
+        transition: { from: "collapsing", to: "collapsed", elapsedMs: 8_000 },
+      },
+      {
+        type: "despawned",
+        pairId: "portal-pair-1",
+      },
+      {
+        type: "spawned",
+        pairId: "portal-pair-2",
+        endpoints: [
+          { col: 0, row: 0 },
+          { col: 0, row: 1 },
+        ],
+      },
+      {
+        type: "lifecycleTransition",
+        pairId: "portal-pair-2",
+        transition: { from: "active", to: "collapsing", elapsedMs: 8_000 },
+      },
+      {
+        type: "lifecycleTransition",
+        pairId: "portal-pair-2",
+        transition: { from: "collapsing", to: "collapsed", elapsedMs: 8_000 },
+      },
+      {
+        type: "despawned",
+        pairId: "portal-pair-2",
+      },
+    ]);
     expect(manager.getActivePortal()).toBeNull();
     expect(manager.getMsUntilNextSpawn()).toBe(14_000);
   });

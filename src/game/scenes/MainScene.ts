@@ -41,6 +41,12 @@ import {
   normalizeRandomHook,
   sampleBiomeRandom,
 } from "../systems/biomeMechanics";
+import type { PortalLifecycleState } from "../entities/Portal";
+import {
+  PortalManager,
+  type PortalManagerUpdateResult,
+  type PortalSpawnContext,
+} from "../systems/PortalManager";
 
 // ── Default spawn configuration ─────────────────────────────────
 
@@ -56,6 +62,27 @@ const VOID_RIFT_CENTER: GridPos = {
   row: Math.floor(GRID_ROWS / 2),
 };
 const VOID_RIFT_VORTEX_SPIN_RADIANS_PER_SEC = Math.PI * 0.75;
+
+export const PORTAL_SCENE_EVENTS = {
+  UPDATE: "portalUpdate",
+  STAGE_EXPOSURE: "portalStageExposure",
+  STATE_CHANGE: "portalStateChange",
+} as const;
+
+export type PortalExposureStage = "rendering" | "movement" | "collision";
+
+export interface PortalRuntimeSnapshot {
+  deltaMs: number;
+  activePortalPairId: string | null;
+  activePortalState: PortalLifecycleState | null;
+  activePortalEndpoints: readonly [GridPos, GridPos] | null;
+  updateResult: PortalManagerUpdateResult;
+}
+
+export interface PortalStageExposure {
+  stage: PortalExposureStage;
+  snapshot: PortalRuntimeSnapshot;
+}
 
 interface BiomeVisualTheme {
   backgroundColor: number;
@@ -203,6 +230,13 @@ export class MainScene extends Phaser.Scene {
   /** Biome rotation/timing owner for the current run. */
   private readonly biomeManager = new BiomeManager();
 
+  /** Portal spawn/collapse scheduler for the current run. */
+  private readonly portalManager: PortalManager;
+
+  /** Last portal-manager update payload emitted during the current frame. */
+  private lastPortalUpdateResult: PortalManagerUpdateResult =
+    createEmptyPortalUpdateResult();
+
   /** Shared balancing knobs for Ice, Molten, and Void biome mechanics. */
   private biomeMechanicsConfig: BiomeMechanicsConfig = cloneBiomeMechanicsConfig(
     DEFAULT_BIOME_MECHANICS_CONFIG,
@@ -271,6 +305,9 @@ export class MainScene extends Phaser.Scene {
 
   constructor() {
     super({ key: "MainScene" });
+    this.portalManager = new PortalManager({
+      rng: () => sampleBiomeRandom(this.rng),
+    });
   }
 
   /** Bound listener for bridge phase changes (stored for cleanup). */
@@ -303,6 +340,8 @@ export class MainScene extends Phaser.Scene {
       this.onBridgePhaseChange = null;
     }
     this.biomeManager.stopRun();
+    this.portalManager.stopRun();
+    this.lastPortalUpdateResult = createEmptyPortalUpdateResult();
     this.resetMoltenCoreState();
     this.clearBiomeTransitionEffect();
     this.destroyEntities();
@@ -329,14 +368,19 @@ export class MainScene extends Phaser.Scene {
     this.updateBiomeState(delta);
 
     if (!this.snake || !this.food || !this.echoGhost) return;
+    const portalSnapshot = this.updatePortalState(delta);
+
+    this.emitPortalStageExposure("rendering", portalSnapshot);
     this.echoGhost.advance(delta);
     this.updateEchoGhostVisuals(delta);
     this.updateMoltenCoreMechanics(delta);
     this.updateBiomeMechanicVisuals(delta);
 
+    this.emitPortalStageExposure("movement", portalSnapshot);
     const stepped = this.snake.update(delta);
 
     if (stepped) {
+      this.emitPortalStageExposure("collision", portalSnapshot);
       if (this.checkCollisions()) {
         return; // Game over — stop processing this frame
       }
@@ -379,6 +423,8 @@ export class MainScene extends Phaser.Scene {
   private startRun(): void {
     this.activeRunId += 1;
     this.biomeManager.startRun();
+    this.portalManager.startRun();
+    this.lastPortalUpdateResult = createEmptyPortalUpdateResult();
     gameBridge.resetRun({
       currentBiome: this.biomeManager.getCurrentBiome(),
       biomeVisitStats: this.biomeManager.getVisitStats(),
@@ -398,6 +444,8 @@ export class MainScene extends Phaser.Scene {
   endRun(): void {
     shakeCamera(this);
     this.biomeManager.stopRun();
+    this.portalManager.stopRun();
+    this.lastPortalUpdateResult = createEmptyPortalUpdateResult();
     this.resetMoltenCoreState();
     this.clearBiomeTransitionEffect();
     this.clearBiomeShiftCountdown();
@@ -601,6 +649,14 @@ export class MainScene extends Phaser.Scene {
     return this.echoGhost;
   }
 
+  getPortalManager(): PortalManager {
+    return this.portalManager;
+  }
+
+  getPortalUpdateResult(): PortalManagerUpdateResult {
+    return this.lastPortalUpdateResult;
+  }
+
   /**
    * Rewind integration hook: capture the active EchoGhost buffer/timing snapshot.
    */
@@ -620,6 +676,68 @@ export class MainScene extends Phaser.Scene {
   }
 
   // ── Arena grid ──────────────────────────────────────────────
+
+  private updatePortalState(deltaMs: number): PortalRuntimeSnapshot {
+    const updateResult = this.portalManager.update(
+      deltaMs,
+      this.createPortalSpawnContext(),
+    );
+    this.lastPortalUpdateResult = updateResult;
+
+    const activePortal = this.portalManager.getActivePortal();
+    const activePortalEndpoints = activePortal
+      ? clonePortalEndpoints(activePortal.getEndpoints())
+      : null;
+
+    const snapshot: PortalRuntimeSnapshot = {
+      deltaMs,
+      activePortalPairId: activePortal?.getPairId() ?? null,
+      activePortalState: activePortal?.getState() ?? null,
+      activePortalEndpoints,
+      updateResult,
+    };
+
+    this.events?.emit?.(PORTAL_SCENE_EVENTS.UPDATE, snapshot);
+    for (const portalEvent of updateResult.orderedEvents) {
+      this.events?.emit?.(PORTAL_SCENE_EVENTS.STATE_CHANGE, portalEvent);
+    }
+
+    return snapshot;
+  }
+
+  private emitPortalStageExposure(
+    stage: PortalExposureStage,
+    snapshot: PortalRuntimeSnapshot,
+  ): void {
+    const exposure: PortalStageExposure = { stage, snapshot };
+    this.events?.emit?.(PORTAL_SCENE_EVENTS.STAGE_EXPOSURE, exposure);
+  }
+
+  private createPortalSpawnContext(): PortalSpawnContext {
+    const occupiedCells: GridPos[] = [];
+    if (this.snake) {
+      for (const segment of this.snake.getSegments()) {
+        occupiedCells.push({ col: segment.col, row: segment.row });
+      }
+    }
+    if (this.food) {
+      const foodPos = this.food.getPosition();
+      occupiedCells.push({ col: foodPos.col, row: foodPos.row });
+    }
+
+    const blockedCells: GridPos[] = [];
+    for (const lavaPool of this.moltenLavaPools.values()) {
+      blockedCells.push({ col: lavaPool.col, row: lavaPool.row });
+    }
+    if (this.biomeManager.getCurrentBiome() === Biome.VoidRift) {
+      blockedCells.push({ ...VOID_RIFT_CENTER });
+    }
+
+    return {
+      occupiedCells,
+      blockedCells,
+    };
+  }
 
   private updateBiomeState(delta: number): void {
     this.updateBiomeTransitionEffect(delta);
@@ -1734,4 +1852,22 @@ export class MainScene extends Phaser.Scene {
 
     gfx.strokePath();
   }
+}
+
+function createEmptyPortalUpdateResult(): PortalManagerUpdateResult {
+  return {
+    spawnedPairs: [],
+    lifecycleTransitions: [],
+    despawnedPairIds: [],
+    orderedEvents: [],
+  };
+}
+
+function clonePortalEndpoints(
+  endpoints: readonly [{ position: GridPos }, { position: GridPos }],
+): readonly [GridPos, GridPos] {
+  return [
+    { col: endpoints[0].position.col, row: endpoints[0].position.row },
+    { col: endpoints[1].position.col, row: endpoints[1].position.row },
+  ] as const;
 }
