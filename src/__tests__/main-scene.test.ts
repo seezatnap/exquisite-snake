@@ -593,6 +593,79 @@ describe("MainScene", () => {
     expect(snake.getPortalTraversalSnapshots()).toEqual([]);
   });
 
+  it("renders split-snake mirror positions on the entry side while threading is active", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.setRng(() => 0);
+    scene.enterPhase("playing");
+
+    const snake = scene.getSnake()!;
+    snake.reset({ col: 10, row: 10 }, "right", 4);
+    snake.getTicker().setInterval(100);
+
+    vi.spyOn(scene.getPortalManager(), "update").mockReturnValue({
+      spawnedPairs: [],
+      lifecycleTransitions: [],
+      despawnedPairIds: [],
+      orderedEvents: [],
+    });
+    vi.spyOn(scene.getPortalManager(), "getExitPositionForEntryCell").mockImplementation(
+      (entryCell) => {
+        if (entryCell.col === 11 && entryCell.row === 10) {
+          return { col: 3, row: 4 };
+        }
+        return null;
+      },
+    );
+
+    mockFillCircle.mockClear();
+    scene.update(0, 100); // step into portal; split render starts
+
+    expect(hasFillCircleAt(gridToPixel({ col: 11, row: 10 }))).toBe(true);
+
+    mockFillCircle.mockClear();
+    scene.update(0, 100); // first body segment threads
+
+    expect(hasFillCircleAt(gridToPixel({ col: 12, row: 10 }))).toBe(true);
+    expect(hasFillCircleAt(gridToPixel({ col: 11, row: 10 }))).toBe(true);
+  });
+
+  it("clears split-snake overlay drawing once portal threading completes", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.setRng(() => 0);
+    scene.enterPhase("playing");
+
+    const snake = scene.getSnake()!;
+    snake.reset({ col: 10, row: 10 }, "right", 4);
+    snake.getTicker().setInterval(100);
+
+    vi.spyOn(scene.getPortalManager(), "update").mockReturnValue({
+      spawnedPairs: [],
+      lifecycleTransitions: [],
+      despawnedPairIds: [],
+      orderedEvents: [],
+    });
+    vi.spyOn(scene.getPortalManager(), "getExitPositionForEntryCell").mockImplementation(
+      (entryCell) => {
+        if (entryCell.col === 11 && entryCell.row === 10) {
+          return { col: 3, row: 4 };
+        }
+        return null;
+      },
+    );
+
+    scene.update(0, 100); // start traversal
+    scene.update(0, 100); // thread #1
+    scene.update(0, 100); // thread #2
+
+    mockFillCircle.mockClear();
+    scene.update(0, 100); // thread #3 -> complete
+
+    expect(snake.isPortalThreadingActive()).toBe(false);
+    expect(mockFillCircle).not.toHaveBeenCalled();
+  });
+
   it("renders swirling vortex visuals for both endpoints of an active portal pair", () => {
     const scene = new MainScene();
     scene.create();
