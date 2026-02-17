@@ -1,5 +1,5 @@
 import Phaser from "phaser";
-import { TILE_SIZE, RENDER_DEPTH } from "../config";
+import { TILE_SIZE, GRID_COLS, GRID_ROWS, RENDER_DEPTH } from "../config";
 import { gridToPixel } from "../utils/grid";
 import type { PortalPair, PortalLifecycleState } from "../entities/Portal";
 
@@ -28,6 +28,17 @@ export const PORTAL_COLOR_B = 0xff2daa;
 
 /** Core glow color (white-ish). */
 export const PORTAL_CORE_COLOR = 0xffffff;
+
+// ── Tile distortion configuration ────────────────────────────────
+
+/** Distortion radius in tiles around each portal end. */
+export const DISTORTION_RADIUS = 3;
+
+/** Maximum distortion intensity (0 = none, 1 = full pull toward portal center). */
+export const DISTORTION_INTENSITY = 0.35;
+
+/** Maximum alpha of the distortion overlay on the closest tiles. */
+export const DISTORTION_ALPHA = 0.12;
 
 // ── Lifecycle callbacks ────────────────────────────────────────
 
@@ -137,6 +148,10 @@ export class PortalRenderer {
       const [posA, posB] = pair.getPositions();
       const pixelA = gridToPixel(posA);
       const pixelB = gridToPixel(posB);
+
+      // Tile distortion layer (drawn first so vortex renders on top)
+      this.drawTileDistortion(gfx, posA.col, posA.row, PORTAL_COLOR_A, visibility);
+      this.drawTileDistortion(gfx, posB.col, posB.row, PORTAL_COLOR_B, visibility);
 
       this.drawPortalEnd(gfx, pixelA.x, pixelA.y, PORTAL_COLOR_A, visibility, 0);
       this.drawPortalEnd(gfx, pixelB.x, pixelB.y, PORTAL_COLOR_B, visibility, Math.PI);
@@ -317,6 +332,88 @@ export class PortalRenderer {
     const innerRadius = coreRadius * 0.5;
     gfx.fillStyle?.(PORTAL_CORE_COLOR, alpha * 0.7);
     gfx.fillCircle?.(cx, cy, innerRadius);
+  }
+
+  // ── Tile distortion ────────────────────────────────────────
+
+  /**
+   * Draw a barrel-distortion-like scale effect on tiles near a portal end.
+   *
+   * Tiles within `DISTORTION_RADIUS` are drawn as slightly offset/scaled
+   * rectangles that appear pulled toward the portal center. The closer
+   * a tile is to the portal, the stronger the pull. The effect is modulated
+   * by `visibility` so it fades in/out with the portal lifecycle.
+   *
+   * @param gfx        - Phaser graphics object
+   * @param portalCol  - Portal grid column
+   * @param portalRow  - Portal grid row
+   * @param color      - Primary color for this portal end
+   * @param visibility - 0 (invisible) to 1 (fully visible)
+   */
+  private drawTileDistortion(
+    gfx: Phaser.GameObjects.Graphics,
+    portalCol: number,
+    portalRow: number,
+    color: number,
+    visibility: number,
+  ): void {
+    const radius = DISTORTION_RADIUS;
+    const intensity = DISTORTION_INTENSITY * visibility;
+    const maxAlpha = DISTORTION_ALPHA * visibility;
+
+    if (intensity <= 0 || maxAlpha <= 0) return;
+
+    const portalPixel = gridToPixel({ col: portalCol, row: portalRow });
+
+    const minCol = Math.max(0, portalCol - radius);
+    const maxCol = Math.min(GRID_COLS - 1, portalCol + radius);
+    const minRow = Math.max(0, portalRow - radius);
+    const maxRow = Math.min(GRID_ROWS - 1, portalRow + radius);
+
+    for (let col = minCol; col <= maxCol; col++) {
+      for (let row = minRow; row <= maxRow; row++) {
+        // Skip the portal tile itself
+        if (col === portalCol && row === portalRow) continue;
+
+        const dx = col - portalCol;
+        const dy = row - portalRow;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+
+        if (dist > radius) continue;
+
+        // Falloff: 1 at center, 0 at radius edge
+        const falloff = 1 - dist / radius;
+        const pullStrength = falloff * falloff * intensity;
+        const alpha = falloff * falloff * maxAlpha;
+
+        if (alpha <= 0.001) continue;
+
+        // Tile top-left corner in pixels
+        const tileX = col * TILE_SIZE;
+        const tileY = row * TILE_SIZE;
+        const tileCenterX = tileX + TILE_SIZE * 0.5;
+        const tileCenterY = tileY + TILE_SIZE * 0.5;
+
+        // Pull the tile center toward the portal
+        const pullX = (portalPixel.x - tileCenterX) * pullStrength;
+        const pullY = (portalPixel.y - tileCenterY) * pullStrength;
+
+        // Scale the tile (shrink slightly as it gets pulled inward)
+        const scale = 1 - pullStrength * 0.3;
+        const scaledSize = TILE_SIZE * scale;
+        const offsetX = (TILE_SIZE - scaledSize) * 0.5;
+        const offsetY = (TILE_SIZE - scaledSize) * 0.5;
+
+        // Draw the distorted tile overlay
+        gfx.fillStyle?.(color, alpha);
+        gfx.fillRect?.(
+          tileX + offsetX + pullX,
+          tileY + offsetY + pullY,
+          scaledSize,
+          scaledSize,
+        );
+      }
+    }
   }
 
   // ── Lifecycle hook processing ───────────────────────────────
