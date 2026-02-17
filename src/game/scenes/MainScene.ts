@@ -429,6 +429,7 @@ export class MainScene extends Phaser.Scene {
 
     if (!this.snake || !this.food || !this.echoGhost) return;
     const portalSnapshot = this.updatePortalState(delta);
+    this.resolvePortalCollapseMidTransit(portalSnapshot);
 
     this.emitPortalStageExposure("rendering", portalSnapshot);
     this.echoGhost.advance(delta);
@@ -574,6 +575,24 @@ export class MainScene extends Phaser.Scene {
     }
 
     this.snake.beginPortalTraversal(entryPos, exitPos);
+  }
+
+  private resolvePortalCollapseMidTransit(
+    snapshot: PortalRuntimeSnapshot,
+  ): void {
+    if (!this.snake || !this.snake.isPortalThreadingActive()) {
+      return;
+    }
+
+    const collapsedDuringUpdate = snapshot.updateResult.lifecycleTransitions.some(
+      ({ transition }) =>
+        transition.to === "collapsing" || transition.to === "collapsed",
+    );
+    if (!collapsedDuringUpdate) {
+      return;
+    }
+
+    this.snake.forceCompletePortalTraversal();
   }
 
   // ── Collision detection ───────────────────────────────────────
