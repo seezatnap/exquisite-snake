@@ -247,4 +247,22 @@ describe("Portal empty-cell placement helpers", () => {
       }),
     ).toBeNull();
   });
+
+  it("does not return null when a valid pair exists but one candidate cell is isolated", () => {
+    expect(
+      pickRandomEmptyPortalPairCells({
+        gridCols: 5,
+        gridRows: 1,
+        occupiedCells: [
+          { col: 1, row: 0 },
+          { col: 3, row: 0 },
+        ],
+        rng: () => 0.34,
+        minManhattanDistance: 3,
+      }),
+    ).toEqual([
+      { col: 0, row: 0 },
+      { col: 4, row: 0 },
+    ]);
+  });
 });
