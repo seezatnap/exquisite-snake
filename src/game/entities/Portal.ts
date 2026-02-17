@@ -124,7 +124,14 @@ export function pickRandomEmptyPortalPairCells(
 
   const rng = options.rng ?? Math.random;
   const minDistance = sanitizeNonNegativeInt(options.minManhattanDistance, 0);
-  const validPairs: Array<[GridPos, GridPos]> = [];
+  const validPairCount = countValidPortalPairs(emptyCells, minDistance);
+  if (validPairCount === 0) {
+    return null;
+  }
+
+  let remainingPairIndex = Math.floor(sampleRng(rng) * validPairCount);
+  let firstValidPair: [GridPos, GridPos] | null = null;
+
   for (let firstIndex = 0; firstIndex < emptyCells.length - 1; firstIndex += 1) {
     for (
       let secondIndex = firstIndex + 1;
@@ -133,19 +140,21 @@ export function pickRandomEmptyPortalPairCells(
     ) {
       const first = emptyCells[firstIndex];
       const second = emptyCells[secondIndex];
-      if (minDistance > 0 && manhattanDistance(first, second) < minDistance) {
+      if (!isValidPortalPair(first, second, minDistance)) {
         continue;
       }
-      validPairs.push([first, second]);
+
+      if (!firstValidPair) {
+        firstValidPair = [first, second];
+      }
+      if (remainingPairIndex === 0) {
+        return [first, second];
+      }
+      remainingPairIndex -= 1;
     }
   }
 
-  if (validPairs.length === 0) {
-    return null;
-  }
-
-  const pairIndex = Math.floor(sampleRng(rng) * validPairs.length);
-  return validPairs[pairIndex];
+  return firstValidPair;
 }
 
 export class Portal {
@@ -499,6 +508,39 @@ function sampleRng(rng: () => number): number {
 
 function manhattanDistance(a: GridPos, b: GridPos): number {
   return Math.abs(a.col - b.col) + Math.abs(a.row - b.row);
+}
+
+function countValidPortalPairs(
+  emptyCells: readonly GridPos[],
+  minDistance: number,
+): number {
+  let count = 0;
+  for (let firstIndex = 0; firstIndex < emptyCells.length - 1; firstIndex += 1) {
+    for (
+      let secondIndex = firstIndex + 1;
+      secondIndex < emptyCells.length;
+      secondIndex += 1
+    ) {
+      if (
+        isValidPortalPair(
+          emptyCells[firstIndex],
+          emptyCells[secondIndex],
+          minDistance,
+        )
+      ) {
+        count += 1;
+      }
+    }
+  }
+  return count;
+}
+
+function isValidPortalPair(
+  first: GridPos,
+  second: GridPos,
+  minDistance: number,
+): boolean {
+  return minDistance <= 0 || manhattanDistance(first, second) >= minDistance;
 }
 
 function normalizePairId(pairId: string): string {

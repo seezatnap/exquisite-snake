@@ -265,4 +265,45 @@ describe("Portal empty-cell placement helpers", () => {
       { col: 4, row: 0 },
     ]);
   });
+
+  it("supports large-board selection without exhaustive pair allocation", () => {
+    const originalPush = Array.prototype.push as (...items: unknown[]) => number;
+    const maxPushes = 5_000;
+    let pushCount = 0;
+
+    const pushWithBudget = function (
+      this: unknown[],
+      ...items: unknown[]
+    ): number {
+      pushCount += items.length;
+      if (pushCount > maxPushes) {
+        throw new Error(
+          "Exceeded array push budget while selecting a portal pair.",
+        );
+      }
+      return originalPush.call(this, ...items);
+    };
+
+    let pair: [{ col: number; row: number }, { col: number; row: number }] | null =
+      null;
+    Array.prototype.push = pushWithBudget as typeof Array.prototype.push;
+    try {
+      pair = pickRandomEmptyPortalPairCells({
+        gridCols: 40,
+        gridRows: 30,
+        minManhattanDistance: 10,
+        rng: () => 0.271828,
+      });
+    } finally {
+      Array.prototype.push = originalPush as typeof Array.prototype.push;
+    }
+
+    expect(pair).not.toBeNull();
+    expect(pushCount).toBeLessThanOrEqual(maxPushes);
+
+    const [a, b] = pair!;
+    expect(Math.abs(a.col - b.col) + Math.abs(a.row - b.row)).toBeGreaterThanOrEqual(
+      10,
+    );
+  });
 });
