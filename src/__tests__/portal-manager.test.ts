@@ -63,6 +63,43 @@ describe("PortalManager spawn cadence", () => {
     );
     expect(activePortal?.getMsUntilDespawn()).toBe(8_000);
   });
+
+  it("retries cadence after a blocked spawn and succeeds when cells become valid", () => {
+    const manager = new PortalManager({
+      rng: () => 0,
+      gridCols: 2,
+      gridRows: 2,
+      spawnIntervalRangeMs: { minMs: 30_000, maxMs: 30_000 },
+    });
+    manager.startRun();
+
+    const blockedSpawn = manager.update(30_000, {
+      occupiedCells: [
+        { col: 0, row: 0 },
+        { col: 1, row: 0 },
+        { col: 0, row: 1 },
+      ],
+      blockedCells: [{ col: 1, row: 1 }],
+    });
+    expect(blockedSpawn.spawnedPairs).toEqual([]);
+    expect(manager.getActivePortal()).toBeNull();
+    expect(manager.getMsUntilNextSpawn()).toBe(30_000);
+
+    const recoveredSpawn = manager.update(30_000, {
+      occupiedCells: [{ col: 0, row: 0 }],
+      blockedCells: [],
+    });
+    expect(recoveredSpawn.spawnedPairs).toEqual([
+      {
+        pairId: "portal-pair-1",
+        endpoints: [
+          { col: 0, row: 1 },
+          { col: 1, row: 0 },
+        ],
+      },
+    ]);
+    expect(manager.getActivePortal()).not.toBeNull();
+  });
 });
 
 describe("PortalManager portal lifecycle", () => {

@@ -721,6 +721,44 @@ describe("MainScene", () => {
     expect(snake.isAlive()).toBe(false);
   });
 
+  it("does not grant collision immunity when a portal collapses without active threading", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.enterPhase("playing");
+
+    const snake = scene.getSnake()!;
+    snake.reset({ col: GRID_COLS - 1, row: 10 }, "right", 1);
+    snake.getTicker().setInterval(100);
+
+    vi.spyOn(scene.getPortalManager(), "update").mockReturnValue({
+      spawnedPairs: [],
+      lifecycleTransitions: [
+        {
+          pairId: "portal-pair-collapse-without-threading",
+          transition: { from: "active", to: "collapsing", elapsedMs: 8_000 },
+        },
+      ],
+      despawnedPairIds: ["portal-pair-collapse-without-threading"],
+      orderedEvents: [
+        {
+          type: "lifecycleTransition",
+          pairId: "portal-pair-collapse-without-threading",
+          transition: { from: "active", to: "collapsing", elapsedMs: 8_000 },
+        },
+        {
+          type: "despawned",
+          pairId: "portal-pair-collapse-without-threading",
+        },
+      ],
+    });
+    vi.spyOn(scene.getPortalManager(), "getExitPositionForEntryCell").mockReturnValue(null);
+
+    scene.update(0, 100);
+
+    expect(scene.getPhase()).toBe("gameOver");
+    expect(snake.isAlive()).toBe(false);
+  });
+
   it("preserves Ice Cavern momentum turn delay across portal traversal", () => {
     const scene = new MainScene();
     scene.create();
