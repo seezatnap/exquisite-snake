@@ -9,8 +9,11 @@ import {
   PORTAL_COLOR_A,
   PORTAL_COLOR_B,
   PORTAL_CORE_COLOR,
+  DISTORTION_RADIUS,
+  DISTORTION_INTENSITY,
+  DISTORTION_ALPHA,
 } from "@/game/systems/PortalRenderer";
-import { RENDER_DEPTH } from "@/game/config";
+import { RENDER_DEPTH, TILE_SIZE } from "@/game/config";
 import { gridToPixel } from "@/game/utils/grid";
 
 // ── Phaser mock ──────────────────────────────────────────────────
@@ -23,6 +26,7 @@ function createFreshGraphicsMock() {
     strokePath: vi.fn(),
     fillStyle: vi.fn(),
     fillCircle: vi.fn(),
+    fillRect: vi.fn(),
     strokeCircle: vi.fn(),
     clear: vi.fn(),
     destroy: vi.fn(),
@@ -285,15 +289,21 @@ describe("PortalRenderer", () => {
       const graphicsInstance = mockAddGraphics.mock.results[0]?.value;
       const fillStyleCalls = graphicsInstance.fillStyle.mock.calls;
 
-      // fillStyle calls: first 2 for end A core (outer+inner), next 2 for end B core
+      // Filter to only core fillStyle calls (those NOT followed by fillRect).
+      // Core calls use fillCircle; distortion calls use fillRect.
+      // Since each fillCircle is preceded by a fillStyle, find the last N fillStyle
+      // calls matching the number of fillCircle calls.
+      const fillCircleCount = graphicsInstance.fillCircle.mock.calls.length;
+      const coreFillStyleCalls = fillStyleCalls.slice(-fillCircleCount);
+
       // End A outer core uses PORTAL_COLOR_A
-      expect(fillStyleCalls[0][0]).toBe(PORTAL_COLOR_A);
+      expect(coreFillStyleCalls[0][0]).toBe(PORTAL_COLOR_A);
       // End A inner core uses PORTAL_CORE_COLOR
-      expect(fillStyleCalls[1][0]).toBe(PORTAL_CORE_COLOR);
+      expect(coreFillStyleCalls[1][0]).toBe(PORTAL_CORE_COLOR);
       // End B outer core uses PORTAL_COLOR_B
-      expect(fillStyleCalls[2][0]).toBe(PORTAL_COLOR_B);
+      expect(coreFillStyleCalls[2][0]).toBe(PORTAL_COLOR_B);
       // End B inner core uses PORTAL_CORE_COLOR
-      expect(fillStyleCalls[3][0]).toBe(PORTAL_CORE_COLOR);
+      expect(coreFillStyleCalls[3][0]).toBe(PORTAL_CORE_COLOR);
     });
 
     it("draws at correct pixel positions for both ends", () => {
@@ -337,10 +347,12 @@ describe("PortalRenderer", () => {
 
       const graphicsInstance = mockAddGraphics.mock.results[0]?.value;
       const fillStyleCalls = graphicsInstance.fillStyle.mock.calls;
+      const fillCircleCount = graphicsInstance.fillCircle.mock.calls.length;
+      const coreFillStyleCalls = fillStyleCalls.slice(-fillCircleCount);
 
       // At 50% spawn progress, visibility is 0.5
       // Core outer: alpha = 0.5 * 0.6 = 0.3
-      expect(fillStyleCalls[0][1]).toBeCloseTo(0.3, 1);
+      expect(coreFillStyleCalls[0][1]).toBeCloseTo(0.3, 1);
     });
 
     it("draws at zero visibility at the very start of spawning", () => {
@@ -366,9 +378,11 @@ describe("PortalRenderer", () => {
 
       const graphicsInstance = mockAddGraphics.mock.results[0]?.value;
       const fillStyleCalls = graphicsInstance.fillStyle.mock.calls;
+      const fillCircleCount = graphicsInstance.fillCircle.mock.calls.length;
+      const coreFillStyleCalls = fillStyleCalls.slice(-fillCircleCount);
 
       // At full visibility (1.0), core outer alpha = 1.0 * 0.6 = 0.6
-      expect(fillStyleCalls[0][1]).toBeCloseTo(0.6, 1);
+      expect(coreFillStyleCalls[0][1]).toBeCloseTo(0.6, 1);
     });
   });
 
@@ -672,6 +686,297 @@ describe("PortalRenderer", () => {
         renderer.destroy();
         renderer.destroy();
       }).not.toThrow();
+    });
+  });
+
+  describe("tile distortion", () => {
+    it("draws fillRect calls for distorted tiles around active portals", () => {
+      const renderer = new PortalRenderer();
+      const scene = createMockScene();
+      // Place portal away from edges to avoid boundary clamping
+      const pair = createPair({
+        posA: { col: 10, row: 10 },
+        posB: { col: 25, row: 20 },
+        spawnDurationMs: 0,
+      });
+      pair.update(1); // active
+
+      renderer.update(scene, 16, [pair]);
+
+      const graphicsInstance = mockAddGraphics.mock.results[0]?.value;
+      // Distortion should have produced fillRect calls
+      expect(graphicsInstance.fillRect.mock.calls.length).toBeGreaterThan(0);
+    });
+
+    it("uses portal end colors for distortion overlays", () => {
+      const renderer = new PortalRenderer();
+      const scene = createMockScene();
+      const pair = createPair({
+        posA: { col: 10, row: 10 },
+        posB: { col: 25, row: 20 },
+        spawnDurationMs: 0,
+      });
+      pair.update(1);
+
+      renderer.update(scene, 16, [pair]);
+
+      const graphicsInstance = mockAddGraphics.mock.results[0]?.value;
+      const fillStyleCalls = graphicsInstance.fillStyle.mock.calls;
+
+      // Distortion fillStyle calls come before core fillStyle calls
+      // Check that the first distortion call uses PORTAL_COLOR_A
+      expect(fillStyleCalls[0][0]).toBe(PORTAL_COLOR_A);
+
+      // Find the first call using PORTAL_COLOR_B (distortion for end B)
+      const firstEndBCall = fillStyleCalls.find(
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        (c: any[]) => c[0] === PORTAL_COLOR_B,
+      );
+      expect(firstEndBCall).toBeDefined();
+    });
+
+    it("does not draw distortion for collapsed pairs", () => {
+      const renderer = new PortalRenderer();
+      const scene = createMockScene();
+      const pair = createPair({
+        posA: { col: 10, row: 10 },
+        posB: { col: 25, row: 20 },
+        spawnDurationMs: 0,
+        lifespanMs: 100,
+        collapseDurationMs: 100,
+      });
+      pair.update(1); // active
+      pair.update(200); // collapsing
+      pair.update(200); // collapsed
+
+      renderer.update(scene, 16, [pair]);
+
+      const graphicsInstance = mockAddGraphics.mock.results[0]?.value;
+      expect(graphicsInstance.fillRect.mock.calls.length).toBe(0);
+    });
+
+    it("does not draw distortion at zero visibility (start of spawning)", () => {
+      const renderer = new PortalRenderer();
+      const scene = createMockScene();
+      const pair = createPair({
+        posA: { col: 10, row: 10 },
+        posB: { col: 25, row: 20 },
+        spawnDurationMs: 500,
+      });
+      // Don't advance — visibility is 0
+
+      renderer.update(scene, 16, [pair]);
+
+      const graphicsInstance = mockAddGraphics.mock.results[0]?.value;
+      expect(graphicsInstance.fillRect.mock.calls.length).toBe(0);
+    });
+
+    it("scales distortion intensity with visibility during spawning", () => {
+      // 50% spawning should produce lower-alpha distortion than active
+      const pair50 = createPair({
+        id: "p50",
+        posA: { col: 10, row: 10 },
+        posB: { col: 25, row: 20 },
+        spawnDurationMs: 500,
+      });
+      pair50.update(250); // 50% through spawning
+
+      const scene1 = createMockScene();
+      const renderer1 = new PortalRenderer();
+      renderer1.update(scene1, 16, [pair50]);
+      const gfx50 = mockAddGraphics.mock.results[mockAddGraphics.mock.results.length - 1]?.value;
+      const distortionAlpha50 = gfx50.fillStyle.mock.calls[0]?.[1] ?? 0;
+
+      vi.clearAllMocks();
+
+      const pairFull = createPair({
+        id: "pFull",
+        posA: { col: 10, row: 10 },
+        posB: { col: 25, row: 20 },
+        spawnDurationMs: 0,
+      });
+      pairFull.update(1); // active, full visibility
+
+      const scene2 = createMockScene();
+      const renderer2 = new PortalRenderer();
+      renderer2.update(scene2, 16, [pairFull]);
+      const gfxFull = mockAddGraphics.mock.results[mockAddGraphics.mock.results.length - 1]?.value;
+      const distortionAlphaFull = gfxFull.fillStyle.mock.calls[0]?.[1] ?? 0;
+
+      // Half visibility should produce lower distortion alpha
+      expect(distortionAlpha50).toBeGreaterThan(0);
+      expect(distortionAlphaFull).toBeGreaterThan(distortionAlpha50);
+    });
+
+    it("scales distortion with visibility during collapsing", () => {
+      // At 50% collapse (visibility 0.5) vs 75% collapse (visibility 0.25)
+      const pair50 = createPair({
+        id: "p50",
+        posA: { col: 10, row: 10 },
+        posB: { col: 25, row: 20 },
+        spawnDurationMs: 0,
+        lifespanMs: 100,
+        collapseDurationMs: 400,
+      });
+      pair50.update(1);
+      pair50.update(100); // collapsing
+      pair50.update(200); // 50% collapse → visibility 0.5
+
+      const scene1 = createMockScene();
+      const renderer1 = new PortalRenderer();
+      renderer1.update(scene1, 16, [pair50]);
+      const gfx50 = mockAddGraphics.mock.results[mockAddGraphics.mock.results.length - 1]?.value;
+      const rectCount50 = gfx50.fillRect.mock.calls.length;
+
+      vi.clearAllMocks();
+
+      const pair75 = createPair({
+        id: "p75",
+        posA: { col: 10, row: 10 },
+        posB: { col: 25, row: 20 },
+        spawnDurationMs: 0,
+        lifespanMs: 100,
+        collapseDurationMs: 400,
+      });
+      pair75.update(1);
+      pair75.update(100); // collapsing
+      pair75.update(300); // 75% collapse → visibility 0.25
+
+      const scene2 = createMockScene();
+      const renderer2 = new PortalRenderer();
+      renderer2.update(scene2, 16, [pair75]);
+      const gfx75 = mockAddGraphics.mock.results[mockAddGraphics.mock.results.length - 1]?.value;
+      const rectCount75 = gfx75.fillRect.mock.calls.length;
+
+      // Both should produce some distortion, but at lower visibility
+      // fewer tiles may pass the alpha threshold
+      expect(rectCount50).toBeGreaterThan(0);
+      expect(rectCount75).toBeGreaterThanOrEqual(0);
+      // 50% collapse should have at least as many distortion tiles
+      expect(rectCount50).toBeGreaterThanOrEqual(rectCount75);
+    });
+
+    it("does not draw distortion on the portal tile itself", () => {
+      const renderer = new PortalRenderer();
+      const scene = createMockScene();
+      const portalCol = 10;
+      const portalRow = 10;
+      const pair = createPair({
+        posA: { col: portalCol, row: portalRow },
+        posB: { col: 25, row: 20 },
+        spawnDurationMs: 0,
+      });
+      pair.update(1);
+
+      renderer.update(scene, 16, [pair]);
+
+      const graphicsInstance = mockAddGraphics.mock.results[0]?.value;
+      const fillRectCalls = graphicsInstance.fillRect.mock.calls;
+
+      // The portal tile center
+      const portalTileX = portalCol * TILE_SIZE;
+      const portalTileY = portalRow * TILE_SIZE;
+
+      // No fillRect should be drawn exactly at the portal tile's unmodified position
+      // (the portal tile is skipped in distortion)
+      for (const call of fillRectCalls) {
+        const rectX = call[0] as number;
+        const rectY = call[1] as number;
+        const rectW = call[2] as number;
+        const rectH = call[3] as number;
+        // A rect at exactly the portal tile without any offset would mean
+        // it wasn't skipped. Check that no rect is centered on the portal tile.
+        const rectCenterX = rectX + rectW / 2;
+        const rectCenterY = rectY + rectH / 2;
+        const portalCenterX = portalTileX + TILE_SIZE / 2;
+        const portalCenterY = portalTileY + TILE_SIZE / 2;
+        // The portal tile itself has 0 distance so pullX=pullY=0 and would
+        // center exactly on portalCenter if not skipped
+        const isExactCenter =
+          Math.abs(rectCenterX - portalCenterX) < 0.01 &&
+          Math.abs(rectCenterY - portalCenterY) < 0.01;
+        expect(isExactCenter).toBe(false);
+      }
+    });
+
+    it("clamps distortion tiles to grid bounds near edges", () => {
+      const renderer = new PortalRenderer();
+      const scene = createMockScene();
+      // Place portal at corner (0,0) — distortion should only cover valid tiles
+      const pair = createPair({
+        posA: { col: 0, row: 0 },
+        posB: { col: 25, row: 20 },
+        spawnDurationMs: 0,
+      });
+      pair.update(1);
+
+      renderer.update(scene, 16, [pair]);
+
+      const graphicsInstance = mockAddGraphics.mock.results[0]?.value;
+      const fillRectCalls = graphicsInstance.fillRect.mock.calls;
+
+      // All distortion rectangles should have non-negative top-left coordinates
+      // (within reason — pull can shift them slightly negative, but the tile
+      // base positions should all be >= 0)
+      for (const call of fillRectCalls) {
+        const rectX = call[0] as number;
+        const rectY = call[1] as number;
+        // Tile positions can shift slightly due to pull, but shouldn't go far negative
+        expect(rectX).toBeGreaterThan(-TILE_SIZE);
+        expect(rectY).toBeGreaterThan(-TILE_SIZE);
+      }
+
+      // Should still produce some distortion tiles (those adjacent to corner)
+      expect(fillRectCalls.length).toBeGreaterThan(0);
+    });
+
+    it("exported distortion constants have sensible values", () => {
+      expect(DISTORTION_RADIUS).toBeGreaterThanOrEqual(1);
+      expect(DISTORTION_RADIUS).toBeLessThanOrEqual(10);
+      expect(DISTORTION_INTENSITY).toBeGreaterThan(0);
+      expect(DISTORTION_INTENSITY).toBeLessThanOrEqual(1);
+      expect(DISTORTION_ALPHA).toBeGreaterThan(0);
+      expect(DISTORTION_ALPHA).toBeLessThanOrEqual(1);
+    });
+
+    it("produces distortion tiles within the configured radius of nearest portal", () => {
+      const renderer = new PortalRenderer();
+      const scene = createMockScene();
+      const posA = { col: 15, row: 15 };
+      const posB = { col: 30, row: 25 };
+      const pair = createPair({
+        posA,
+        posB,
+        spawnDurationMs: 0,
+      });
+      pair.update(1);
+
+      renderer.update(scene, 16, [pair]);
+
+      const graphicsInstance = mockAddGraphics.mock.results[0]?.value;
+      const fillRectCalls = graphicsInstance.fillRect.mock.calls;
+
+      const pixelA = gridToPixel(posA);
+      const pixelB = gridToPixel(posB);
+      const maxDistPixels = (DISTORTION_RADIUS + 1) * TILE_SIZE;
+
+      for (const call of fillRectCalls) {
+        const rectX = call[0] as number;
+        const rectY = call[1] as number;
+        const rectW = call[2] as number;
+        const rectCenterX = rectX + rectW / 2;
+        const rectCenterY = rectY + (call[3] as number) / 2;
+
+        // Distance to nearest portal end
+        const dxA = Math.abs(rectCenterX - pixelA.x);
+        const dyA = Math.abs(rectCenterY - pixelA.y);
+        const dxB = Math.abs(rectCenterX - pixelB.x);
+        const dyB = Math.abs(rectCenterY - pixelB.y);
+
+        const nearA = dxA < maxDistPixels && dyA < maxDistPixels;
+        const nearB = dxB < maxDistPixels && dyB < maxDistPixels;
+        expect(nearA || nearB).toBe(true);
+      }
     });
   });
 });
