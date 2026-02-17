@@ -322,7 +322,7 @@ export class Portal {
    */
   advance(deltaMs: number): PortalLifecycleTransition[] {
     const safeDelta = Number.isFinite(deltaMs) ? Math.max(0, deltaMs) : 0;
-    if (safeDelta <= 0 || this.state === "collapsed") {
+    if (safeDelta <= 0) {
       return [];
     }
 
@@ -330,6 +330,10 @@ export class Portal {
     let remaining = safeDelta;
 
     while (remaining > 0) {
+      if (this.state === "collapsed") {
+        break;
+      }
+
       const stateDuration = this.getDurationForState(this.state);
       if (stateDuration <= 0) {
         this.transitionTo(this.getNextState(this.state), transitions);
