@@ -87,6 +87,31 @@ describe("Portal lifecycle timers", () => {
     expect(portal.getMsUntilDespawn()).toBe(0);
   });
 
+  it("handles one-tick overshoot past remaining lifetime without looping", () => {
+    const portal = new Portal({
+      pairId: "pair-overshoot",
+      endpoints: [
+        { col: 5, row: 5 },
+        { col: 6, row: 6 },
+      ],
+    });
+
+    expect(portal.getState()).toBe("active");
+    expect(portal.advance(7_750)).toEqual([]);
+
+    const remainingLifetimeMs = portal.getMsUntilDespawn();
+    const transitions = portal.advance(remainingLifetimeMs + 500);
+
+    expect(transitions).toEqual([
+      { from: "active", to: "collapsing", elapsedMs: 8_000 },
+      { from: "collapsing", to: "collapsed", elapsedMs: 8_000 },
+    ]);
+    expect(portal.getState()).toBe("collapsed");
+    expect(portal.getMsUntilDespawn()).toBe(0);
+    expect(portal.getElapsedMs()).toBe(8_000);
+    expect(portal.advance(1)).toEqual([]);
+  });
+
   it("supports explicit spawning/active/collapsing phases", () => {
     const portal = new Portal({
       pairId: "pair-phases",
@@ -221,5 +246,23 @@ describe("Portal empty-cell placement helpers", () => {
         minManhattanDistance: 2,
       }),
     ).toBeNull();
+  });
+
+  it("does not return null when a valid pair exists but one candidate cell is isolated", () => {
+    expect(
+      pickRandomEmptyPortalPairCells({
+        gridCols: 5,
+        gridRows: 1,
+        occupiedCells: [
+          { col: 1, row: 0 },
+          { col: 3, row: 0 },
+        ],
+        rng: () => 0.34,
+        minManhattanDistance: 3,
+      }),
+    ).toEqual([
+      { col: 0, row: 0 },
+      { col: 4, row: 0 },
+    ]);
   });
 });

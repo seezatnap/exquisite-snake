@@ -3,7 +3,7 @@
 ## Core Gameplay Systems
 
 - [x] (#1) Audit Phase 1-3 movement, collision, board occupancy, and render extension points, then implement `src/game/entities/Portal.ts` with linked-pair IDs, lifecycle states, timers, and empty-cell placement helpers [5 pts] (A)
-- [ ] (#2) Implement `src/game/systems/PortalManager.ts` to spawn linked portal pairs on valid empty cells at randomized ~30-second intervals and collapse/despawn each pair 8 seconds after spawn [5 pts] (blocked by #1)
+- [x] (#2) Implement `src/game/systems/PortalManager.ts` to spawn linked portal pairs on valid empty cells at randomized ~30-second intervals and collapse/despawn each pair 8 seconds after spawn [5 pts] (blocked by #1) (A)
 - [ ] (#3) Integrate `PortalManager` into the main game update flow so portal spawn, active, and collapse state changes are exposed in deterministic order to movement, collision, and rendering systems [5 pts] (blocked by #2)
 
 ## Portal Traversal
@@ -29,5 +29,8 @@
 - [ ] (#13) Add automated tests and a manual QA matrix covering spawn cadence, traversal, split rendering, collapse edge cases, temporary collision immunity, biome interactions, and ghost/food exclusions [5 pts] (blocked by #9, #10, #12)
 
 ## Follow-up tasks (from sprint review)
-- [ ] (#14) Fix `Portal.advance(deltaMs)` so oversized deltas that pass full lifecycle duration do not enter an infinite loop after reaching `collapsed`; add a regression test that calls `advance` with remaining lifetime + extra milliseconds in one tick.
-- [ ] (#15) Fix `pickRandomEmptyPortalPairCells` to avoid false `null` when a valid pair exists (e.g., retry or precompute valid pairs under `minManhattanDistance`); add deterministic tests covering the current false-negative RNG case.
+- [x] (#14) Fix `Portal.advance(deltaMs)` so oversized deltas that pass full lifecycle duration do not enter an infinite loop after reaching `collapsed`; add a regression test that calls `advance` with remaining lifetime + extra milliseconds in one tick. (B)
+- [x] (#15) Fix `pickRandomEmptyPortalPairCells` to avoid false `null` when a valid pair exists (e.g., retry or precompute valid pairs under `minManhattanDistance`); add deterministic tests covering the current false-negative RNG case. (A)
+
+## Follow-up tasks (from sprint review)
+- [ ] (#16) Optimize `pickRandomEmptyPortalPairCells` to avoid full O(n^2) `validPairs` materialization (on a 40x30 grid this currently builds 719,400 pairs and spikes ~60MB heap), while preserving the no-false-null guarantee from #15; add a regression test that exercises large-board selection without exhaustive pair allocation.
