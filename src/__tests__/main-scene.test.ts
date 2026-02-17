@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import fs from "fs";
 import path from "path";
 import { gameBridge } from "@/game/bridge";
-import { GRID_COLS, GRID_ROWS, RENDER_DEPTH } from "@/game/config";
+import { GRID_COLS, GRID_ROWS, RENDER_DEPTH, TILE_SIZE } from "@/game/config";
 import { Biome } from "@/game/systems/BiomeManager";
 import { gridToPixel } from "@/game/utils/grid";
 
@@ -170,6 +170,57 @@ function hasFillCircleAt(center: { x: number; y: number }): boolean {
   return mockFillCircle.mock.calls.some(
     ([x, y]) => x === center.x && y === center.y,
   );
+}
+
+function createFakeActivePortal(
+  pairId: string,
+  endpointA: { col: number; row: number },
+  endpointB: { col: number; row: number },
+) {
+  return {
+    getPairId: () => pairId,
+    getState: () => "active" as const,
+    getEndpoints: () =>
+      [
+        {
+          id: `${pairId}:a`,
+          pairId,
+          linkedEndpointId: `${pairId}:b`,
+          position: endpointA,
+        },
+        {
+          id: `${pairId}:b`,
+          pairId,
+          linkedEndpointId: `${pairId}:a`,
+          position: endpointB,
+        },
+      ] as const,
+    getElapsedInStateMs: () => 2_500,
+    getLifecycleDurations: () => ({
+      spawningMs: 200,
+      activeMs: 8_000,
+      collapsingMs: 200,
+    }),
+  };
+}
+
+function getFillRectMetrics(): { count: number; maxSize: number } {
+  const sizes = mockFillRect.mock.calls
+    .map(([, , width, height]) =>
+      typeof width === "number" && typeof height === "number"
+        ? Math.max(width, height)
+        : 0,
+    )
+    .filter((size) => size > 0);
+
+  if (sizes.length === 0) {
+    return { count: 0, maxSize: 0 };
+  }
+
+  return {
+    count: sizes.length,
+    maxSize: Math.max(...sizes),
+  };
 }
 
 beforeEach(() => {
@@ -483,31 +534,7 @@ describe("MainScene", () => {
     const endpointA = { col: 6, row: 7 };
     const endpointB = { col: 15, row: 18 };
     const pairId = "portal-pair-vortex";
-    const fakeActivePortal = {
-      getPairId: () => pairId,
-      getState: () => "active" as const,
-      getEndpoints: () =>
-        [
-          {
-            id: `${pairId}:a`,
-            pairId,
-            linkedEndpointId: `${pairId}:b`,
-            position: endpointA,
-          },
-          {
-            id: `${pairId}:b`,
-            pairId,
-            linkedEndpointId: `${pairId}:a`,
-            position: endpointB,
-          },
-        ] as const,
-      getElapsedInStateMs: () => 2_500,
-      getLifecycleDurations: () => ({
-        spawningMs: 200,
-        activeMs: 8_000,
-        collapsingMs: 200,
-      }),
-    };
+    const fakeActivePortal = createFakeActivePortal(pairId, endpointA, endpointB);
 
     vi.spyOn(scene.getPortalManager(), "update").mockReturnValue({
       spawnedPairs: [],
@@ -531,6 +558,135 @@ describe("MainScene", () => {
     expect(hasFillCircleAt(centerB)).toBe(true);
     expect(mockMoveTo).toHaveBeenCalled();
     expect(mockLineTo).toHaveBeenCalled();
+  });
+
+  it("renders nearby tile distortion overlays around active portals", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.enterPhase("playing");
+    scene.getSnake()!.getTicker().setInterval(200_000);
+
+    const endpointA = { col: 8, row: 9 };
+    const endpointB = { col: 20, row: 14 };
+    const pairId = "portal-pair-distortion";
+    const fakeActivePortal = createFakeActivePortal(pairId, endpointA, endpointB);
+
+    vi.spyOn(scene.getPortalManager(), "update").mockReturnValue({
+      spawnedPairs: [],
+      lifecycleTransitions: [],
+      despawnedPairIds: [],
+      orderedEvents: [],
+    });
+    vi
+      .spyOn(scene.getPortalManager(), "getActivePortal")
+      .mockReturnValue(fakeActivePortal as never);
+
+    mockFillRect.mockClear();
+
+    scene.update(0, 16);
+
+    expect(mockFillRect).toHaveBeenCalled();
+    const hasScaledTile = mockFillRect.mock.calls.some(
+      ([, , width, height]) =>
+        typeof width === "number" &&
+        typeof height === "number" &&
+        (width > TILE_SIZE || height > TILE_SIZE),
+    );
+    expect(hasScaledTile).toBe(true);
+  });
+
+  it("supports tunable portal distortion radius and intensity", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.enterPhase("playing");
+    scene.getSnake()!.getTicker().setInterval(200_000);
+
+    const endpointA = { col: 7, row: 8 };
+    const endpointB = { col: 18, row: 16 };
+    const pairId = "portal-pair-distortion-tuning";
+    const fakeActivePortal = createFakeActivePortal(pairId, endpointA, endpointB);
+
+    vi.spyOn(scene.getPortalManager(), "update").mockReturnValue({
+      spawnedPairs: [],
+      lifecycleTransitions: [],
+      despawnedPairIds: [],
+      orderedEvents: [],
+    });
+    vi
+      .spyOn(scene.getPortalManager(), "getActivePortal")
+      .mockReturnValue(fakeActivePortal as never);
+
+    scene.setPortalDistortionConfig({
+      radiusTiles: 0.75,
+      intensity: 0.12,
+    });
+    mockFillRect.mockClear();
+    scene.update(0, 0);
+    const lowTuning = getFillRectMetrics();
+
+    scene.setPortalDistortionConfig({
+      radiusTiles: 2.8,
+      intensity: 0.9,
+    });
+    mockFillRect.mockClear();
+    scene.update(0, 0);
+    const highTuning = getFillRectMetrics();
+
+    expect(highTuning.count).toBeGreaterThan(lowTuning.count);
+    expect(highTuning.maxSize).toBeGreaterThan(lowTuning.maxSize);
+  });
+
+  it("cleans up portal tile distortion once the portal collapses/despawns", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.enterPhase("playing");
+    scene.getSnake()!.getTicker().setInterval(200_000);
+
+    const endpoints = [
+      { col: 6, row: 6 },
+      { col: 17, row: 17 },
+    ] as const;
+    const pairId = "portal-pair-distortion-cleanup";
+    const fakeActivePortal = createFakeActivePortal(pairId, endpoints[0], endpoints[1]);
+
+    const updateSpy = vi.spyOn(scene.getPortalManager(), "update");
+    updateSpy.mockReturnValueOnce({
+      spawnedPairs: [],
+      lifecycleTransitions: [],
+      despawnedPairIds: [],
+      orderedEvents: [],
+    });
+    updateSpy.mockReturnValueOnce({
+      spawnedPairs: [],
+      lifecycleTransitions: [
+        {
+          pairId,
+          transition: { from: "active", to: "collapsing", elapsedMs: 8_000 },
+        },
+      ],
+      despawnedPairIds: [pairId],
+      orderedEvents: [
+        {
+          type: "lifecycleTransition",
+          pairId,
+          transition: { from: "active", to: "collapsing", elapsedMs: 8_000 },
+        },
+        { type: "despawned", pairId },
+      ],
+    });
+    vi
+      .spyOn(scene.getPortalManager(), "getActivePortal")
+      .mockReturnValueOnce(fakeActivePortal as never)
+      .mockReturnValueOnce(fakeActivePortal as never)
+      .mockReturnValue(null);
+
+    mockFillRect.mockClear();
+    scene.update(0, 16);
+    expect(mockFillRect).toHaveBeenCalled();
+
+    mockFillRect.mockClear();
+    scene.update(0, 16);
+    expect(mockFillRect).not.toHaveBeenCalled();
   });
 
   it("renders portal spawn/despawn hooks from lifecycle events", () => {
