@@ -22,7 +22,12 @@ import {
 import { Snake } from "../entities/Snake";
 import { Food } from "../entities/Food";
 import { EchoGhost, type EchoGhostSnapshot } from "../entities/EchoGhost";
-import { emitFoodParticles, shakeCamera } from "../systems/effects";
+import {
+  emitFoodParticles,
+  shakeCamera,
+  emitEmergencyTeleportFlash,
+  EMERGENCY_COLLISION_IMMUNITY_MS,
+} from "../systems/effects";
 import {
   Biome,
   BIOME_CONFIG,
@@ -277,6 +282,12 @@ export class MainScene extends Phaser.Scene {
   private voidVortexSpinRadians = 0;
 
   /**
+   * Remaining collision immunity time in ms after an emergency teleport.
+   * While positive, all collision checks are skipped to avoid unfair deaths.
+   */
+  private emergencyCollisionImmunityMs = 0;
+
+  /**
    * Injectable RNG function for deterministic replay sessions.
    * Returns a value in [0, 1). Defaults to Math.random.
    */
@@ -346,7 +357,13 @@ export class MainScene extends Phaser.Scene {
 
     if (!this.snake || !this.food || !this.echoGhost) return;
 
-    // 1. Advance portal lifecycle (spawn/active/collapse) before movement/collision
+    // 1. Tick down emergency collision immunity timer (before portals, so
+    //    immunity granted this frame is not consumed in the same frame)
+    if (this.emergencyCollisionImmunityMs > 0) {
+      this.emergencyCollisionImmunityMs = Math.max(0, this.emergencyCollisionImmunityMs - delta);
+    }
+
+    // 2. Advance portal lifecycle (spawn/active/collapse) before movement/collision
     this.updatePortals(delta);
 
     this.echoGhost.advance(delta);
@@ -411,6 +428,7 @@ export class MainScene extends Phaser.Scene {
     this.clearBiomeShiftCountdown();
     this.voidGravityStepCounter = 0;
     this.voidVortexSpinRadians = 0;
+    this.emergencyCollisionImmunityMs = 0;
     this.destroyBiomeMechanicGraphics();
     this.handleBiomeEnter(this.biomeManager.getCurrentBiome());
     this.destroyEntities();
@@ -489,6 +507,9 @@ export class MainScene extends Phaser.Scene {
    */
   private checkCollisions(): boolean {
     if (!this.snake) return false;
+
+    // Skip all collision checks during emergency teleport immunity
+    if (this.emergencyCollisionImmunityMs > 0) return false;
 
     const head = this.snake.getHeadPosition();
 
@@ -645,6 +666,11 @@ export class MainScene extends Phaser.Scene {
     return this.splitSnakeRenderer;
   }
 
+  /** Remaining emergency collision immunity time in ms (0 = no immunity). */
+  getEmergencyCollisionImmunityMs(): number {
+    return this.emergencyCollisionImmunityMs;
+  }
+
   /**
    * Rewind integration hook: capture the active EchoGhost buffer/timing snapshot.
    */
@@ -766,6 +792,8 @@ export class MainScene extends Phaser.Scene {
 
     if (isTransitPortalCollapsed) {
       this.snake.forceCompleteTransit();
+      this.emergencyCollisionImmunityMs = EMERGENCY_COLLISION_IMMUNITY_MS;
+      emitEmergencyTeleportFlash(this);
       this.events?.emit?.("portalCollapseMidTransit", transit);
     }
   }

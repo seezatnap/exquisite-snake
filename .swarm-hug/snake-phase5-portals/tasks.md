@@ -11,7 +11,7 @@
 - [x] (#4) Implement head traversal so when the snake head enters a portal cell it exits from the paired portal cell while preserving current direction and movement cadence [5 pts] (blocked by #3) (A)
 - [x] (#5) Implement body threading logic so segments transit one-by-one through the linked portals with maintained segment order and smooth continuity [5 pts] (blocked by #4) (A)
 - [x] (#6) Implement collapse-mid-transit handling so any remaining unthreaded segments are teleported instantly to the exit side with correct final ordering/positions [5 pts] (blocked by #5) (A)
-- [ ] (#7) Add emergency teleport safety handling: trigger flash VFX and disable collisions for ~0.5 seconds after forced teleport, then reliably restore collision checks [5 pts] (blocked by #6)
+- [x] (#7) Add emergency teleport safety handling: trigger flash VFX and disable collisions for ~0.5 seconds after forced teleport, then reliably restore collision checks [5 pts] (blocked by #6) (A)
 
 ## Visual Effects & Rendering
 
