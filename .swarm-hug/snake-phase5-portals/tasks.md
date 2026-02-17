@@ -27,3 +27,7 @@
 ## Testing & Validation
 
 - [ ] (#13) Add automated tests and a manual QA matrix covering spawn cadence, traversal, split rendering, collapse edge cases, temporary collision immunity, biome interactions, and ghost/food exclusions [5 pts] (blocked by #9, #10, #12)
+
+## Follow-up tasks (from sprint review)
+- [ ] (#14) Fix `Portal.advance(deltaMs)` so oversized deltas that pass full lifecycle duration do not enter an infinite loop after reaching `collapsed`; add a regression test that calls `advance` with remaining lifetime + extra milliseconds in one tick.
+- [ ] (#15) Fix `pickRandomEmptyPortalPairCells` to avoid false `null` when a valid pair exists (e.g., retry or precompute valid pairs under `minManhattanDistance`); add deterministic tests covering the current false-negative RNG case.
