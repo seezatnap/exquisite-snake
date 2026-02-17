@@ -37,6 +37,26 @@ const KEY_DIRECTION_MAP: Record<string, Direction> = {
 
 type DirectionInputGuard = (dir: Direction) => boolean;
 
+// ── Portal transit ──────────────────────────────────────────────
+
+/**
+ * Tracks an active portal transit where body segments are threading
+ * through a portal pair one-by-one after the head has been teleported.
+ */
+export interface PortalTransitState {
+  /** ID of the portal pair being traversed. */
+  portalPairId: string;
+
+  /** The portal end the head entered (entry side). */
+  entryPos: GridPos;
+
+  /** The portal end the head exited from (exit side). */
+  exitPos: GridPos;
+
+  /** Number of body segments that have not yet threaded through. */
+  segmentsRemaining: number;
+}
+
 // ── Snake entity ─────────────────────────────────────────────────
 
 export class Snake {
@@ -87,6 +107,9 @@ export class Snake {
 
   /** Whether an opposite-direction input was rejected since the last consumed step. */
   private rejectedOppositeDirectionInput = false;
+
+  /** Active portal transit state (body segments threading through a portal). */
+  private portalTransit: PortalTransitState | null = null;
 
   constructor(
     scene: Phaser.Scene,
@@ -370,10 +393,82 @@ export class Snake {
    * The previous-position for the head is also set to the exit so that
    * sprite interpolation doesn't create a visual "slide" from the old
    * position to the new one.
+   *
+   * When `portalPairId` and `entryPos` are provided, initiates body
+   * threading so that subsequent segments transit through the portal
+   * one-by-one on each step.
    */
-  teleportHead(exitPos: GridPos): void {
+  teleportHead(
+    exitPos: GridPos,
+    portalPairId?: string,
+    entryPos?: GridPos,
+  ): void {
     this.segments[0] = { ...exitPos };
     this.prevSegments[0] = { ...exitPos };
+
+    // Start body threading if portal info is provided and there are body segments
+    if (portalPairId && entryPos && this.segments.length > 1) {
+      this.portalTransit = {
+        portalPairId,
+        entryPos: { ...entryPos },
+        exitPos: { ...exitPos },
+        segmentsRemaining: this.segments.length - 1,
+      };
+    }
+  }
+
+  /**
+   * Thread body segments through the active portal transit.
+   *
+   * Called after each movement step. For each body segment that has
+   * arrived at the entry portal position, teleport it to the exit
+   * position (and fix prevSegments to avoid interpolation glitches).
+   *
+   * Returns the number of segments threaded this step.
+   */
+  resolveBodyThreading(): number {
+    if (!this.portalTransit) return 0;
+
+    const { entryPos, exitPos } = this.portalTransit;
+    let threaded = 0;
+
+    for (let i = 1; i < this.segments.length; i++) {
+      if (
+        gridEquals(this.segments[i], entryPos)
+      ) {
+        this.segments[i] = { ...exitPos };
+        // Also fix the previous position so interpolation doesn't
+        // visually slide the segment across the screen
+        if (i < this.prevSegments.length) {
+          this.prevSegments[i] = { ...exitPos };
+        }
+        this.portalTransit.segmentsRemaining--;
+        threaded++;
+      }
+    }
+
+    // Transit is complete when all segments have threaded through
+    if (this.portalTransit.segmentsRemaining <= 0) {
+      this.portalTransit = null;
+    }
+
+    return threaded;
+  }
+
+  /**
+   * Get the current portal transit state, or null if no transit is active.
+   */
+  getPortalTransit(): PortalTransitState | null {
+    if (!this.portalTransit) return null;
+    return { ...this.portalTransit, entryPos: { ...this.portalTransit.entryPos }, exitPos: { ...this.portalTransit.exitPos } };
+  }
+
+  /**
+   * Clear the active portal transit (e.g. when the portal collapses
+   * and remaining segments are force-teleported by task #6).
+   */
+  clearPortalTransit(): void {
+    this.portalTransit = null;
   }
 
   // ── State queries ──────────────────────────────────────────────
@@ -451,6 +546,7 @@ export class Snake {
   /** Destroy all sprites, detach input listeners, and reset state. */
   destroy(): void {
     this.alive = false;
+    this.portalTransit = null;
     if (this.keydownHandler && this.scene.input?.keyboard) {
       this.scene.input.keyboard.off("keydown", this.keydownHandler);
       this.keydownHandler = null;
@@ -488,6 +584,7 @@ export class Snake {
     this.pendingTurnSlideTiles = 0;
     this.pendingGrowth = 0;
     this.rejectedOppositeDirectionInput = false;
+    this.portalTransit = null;
     this.ticker.reset();
 
     // Build new segments

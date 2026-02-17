@@ -352,6 +352,7 @@ export class MainScene extends Phaser.Scene {
 
     if (stepped) {
       this.resolvePortalHeadTraversal();
+      this.resolvePortalBodyThreading();
 
       if (this.checkCollisions()) {
         return; // Game over — stop processing this frame
@@ -741,7 +742,8 @@ export class MainScene extends Phaser.Scene {
   /**
    * Check whether the snake head is on a traversable portal cell.
    * If so, teleport the head to the linked exit portal, preserving
-   * the current direction and movement cadence.
+   * the current direction and movement cadence, and initiate body
+   * threading so segments transit one-by-one through the portal.
    */
   private resolvePortalHeadTraversal(): void {
     if (!this.snake) return;
@@ -753,8 +755,20 @@ export class MainScene extends Phaser.Scene {
     const exitPos = pair.getLinkedExit(head);
     if (!exitPos) return;
 
-    this.snake.teleportHead(exitPos);
+    this.snake.teleportHead(exitPos, pair.id, head);
     this.events?.emit?.("portalTraversed", { pair, entry: head, exit: exitPos });
+  }
+
+  /**
+   * Thread body segments through the active portal transit.
+   *
+   * Called after each movement step. Body segments that have arrived at
+   * the entry portal position are teleported to the exit position,
+   * maintaining segment order and smooth visual continuity.
+   */
+  private resolvePortalBodyThreading(): void {
+    if (!this.snake) return;
+    this.snake.resolveBodyThreading();
   }
 
   /** Allow external configuration of the PortalManager (e.g. for tests). */
