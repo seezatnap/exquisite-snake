@@ -327,6 +327,26 @@ describe("Snake portal traversal", () => {
     expect(snake.getPortalTraversalSnapshots()).toEqual([]);
   });
 
+  it("force-completes any remaining unthreaded segments on portal collapse", () => {
+    const ticker = new MoveTicker(100);
+    const snake = createSnake({ col: 10, row: 10 }, "right", 4, ticker);
+
+    snake.update(100); // head -> entry cell (11,10)
+    snake.beginPortalTraversal({ col: 11, row: 10 }, { col: 3, row: 4 });
+    snake.update(100); // segment #1 threads to exit side
+
+    snake.forceCompletePortalTraversal();
+
+    expect(snake.getSegments()).toEqual([
+      { col: 4, row: 4 },
+      { col: 3, row: 4 },
+      { col: 2, row: 4 },
+      { col: 1, row: 4 },
+    ]);
+    expect(snake.isPortalThreadingActive()).toBe(false);
+    expect(snake.getPortalTraversalSnapshots()).toEqual([]);
+  });
+
   it("keeps threaded body interpolation anchored at the portal exit", () => {
     const ticker = new MoveTicker(100);
     const snake = createSnake({ col: 10, row: 10 }, "right", 4, ticker);
