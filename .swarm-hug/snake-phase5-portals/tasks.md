@@ -4,7 +4,7 @@
 
 - [x] (#1) Audit Phase 1-3 movement, collision, board occupancy, and render extension points, then implement `src/game/entities/Portal.ts` with linked-pair IDs, lifecycle states, timers, and empty-cell placement helpers [5 pts] (A)
 - [x] (#2) Implement `src/game/systems/PortalManager.ts` to spawn linked portal pairs on valid empty cells at randomized ~30-second intervals and collapse/despawn each pair 8 seconds after spawn [5 pts] (blocked by #1) (A)
-- [A] (#3) Integrate `PortalManager` into the main game update flow so portal spawn, active, and collapse state changes are exposed in deterministic order to movement, collision, and rendering systems [5 pts] (blocked by #2)
+- [x] (#3) Integrate `PortalManager` into the main game update flow so portal spawn, active, and collapse state changes are exposed in deterministic order to movement, collision, and rendering systems [5 pts] (blocked by #2) (A)
 
 ## Portal Traversal
 
