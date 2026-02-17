@@ -486,6 +486,7 @@ export class MainScene extends Phaser.Scene {
     this.snake.setupInput();
     this.snake.setupTouchInput();
     this.food = new Food(this, this.snake, this.rng);
+    this.updateFoodExclusionCheckers();
     this.echoGhost = new EchoGhost();
     this.echoGhost.recordPath(this.snake.getSegments());
     this.ensureEchoGhostGraphics();
@@ -821,6 +822,19 @@ export class MainScene extends Phaser.Scene {
         return foodPos ? gridEquals(pos, foodPos) : false;
       },
       (pos) => this.moltenLavaPools.has(this.gridPosKey(pos)),
+    ]);
+  }
+
+  /**
+   * Refresh the exclusion checkers given to the Food entity so that
+   * food never spawns on portal cells. This enforces the invariant
+   * that food and food-related mechanics are never pulled/routed
+   * through portals.
+   */
+  private updateFoodExclusionCheckers(): void {
+    if (!this.food) return;
+    this.food.setExclusionCheckers([
+      (pos) => this.portalManager.isPortalCell(pos),
     ]);
   }
 
