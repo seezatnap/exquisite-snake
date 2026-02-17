@@ -42,6 +42,7 @@ import {
   sampleBiomeRandom,
 } from "../systems/biomeMechanics";
 import { PortalManager, type PortalManagerOptions } from "../systems/PortalManager";
+import { PortalRenderer } from "../systems/PortalRenderer";
 
 // ── Default spawn configuration ─────────────────────────────────
 
@@ -207,6 +208,9 @@ export class MainScene extends Phaser.Scene {
   /** Portal spawn cadence and lifecycle manager. */
   private portalManager: PortalManager = new PortalManager();
 
+  /** Renders swirling vortex visuals for active portal pairs. */
+  private portalRenderer: PortalRenderer = new PortalRenderer();
+
   /** Shared balancing knobs for Ice, Molten, and Void biome mechanics. */
   private biomeMechanicsConfig: BiomeMechanicsConfig = cloneBiomeMechanicsConfig(
     DEFAULT_BIOME_MECHANICS_CONFIG,
@@ -307,6 +311,7 @@ export class MainScene extends Phaser.Scene {
       this.onBridgePhaseChange = null;
     }
     this.portalManager.reset();
+    this.portalRenderer.destroy();
     this.biomeManager.stopRun();
     this.resetMoltenCoreState();
     this.clearBiomeTransitionEffect();
@@ -403,6 +408,7 @@ export class MainScene extends Phaser.Scene {
     this.handleBiomeEnter(this.biomeManager.getCurrentBiome());
     this.destroyEntities();
     this.createEntities();
+    this.portalRenderer.reset();
     this.portalManager.setRng(this.rng);
     this.updatePortalOccupancyCheckers();
     this.portalManager.startRun();
@@ -412,6 +418,7 @@ export class MainScene extends Phaser.Scene {
   endRun(): void {
     shakeCamera(this);
     this.portalManager.stopRun();
+    this.portalRenderer.reset();
     this.biomeManager.stopRun();
     this.resetMoltenCoreState();
     this.clearBiomeTransitionEffect();
@@ -621,6 +628,10 @@ export class MainScene extends Phaser.Scene {
     return this.portalManager;
   }
 
+  getPortalRenderer(): PortalRenderer {
+    return this.portalRenderer;
+  }
+
   /**
    * Rewind integration hook: capture the active EchoGhost buffer/timing snapshot.
    */
@@ -704,8 +715,12 @@ export class MainScene extends Phaser.Scene {
   private updatePortals(delta: number): void {
     const collapsed = this.portalManager.update(delta);
     if (collapsed.length > 0) {
+      this.portalRenderer.notifyCollapsed(collapsed, this);
       this.events?.emit?.("portalCollapsed", collapsed);
     }
+
+    // Render portal visuals (swirling vortex) for active pairs
+    this.portalRenderer.update(this, delta, this.portalManager.getActivePairs());
   }
 
   /**
