@@ -542,13 +542,13 @@ export class MainScene extends Phaser.Scene {
       return;
     }
 
-    const head = this.snake.getHeadPosition();
-    const exitPos = this.portalManager.getExitPositionForEntryCell(head);
+    const entryPos = this.snake.getHeadPosition();
+    const exitPos = this.portalManager.getExitPositionForEntryCell(entryPos);
     if (!exitPos) {
       return;
     }
 
-    this.snake.teleportHeadTo(exitPos);
+    this.snake.beginPortalTraversal(entryPos, exitPos);
   }
 
   // ── Collision detection ───────────────────────────────────────
