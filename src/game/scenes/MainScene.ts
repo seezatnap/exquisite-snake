@@ -19,7 +19,7 @@ import {
   type Direction,
   type GridPos,
 } from "../utils/grid";
-import { Snake } from "../entities/Snake";
+import { Snake, type PortalTraversalSnapshot } from "../entities/Snake";
 import { Food } from "../entities/Food";
 import { EchoGhost, type EchoGhostSnapshot } from "../entities/EchoGhost";
 import { emitFoodParticles, shakeCamera } from "../systems/effects";
@@ -183,6 +183,11 @@ const PORTAL_HOOK_RING_SEGMENTS = 16;
 const PORTAL_RING_VERTICAL_SQUASH = 0.78;
 const PORTAL_SPAWN_HOOK_DURATION_MS = 260;
 const PORTAL_DESPAWN_HOOK_DURATION_MS = 220;
+const PORTAL_SPLIT_SNAKE_RENDER_DEPTH = RENDER_DEPTH.SNAKE - 0.5;
+const PORTAL_SPLIT_HEAD_ALPHA = 0.46;
+const PORTAL_SPLIT_BODY_ALPHA = 0.34;
+const PORTAL_SPLIT_HEAD_RADIUS_PX = TILE_SIZE * 0.42;
+const PORTAL_SPLIT_BODY_RADIUS_PX = TILE_SIZE * 0.34;
 const PORTAL_DISTORTION_PULSE_RADIANS_PER_SEC = Math.PI * 1.35;
 const PORTAL_DISTORTION_MIN_RADIUS_TILES = 0;
 const PORTAL_DISTORTION_MAX_RADIUS_TILES = 8;
@@ -318,6 +323,9 @@ export class MainScene extends Phaser.Scene {
   /** Graphics object used to render active portal vortices and lifecycle hooks. */
   private portalGraphics: Phaser.GameObjects.Graphics | null = null;
 
+  /** Graphics overlay that mirrors threaded snake segments during portal transit. */
+  private portalSplitSnakeGraphics: Phaser.GameObjects.Graphics | null = null;
+
   /** Graphics object used to render the delayed echo-ghost overlay. */
   private echoGhostGraphics: Phaser.GameObjects.Graphics | null = null;
 
@@ -412,6 +420,7 @@ export class MainScene extends Phaser.Scene {
     this.biomeMechanicGraphics?.destroy?.();
     this.biomeMechanicGraphics = null;
     this.destroyPortalVisuals();
+    this.destroyPortalSplitSnakeVisuals();
     this.destroyEchoGhostVisuals();
     this.destroyBiomeShiftCountdown();
   }
@@ -420,6 +429,7 @@ export class MainScene extends Phaser.Scene {
     if (gameBridge.getState().phase !== "playing") {
       this.clearBiomeShiftCountdown();
       this.clearPortalVisualState();
+      this.clearPortalSplitSnakeVisualState();
       this.clearEchoGhostVisualState();
       return;
     }
@@ -461,6 +471,8 @@ export class MainScene extends Phaser.Scene {
 
       this.echoGhost.recordPath(this.snake.getSegments());
     }
+
+    this.updatePortalSplitSnakeVisuals();
   }
 
   // ── Phase management ────────────────────────────────────────
@@ -498,6 +510,7 @@ export class MainScene extends Phaser.Scene {
     this.voidGravityStepCounter = 0;
     this.voidVortexSpinRadians = 0;
     this.clearPortalVisualState();
+    this.clearPortalSplitSnakeVisualState();
     this.destroyBiomeMechanicGraphics();
     this.handleBiomeEnter(this.biomeManager.getCurrentBiome());
     this.destroyEntities();
@@ -514,6 +527,7 @@ export class MainScene extends Phaser.Scene {
     this.clearBiomeTransitionEffect();
     this.clearBiomeShiftCountdown();
     this.clearPortalVisualState();
+    this.clearPortalSplitSnakeVisualState();
     this.destroyBiomeMechanicGraphics();
     if (this.snake?.isAlive()) {
       this.snake.kill();
@@ -867,6 +881,34 @@ export class MainScene extends Phaser.Scene {
     return true;
   }
 
+  private ensurePortalSplitSnakeGraphics(): boolean {
+    if (this.portalSplitSnakeGraphics) {
+      return true;
+    }
+
+    const addFactory = this.add as unknown as {
+      graphics?: () => Phaser.GameObjects.Graphics;
+    };
+    if (typeof addFactory.graphics !== "function") {
+      return false;
+    }
+
+    const graphics = addFactory.graphics();
+    graphics.setDepth?.(PORTAL_SPLIT_SNAKE_RENDER_DEPTH);
+    this.portalSplitSnakeGraphics = graphics;
+    return true;
+  }
+
+  private clearPortalSplitSnakeVisualState(): void {
+    this.portalSplitSnakeGraphics?.clear?.();
+  }
+
+  private destroyPortalSplitSnakeVisuals(): void {
+    this.clearPortalSplitSnakeVisualState();
+    this.portalSplitSnakeGraphics?.destroy?.();
+    this.portalSplitSnakeGraphics = null;
+  }
+
   private clearPortalVisualState(): void {
     this.portalGraphics?.clear?.();
     this.portalVortexSpinRadians = 0;
@@ -879,6 +921,77 @@ export class MainScene extends Phaser.Scene {
     this.clearPortalVisualState();
     this.portalGraphics?.destroy?.();
     this.portalGraphics = null;
+  }
+
+  private updatePortalSplitSnakeVisuals(): void {
+    if (!this.snake || !this.snake.isPortalThreadingActive()) {
+      this.portalSplitSnakeGraphics?.clear?.();
+      return;
+    }
+
+    if (!this.ensurePortalSplitSnakeGraphics()) {
+      return;
+    }
+
+    const gfx = this.portalSplitSnakeGraphics!;
+    gfx.clear?.();
+
+    const segments = this.snake.getSegments();
+    if (segments.length === 0) {
+      return;
+    }
+
+    const traversals = this.snake.getPortalTraversalSnapshots();
+    for (const traversal of traversals) {
+      this.drawPortalSplitTraversal(gfx, segments, traversal);
+    }
+  }
+
+  private drawPortalSplitTraversal(
+    gfx: Phaser.GameObjects.Graphics,
+    segments: readonly GridPos[],
+    traversal: PortalTraversalSnapshot,
+  ): void {
+    const bodySegmentCount = Math.max(0, segments.length - 1);
+    const threadedBodySegments = Math.min(
+      bodySegmentCount,
+      Math.max(0, Math.floor(traversal.stepsElapsed)),
+    );
+    const mirroredSegmentCount = Math.min(
+      segments.length,
+      threadedBodySegments + 1,
+    );
+    if (mirroredSegmentCount <= 0) {
+      return;
+    }
+
+    const colOffset = traversal.entry.col - traversal.exit.col;
+    const rowOffset = traversal.entry.row - traversal.exit.row;
+
+    for (let i = 0; i < mirroredSegmentCount; i += 1) {
+      const sourceSegment = segments[i];
+      const mirroredPos = {
+        col: sourceSegment.col + colOffset,
+        row: sourceSegment.row + rowOffset,
+      };
+      if (!isInBounds(mirroredPos)) {
+        continue;
+      }
+
+      const center = gridToPixel(mirroredPos);
+      const isHeadMirror = i === 0;
+      gfx.fillStyle?.(
+        isHeadMirror ? COLORS.SNAKE_HEAD : COLORS.SNAKE_BODY,
+        isHeadMirror ? PORTAL_SPLIT_HEAD_ALPHA : PORTAL_SPLIT_BODY_ALPHA,
+      );
+      gfx.fillCircle?.(
+        center.x,
+        center.y,
+        isHeadMirror
+          ? PORTAL_SPLIT_HEAD_RADIUS_PX
+          : PORTAL_SPLIT_BODY_RADIUS_PX,
+      );
+    }
   }
 
   private updatePortalVisuals(
@@ -1813,6 +1926,7 @@ export class MainScene extends Phaser.Scene {
   private syncGameplayLayering(): void {
     this.gridGraphics?.setDepth?.(RENDER_DEPTH.BIOME_GRID);
     this.portalGraphics?.setDepth?.(PORTAL_RENDER_DEPTH);
+    this.portalSplitSnakeGraphics?.setDepth?.(PORTAL_SPLIT_SNAKE_RENDER_DEPTH);
     this.food?.getSprite()?.setDepth?.(RENDER_DEPTH.FOOD);
     this.echoGhostGraphics?.setDepth?.(ECHO_GHOST_RENDER_DEPTH);
     this.snake?.setRenderDepth(RENDER_DEPTH.SNAKE);
