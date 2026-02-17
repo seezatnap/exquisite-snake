@@ -216,6 +216,33 @@ describe("Food safe spawn", () => {
 
     food.destroy();
   });
+
+  it("keeps blocked endpoint exclusions strict when they are the only snake-free cells", () => {
+    const scene = createScene();
+    const food = new Food(scene, createSnake({ col: 10, row: 10 }, "right", 1), fixedRng(0));
+    const blockedEndpointA = { col: 0, row: 0 };
+    const blockedEndpointB = { col: 0, row: 1 };
+    const endpointKeys = new Set([
+      `${blockedEndpointA.col}:${blockedEndpointA.row}`,
+      `${blockedEndpointB.col}:${blockedEndpointB.row}`,
+    ]);
+
+    const nearFullSnake = {
+      isOnSnake(pos: GridPos) {
+        return !endpointKeys.has(`${pos.col}:${pos.row}`);
+      },
+    } as unknown as Snake;
+
+    const pos = food.findSafePosition(nearFullSnake, [
+      blockedEndpointA,
+      blockedEndpointB,
+    ]);
+
+    expect(pos).not.toEqual(blockedEndpointA);
+    expect(pos).not.toEqual(blockedEndpointB);
+
+    food.destroy();
+  });
 });
 
 // ── Respawn ──────────────────────────────────────────────────────

@@ -64,48 +64,45 @@ export class Food {
    * Optional `blockedCells` allow callers to exclude additional mechanics
    * tiles (for example active portal endpoints).
    *
-   * If no candidate remains after applying blocked-cell filters, the method
-   * falls back to classic snake-only placement.
-   * If the grid is completely full (snake fills every cell), falls back to
-   * (0, 0) — in practice this should never happen in normal gameplay.
+   * If no snake-safe candidate remains after blocked-cell filtering, blocked
+   * exclusions stay strict; the method falls back to any unblocked cell.
+   * If no unblocked cell exists at all, falls back to (0, 0) — an extreme
+   * degenerate case that should never occur in normal gameplay.
    */
   findSafePosition(snake: Snake, blockedCells?: Iterable<GridPos>): GridPos {
     const blockedKeys = buildGridPosKeySet(blockedCells);
     const freeCells: GridPos[] = [];
+    const unblockedCells: GridPos[] = [];
 
     for (let col = 0; col < GRID_COLS; col++) {
       for (let row = 0; row < GRID_ROWS; row++) {
         const pos: GridPos = { col, row };
+        const isBlocked = blockedKeys.has(gridPosKey(pos));
+        if (!isBlocked) {
+          unblockedCells.push(pos);
+        }
         if (snake.isOnSnake(pos)) {
           continue;
         }
-        if (blockedKeys.has(gridPosKey(pos))) {
+        if (isBlocked) {
           continue;
         }
         freeCells.push(pos);
       }
     }
 
-    // If all candidates were blocked, keep gameplay alive by falling back
-    // to snake-only safety filtering.
-    if (freeCells.length === 0 && blockedKeys.size > 0) {
-      for (let col = 0; col < GRID_COLS; col++) {
-        for (let row = 0; row < GRID_ROWS; row++) {
-          const pos: GridPos = { col, row };
-          if (!snake.isOnSnake(pos)) {
-            freeCells.push(pos);
-          }
-        }
-      }
+    if (freeCells.length > 0) {
+      const index = Math.floor(this.rng() * freeCells.length);
+      return freeCells[index];
     }
 
-    if (freeCells.length === 0) {
-      // Grid is full — degenerate edge case
-      return { col: 0, row: 0 };
+    if (unblockedCells.length > 0) {
+      const index = Math.floor(this.rng() * unblockedCells.length);
+      return unblockedCells[index];
     }
 
-    const index = Math.floor(this.rng() * freeCells.length);
-    return freeCells[index];
+    // All cells were blocked — degenerate edge case.
+    return { col: 0, row: 0 };
   }
 
   /**
