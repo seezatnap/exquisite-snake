@@ -245,6 +245,31 @@ describe("Snake external nudges", () => {
   });
 });
 
+describe("Snake portal traversal", () => {
+  it("teleports the head without changing direction, length, or body order", () => {
+    const snake = createSnake({ col: 10, row: 10 }, "right", 3);
+
+    snake.teleportHeadTo({ col: 3, row: 4 });
+
+    expect(snake.getDirection()).toBe("right");
+    expect(snake.getLength()).toBe(3);
+    expect(snake.getSegments()).toEqual([
+      { col: 3, row: 4 },
+      { col: 9, row: 10 },
+      { col: 8, row: 10 },
+    ]);
+  });
+
+  it("ignores portal head teleport requests after death", () => {
+    const snake = createSnake({ col: 10, row: 10 }, "right", 3);
+    snake.kill();
+
+    snake.teleportHeadTo({ col: 3, row: 4 });
+
+    expect(snake.getHeadPosition()).toEqual({ col: 10, row: 10 });
+  });
+});
+
 // ── Direction input buffering ────────────────────────────────────
 
 describe("Snake input buffering", () => {
