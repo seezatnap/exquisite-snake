@@ -26,4 +26,4 @@
 
 ## Testing & Validation
 
-- [ ] (#13) Add automated tests and a manual QA matrix covering spawn cadence, traversal, split rendering, collapse edge cases, temporary collision immunity, biome interactions, and ghost/food exclusions [5 pts] (blocked by #9, #10, #12)
+- [x] (#13) Add automated tests and a manual QA matrix covering spawn cadence, traversal, split rendering, collapse edge cases, temporary collision immunity, biome interactions, and ghost/food exclusions [5 pts] (blocked by #9, #10, #12) (A)
