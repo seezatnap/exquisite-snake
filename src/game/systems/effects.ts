@@ -1,5 +1,5 @@
 import Phaser from "phaser";
-import { TEXTURE_KEYS } from "../config";
+import { TEXTURE_KEYS, ARENA_WIDTH, ARENA_HEIGHT } from "../config";
 
 // ── Particle burst configuration ────────────────────────────────
 
@@ -74,4 +74,67 @@ export function emitFoodParticles(
  */
 export function shakeCamera(scene: Phaser.Scene): void {
   scene.cameras.main?.shake(SHAKE_DURATION, SHAKE_INTENSITY);
+}
+
+// ── Emergency teleport flash configuration ─────────────────────
+
+/** Duration of the emergency teleport flash overlay in ms. */
+export const EMERGENCY_FLASH_DURATION_MS = 200;
+
+/** Render depth for the emergency flash overlay (above everything). */
+export const EMERGENCY_FLASH_DEPTH = 100;
+
+/** Peak alpha of the white flash overlay. */
+export const EMERGENCY_FLASH_ALPHA = 0.7;
+
+/** Duration of collision immunity after emergency teleport in ms. */
+export const EMERGENCY_COLLISION_IMMUNITY_MS = 500;
+
+// ── Emergency teleport flash VFX ───────────────────────────────
+
+/**
+ * Trigger a brief white flash overlay and camera shake for emergency teleport.
+ *
+ * Creates a full-screen white rectangle that fades out over
+ * EMERGENCY_FLASH_DURATION_MS. Also triggers a camera shake for impact.
+ * The overlay self-destructs after the animation completes.
+ */
+export function emitEmergencyTeleportFlash(
+  scene: Phaser.Scene,
+): Phaser.GameObjects.Graphics | null {
+  const addFactory = scene.add as unknown as {
+    graphics?: () => Phaser.GameObjects.Graphics;
+  };
+  if (typeof addFactory.graphics !== "function") return null;
+
+  const gfx = addFactory.graphics();
+  gfx.setDepth?.(EMERGENCY_FLASH_DEPTH);
+  gfx.fillStyle?.(0xffffff, EMERGENCY_FLASH_ALPHA);
+  gfx.fillRect?.(0, 0, ARENA_WIDTH, ARENA_HEIGHT);
+
+  // Camera shake for impact feel
+  scene.cameras.main?.shake(SHAKE_DURATION, SHAKE_INTENSITY * 1.5, true);
+
+  // Fade out the overlay using a tween if available, otherwise use a timer
+  const tweenFactory = scene.tweens as unknown as {
+    add?: (config: Record<string, unknown>) => unknown;
+  };
+
+  if (typeof tweenFactory?.add === "function") {
+    tweenFactory.add({
+      targets: gfx,
+      alpha: 0,
+      duration: EMERGENCY_FLASH_DURATION_MS,
+      onComplete: () => {
+        gfx.destroy?.();
+      },
+    });
+  } else {
+    // Fallback: destroy after duration using delayed call
+    scene.time?.delayedCall?.(EMERGENCY_FLASH_DURATION_MS, () => {
+      gfx.destroy?.();
+    });
+  }
+
+  return gfx;
 }
