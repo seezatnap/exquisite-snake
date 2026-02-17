@@ -41,6 +41,7 @@ import {
   normalizeRandomHook,
   sampleBiomeRandom,
 } from "../systems/biomeMechanics";
+import { PortalManager, type PortalManagerOptions } from "../systems/PortalManager";
 
 // ── Default spawn configuration ─────────────────────────────────
 
@@ -203,6 +204,9 @@ export class MainScene extends Phaser.Scene {
   /** Biome rotation/timing owner for the current run. */
   private readonly biomeManager = new BiomeManager();
 
+  /** Portal spawn cadence and lifecycle manager. */
+  private portalManager: PortalManager = new PortalManager();
+
   /** Shared balancing knobs for Ice, Molten, and Void biome mechanics. */
   private biomeMechanicsConfig: BiomeMechanicsConfig = cloneBiomeMechanicsConfig(
     DEFAULT_BIOME_MECHANICS_CONFIG,
@@ -302,6 +306,7 @@ export class MainScene extends Phaser.Scene {
       gameBridge.off("phaseChange", this.onBridgePhaseChange);
       this.onBridgePhaseChange = null;
     }
+    this.portalManager.reset();
     this.biomeManager.stopRun();
     this.resetMoltenCoreState();
     this.clearBiomeTransitionEffect();
@@ -329,6 +334,10 @@ export class MainScene extends Phaser.Scene {
     this.updateBiomeState(delta);
 
     if (!this.snake || !this.food || !this.echoGhost) return;
+
+    // 1. Advance portal lifecycle (spawn/active/collapse) before movement/collision
+    this.updatePortals(delta);
+
     this.echoGhost.advance(delta);
     this.updateEchoGhostVisuals(delta);
     this.updateMoltenCoreMechanics(delta);
@@ -392,11 +401,15 @@ export class MainScene extends Phaser.Scene {
     this.handleBiomeEnter(this.biomeManager.getCurrentBiome());
     this.destroyEntities();
     this.createEntities();
+    this.portalManager.setRng(this.rng);
+    this.updatePortalOccupancyCheckers();
+    this.portalManager.startRun();
   }
 
   /** End the current run: kill snake, persist high-score, transition to gameOver. */
   endRun(): void {
     shakeCamera(this);
+    this.portalManager.stopRun();
     this.biomeManager.stopRun();
     this.resetMoltenCoreState();
     this.clearBiomeTransitionEffect();
@@ -543,6 +556,7 @@ export class MainScene extends Phaser.Scene {
   /** Set the RNG function for deterministic replay. */
   setRng(rng: () => number): void {
     this.rng = normalizeRandomHook(rng, this.rng);
+    this.portalManager.setRng(this.rng);
   }
 
   /** Get the current RNG function. */
@@ -601,6 +615,10 @@ export class MainScene extends Phaser.Scene {
     return this.echoGhost;
   }
 
+  getPortalManager(): PortalManager {
+    return this.portalManager;
+  }
+
   /**
    * Rewind integration hook: capture the active EchoGhost buffer/timing snapshot.
    */
@@ -636,6 +654,7 @@ export class MainScene extends Phaser.Scene {
 
   private handleBiomeTransition(transition: BiomeTransition): void {
     this.handleBiomeExit(transition.from);
+    this.portalManager.collapseAll();
     this.syncBiomeRuntimeToBridge();
     gameBridge.emitBiomeTransition(transition);
     this.handleBiomeEnter(transition.to);
@@ -669,6 +688,42 @@ export class MainScene extends Phaser.Scene {
 
     gameBridge.emitBiomeExit(biome);
     this.events?.emit?.("biomeExit", biome);
+  }
+
+  // ── Portal integration ──────────────────────────────────────────
+
+  /**
+   * Advance portal lifecycle each frame.
+   *
+   * Called early in the update loop (before movement/collision) so that
+   * spawn, active, and collapse state changes are settled before any
+   * downstream system queries portal occupancy.
+   */
+  private updatePortals(delta: number): void {
+    const collapsed = this.portalManager.update(delta);
+    if (collapsed.length > 0) {
+      this.events?.emit?.("portalCollapsed", collapsed);
+    }
+  }
+
+  /**
+   * Refresh the occupancy checkers given to the PortalManager so that
+   * portal pairs never spawn on top of the snake, food, or lava pools.
+   */
+  private updatePortalOccupancyCheckers(): void {
+    this.portalManager.setOccupancyCheckers([
+      (pos) => this.snake?.isOnSnake(pos) ?? false,
+      (pos) => {
+        const foodPos = this.food?.getPosition();
+        return foodPos ? gridEquals(pos, foodPos) : false;
+      },
+      (pos) => this.moltenLavaPools.has(this.gridPosKey(pos)),
+    ]);
+  }
+
+  /** Allow external configuration of the PortalManager (e.g. for tests). */
+  setPortalManagerOptions(options: PortalManagerOptions): void {
+    this.portalManager = new PortalManager(options);
   }
 
   private updateMoltenCoreMechanics(delta: number): void {
@@ -724,6 +779,9 @@ export class MainScene extends Phaser.Scene {
           continue;
         }
         if (this.moltenLavaPools.has(this.gridPosKey(pos))) {
+          continue;
+        }
+        if (this.portalManager.isPortalCell(pos)) {
           continue;
         }
         candidates.push(pos);
