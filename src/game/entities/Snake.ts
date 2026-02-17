@@ -293,6 +293,29 @@ export class Snake {
     this.advanceSegments(direction);
   }
 
+  /**
+   * Teleport only the head segment to a specific grid position.
+   *
+   * Used by portal traversal so direction, body ordering, and movement cadence
+   * remain untouched while the head exits from a linked portal endpoint.
+   */
+  teleportHeadTo(position: GridPos): void {
+    if (!this.alive || this.segments.length === 0 || this.prevSegments.length === 0) {
+      return;
+    }
+
+    const targetHead: GridPos = {
+      col: position.col,
+      row: position.row,
+    };
+    this.segments[0] = targetHead;
+    this.prevSegments[0] = {
+      col: targetHead.col,
+      row: targetHead.row,
+    };
+    this.interpolateSprites();
+  }
+
   private advanceSegments(direction: Direction): void {
     // Save previous positions for interpolation
     this.prevSegments = this.segments.map((s) => ({ ...s }));
