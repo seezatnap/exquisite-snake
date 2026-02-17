@@ -388,6 +388,77 @@ describe("MainScene", () => {
     expect(portalStateChangeEvents).toEqual(portalUpdateResult.orderedEvents);
   });
 
+  it("teleports the snake head to a paired portal exit when a step lands on an entry cell", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.setRng(() => 0);
+    scene.enterPhase("playing");
+
+    const snake = scene.getSnake()!;
+    snake.reset({ col: 10, row: 10 }, "right", 3);
+    snake.getTicker().setInterval(100);
+
+    const portalExitSpy = vi
+      .spyOn(scene.getPortalManager(), "getExitPositionForEntryCell")
+      .mockImplementation((entryCell) => {
+        if (entryCell.col === 11 && entryCell.row === 10) {
+          return { col: 3, row: 4 };
+        }
+        return null;
+      });
+
+    scene.update(0, 100);
+
+    expect(portalExitSpy).toHaveBeenCalledTimes(1);
+    expect(portalExitSpy).toHaveBeenCalledWith({ col: 11, row: 10 });
+    expect(snake.getHeadPosition()).toEqual({ col: 3, row: 4 });
+    expect(snake.getDirection()).toBe("right");
+    expect(snake.getSegments()).toEqual([
+      { col: 3, row: 4 },
+      { col: 10, row: 10 },
+      { col: 9, row: 10 },
+    ]);
+  });
+
+  it("preserves movement cadence by evaluating portal traversal only on stepped ticks", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.setRng(() => 0);
+    scene.enterPhase("playing");
+
+    const snake = scene.getSnake()!;
+    snake.reset({ col: 10, row: 10 }, "right", 3);
+    snake.getTicker().setInterval(100);
+
+    const portalExitSpy = vi
+      .spyOn(scene.getPortalManager(), "getExitPositionForEntryCell")
+      .mockImplementation((entryCell) => {
+        if (entryCell.col === 11 && entryCell.row === 10) {
+          return { col: 3, row: 4 };
+        }
+        if (entryCell.col === 3 && entryCell.row === 4) {
+          return { col: 11, row: 10 };
+        }
+        return null;
+      });
+
+    scene.update(0, 100); // step + portal traversal
+    expect(snake.getHeadPosition()).toEqual({ col: 3, row: 4 });
+
+    scene.update(0, 50); // no step; head should not traverse again
+    expect(snake.getHeadPosition()).toEqual({ col: 3, row: 4 });
+
+    scene.update(0, 50); // next step in current direction
+    expect(snake.getHeadPosition()).toEqual({ col: 4, row: 4 });
+    expect(snake.getDirection()).toBe("right");
+
+    expect(portalExitSpy).toHaveBeenCalledTimes(2);
+    expect(portalExitSpy.mock.calls).toEqual([
+      [{ col: 11, row: 10 }],
+      [{ col: 4, row: 4 }],
+    ]);
+  });
+
   // ── Score ──────────────────────────────────────────────────
 
   it("addScore increments score and notifies bridge", () => {

@@ -380,6 +380,7 @@ export class MainScene extends Phaser.Scene {
     const stepped = this.snake.update(delta);
 
     if (stepped) {
+      this.resolvePortalHeadTraversal();
       this.emitPortalStageExposure("collision", portalSnapshot);
       if (this.checkCollisions()) {
         return; // Game over — stop processing this frame
@@ -496,6 +497,20 @@ export class MainScene extends Phaser.Scene {
       this.echoGhost = null;
     }
     this.destroyEchoGhostVisuals();
+  }
+
+  private resolvePortalHeadTraversal(): void {
+    if (!this.snake) {
+      return;
+    }
+
+    const head = this.snake.getHeadPosition();
+    const exitPos = this.portalManager.getExitPositionForEntryCell(head);
+    if (!exitPos) {
+      return;
+    }
+
+    this.snake.teleportHeadTo(exitPos);
   }
 
   // ── Collision detection ───────────────────────────────────────
