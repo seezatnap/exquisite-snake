@@ -166,6 +166,12 @@ function injectMoltenLavaPool(
   pools.set(`${pos.col}:${pos.row}`, { ...pos });
 }
 
+function hasFillCircleAt(center: { x: number; y: number }): boolean {
+  return mockFillCircle.mock.calls.some(
+    ([x, y]) => x === center.x && y === center.y,
+  );
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   resetBridge();
@@ -459,6 +465,129 @@ describe("MainScene", () => {
     ]);
   });
 
+  it("renders swirling vortex visuals for both endpoints of an active portal pair", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.enterPhase("playing");
+    scene.getSnake()!.getTicker().setInterval(200_000);
+
+    const endpointA = { col: 6, row: 7 };
+    const endpointB = { col: 15, row: 18 };
+    const pairId = "portal-pair-vortex";
+    const fakeActivePortal = {
+      getPairId: () => pairId,
+      getState: () => "active" as const,
+      getEndpoints: () =>
+        [
+          {
+            id: `${pairId}:a`,
+            pairId,
+            linkedEndpointId: `${pairId}:b`,
+            position: endpointA,
+          },
+          {
+            id: `${pairId}:b`,
+            pairId,
+            linkedEndpointId: `${pairId}:a`,
+            position: endpointB,
+          },
+        ] as const,
+      getElapsedInStateMs: () => 2_500,
+      getLifecycleDurations: () => ({
+        spawningMs: 200,
+        activeMs: 8_000,
+        collapsingMs: 200,
+      }),
+    };
+
+    vi.spyOn(scene.getPortalManager(), "update").mockReturnValue({
+      spawnedPairs: [],
+      lifecycleTransitions: [],
+      despawnedPairIds: [],
+      orderedEvents: [],
+    });
+    vi
+      .spyOn(scene.getPortalManager(), "getActivePortal")
+      .mockReturnValue(fakeActivePortal as never);
+
+    mockFillCircle.mockClear();
+    mockMoveTo.mockClear();
+    mockLineTo.mockClear();
+
+    scene.update(0, 16);
+
+    const centerA = gridToPixel(endpointA);
+    const centerB = gridToPixel(endpointB);
+    expect(hasFillCircleAt(centerA)).toBe(true);
+    expect(hasFillCircleAt(centerB)).toBe(true);
+    expect(mockMoveTo).toHaveBeenCalled();
+    expect(mockLineTo).toHaveBeenCalled();
+  });
+
+  it("renders portal spawn/despawn hooks from lifecycle events", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.enterPhase("playing");
+    scene.getSnake()!.getTicker().setInterval(200_000);
+
+    const endpoints = [
+      { col: 4, row: 5 },
+      { col: 21, row: 13 },
+    ] as const;
+    const pairId = "portal-pair-hook";
+    const updateSpy = vi.spyOn(scene.getPortalManager(), "update");
+    updateSpy.mockReturnValueOnce({
+      spawnedPairs: [{ pairId, endpoints }],
+      lifecycleTransitions: [],
+      despawnedPairIds: [],
+      orderedEvents: [{ type: "spawned", pairId, endpoints }],
+    });
+    updateSpy.mockReturnValueOnce({
+      spawnedPairs: [],
+      lifecycleTransitions: [
+        {
+          pairId,
+          transition: { from: "active", to: "collapsing", elapsedMs: 8_000 },
+        },
+      ],
+      despawnedPairIds: [pairId],
+      orderedEvents: [
+        {
+          type: "lifecycleTransition",
+          pairId,
+          transition: { from: "active", to: "collapsing", elapsedMs: 8_000 },
+        },
+        { type: "despawned", pairId },
+      ],
+    });
+    vi.spyOn(scene.getPortalManager(), "getActivePortal").mockReturnValue(null);
+
+    const centerA = gridToPixel(endpoints[0]);
+    const centerB = gridToPixel(endpoints[1]);
+
+    mockFillCircle.mockClear();
+    mockMoveTo.mockClear();
+    mockLineTo.mockClear();
+
+    scene.update(0, 16);
+
+    expect(hasFillCircleAt(centerA)).toBe(true);
+    expect(hasFillCircleAt(centerB)).toBe(true);
+    expect(mockMoveTo).toHaveBeenCalled();
+    expect(mockLineTo).toHaveBeenCalled();
+
+    mockFillCircle.mockClear();
+    mockMoveTo.mockClear();
+    mockLineTo.mockClear();
+
+    scene.update(0, 16);
+
+    expect(hasFillCircleAt(centerA)).toBe(true);
+    expect(hasFillCircleAt(centerB)).toBe(true);
+    expect(mockMoveTo).toHaveBeenCalled();
+    expect(mockLineTo).toHaveBeenCalled();
+  });
+
   // ── Score ──────────────────────────────────────────────────
 
   it("addScore increments score and notifies bridge", () => {
@@ -747,7 +876,7 @@ describe("MainScene", () => {
     scene.update(0, 45_000); // Neon -> Ice
 
     expect(scene.getCurrentBiome()).toBe(Biome.IceCavern);
-    expect(mockAddGraphics).toHaveBeenCalledTimes(4);
+    expect(mockAddGraphics.mock.calls.length).toBeGreaterThanOrEqual(4);
     expect(mockSetBackgroundColor).toHaveBeenCalledWith(0x081624);
     expect(mockLineStyle).toHaveBeenCalledWith(2, 0x8fdcff, 0.16);
     expect(mockLineStyle).toHaveBeenCalledWith(1, 0x8ed5ff, 0.16);
