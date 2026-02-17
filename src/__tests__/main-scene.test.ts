@@ -123,8 +123,9 @@ vi.mock("phaser", () => {
 });
 
 // Import after mock
-import { MainScene } from "@/game/scenes/MainScene";
+import { MainScene, PORTAL_SCENE_EVENTS } from "@/game/scenes/MainScene";
 import { Snake } from "@/game/entities/Snake";
+import type { PortalManagerUpdateResult } from "@/game/systems/PortalManager";
 
 // Spy on gameBridge methods
 const spySetPhase = vi.spyOn(gameBridge, "setPhase");
@@ -264,6 +265,127 @@ describe("MainScene", () => {
 
     scene.enterPhase("gameOver");
     expect(spySetPhase).toHaveBeenCalledWith("gameOver");
+  });
+
+  it("starts and stops PortalManager with run lifecycle transitions", () => {
+    const scene = new MainScene();
+    scene.create();
+    expect(scene.getPortalManager().isRunning()).toBe(false);
+
+    scene.enterPhase("playing");
+    expect(scene.getPortalManager().isRunning()).toBe(true);
+
+    scene.endRun();
+    expect(scene.getPortalManager().isRunning()).toBe(false);
+  });
+
+  it("updates portals before movement/collision and emits deterministic stage exposure order", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.enterPhase("playing");
+
+    const snake = scene.getSnake()!;
+    snake.reset({ col: 10, row: 10 }, "right", 3);
+    snake.getTicker().setInterval(1);
+    const preUpdateSegments = snake.getSegments().map((segment) => ({
+      col: segment.col,
+      row: segment.row,
+    }));
+
+    const portalUpdateResult: PortalManagerUpdateResult = {
+      spawnedPairs: [
+        {
+          pairId: "portal-pair-1",
+          endpoints: [
+            { col: 2, row: 2 },
+            { col: 7, row: 8 },
+          ],
+        },
+      ],
+      lifecycleTransitions: [
+        {
+          pairId: "portal-pair-0",
+          transition: { from: "active", to: "collapsing", elapsedMs: 8_000 },
+        },
+      ],
+      despawnedPairIds: ["portal-pair-0"],
+      orderedEvents: [
+        {
+          type: "lifecycleTransition",
+          pairId: "portal-pair-0",
+          transition: { from: "active", to: "collapsing", elapsedMs: 8_000 },
+        },
+        {
+          type: "despawned",
+          pairId: "portal-pair-0",
+        },
+        {
+          type: "spawned",
+          pairId: "portal-pair-1",
+          endpoints: [
+            { col: 2, row: 2 },
+            { col: 7, row: 8 },
+          ],
+        },
+      ],
+    };
+
+    const portalUpdateSpy = vi
+      .spyOn(scene.getPortalManager(), "update")
+      .mockReturnValue(portalUpdateResult);
+    const snakeUpdateSpy = vi.spyOn(snake, "update");
+    const collisionSpy = vi.spyOn(
+      scene as unknown as { checkCollisions: () => boolean },
+      "checkCollisions",
+    );
+
+    const emitSpy = vi.fn();
+    (
+      scene as unknown as {
+        events: { emit: (...args: unknown[]) => void };
+      }
+    ).events = { emit: emitSpy };
+
+    scene.update(0, 16);
+
+    expect(portalUpdateSpy).toHaveBeenCalledTimes(1);
+    const [deltaArg, spawnContextArg] = portalUpdateSpy.mock.calls[0];
+    expect(deltaArg).toBe(16);
+    const occupiedCells = Array.from(spawnContextArg?.occupiedCells ?? []);
+    for (const segment of preUpdateSegments) {
+      expect(occupiedCells).toContainEqual(segment);
+    }
+    expect(occupiedCells.length).toBeGreaterThanOrEqual(
+      preUpdateSegments.length + 1,
+    );
+
+    const portalUpdateOrder = portalUpdateSpy.mock.invocationCallOrder[0];
+    const snakeUpdateOrder = snakeUpdateSpy.mock.invocationCallOrder[0];
+    const collisionOrder = collisionSpy.mock.invocationCallOrder[0];
+    expect(portalUpdateOrder).toBeLessThan(snakeUpdateOrder);
+    expect(snakeUpdateOrder).toBeLessThan(collisionOrder);
+
+    expect(scene.getPortalUpdateResult()).toEqual(portalUpdateResult);
+
+    const updateEvent = emitSpy.mock.calls.find(
+      ([eventName]) => eventName === PORTAL_SCENE_EVENTS.UPDATE,
+    );
+    expect(updateEvent).toBeDefined();
+    expect(
+      (updateEvent?.[1] as { updateResult: PortalManagerUpdateResult }).updateResult,
+    ).toEqual(portalUpdateResult);
+
+    const stageExposureEvents = emitSpy.mock.calls
+      .filter(
+        ([eventName]) => eventName === PORTAL_SCENE_EVENTS.STAGE_EXPOSURE,
+      )
+      .map(([, payload]) => (payload as { stage: string }).stage);
+    expect(stageExposureEvents).toEqual(["rendering", "movement", "collision"]);
+
+    const portalStateChangeEvents = emitSpy.mock.calls
+      .filter(([eventName]) => eventName === PORTAL_SCENE_EVENTS.STATE_CHANGE)
+      .map(([, payload]) => payload);
+    expect(portalStateChangeEvents).toEqual(portalUpdateResult.orderedEvents);
   });
 
   // ── Score ──────────────────────────────────────────────────
