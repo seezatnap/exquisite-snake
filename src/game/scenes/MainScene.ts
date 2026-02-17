@@ -346,6 +346,8 @@ export class MainScene extends Phaser.Scene {
     const stepped = this.snake.update(delta);
 
     if (stepped) {
+      this.resolvePortalHeadTraversal();
+
       if (this.checkCollisions()) {
         return; // Game over — stop processing this frame
       }
@@ -719,6 +721,25 @@ export class MainScene extends Phaser.Scene {
       },
       (pos) => this.moltenLavaPools.has(this.gridPosKey(pos)),
     ]);
+  }
+
+  /**
+   * Check whether the snake head is on a traversable portal cell.
+   * If so, teleport the head to the linked exit portal, preserving
+   * the current direction and movement cadence.
+   */
+  private resolvePortalHeadTraversal(): void {
+    if (!this.snake) return;
+
+    const head = this.snake.getHeadPosition();
+    const pair = this.portalManager.getPairAtPosition(head);
+    if (!pair || !pair.isTraversable()) return;
+
+    const exitPos = pair.getLinkedExit(head);
+    if (!exitPos) return;
+
+    this.snake.teleportHead(exitPos);
+    this.events?.emit?.("portalTraversed", { pair, entry: head, exit: exitPos });
   }
 
   /** Allow external configuration of the PortalManager (e.g. for tests). */

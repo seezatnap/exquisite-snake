@@ -360,6 +360,22 @@ export class Snake {
     return true;
   }
 
+  // ── Portal traversal ──────────────────────────────────────────
+
+  /**
+   * Teleport the snake head to a new grid position.
+   *
+   * Used by portal traversal: the head is relocated to the exit portal
+   * cell while preserving the current direction and movement cadence.
+   * The previous-position for the head is also set to the exit so that
+   * sprite interpolation doesn't create a visual "slide" from the old
+   * position to the new one.
+   */
+  teleportHead(exitPos: GridPos): void {
+    this.segments[0] = { ...exitPos };
+    this.prevSegments[0] = { ...exitPos };
+  }
+
   // ── State queries ──────────────────────────────────────────────
 
   /** Get the head grid position. */
