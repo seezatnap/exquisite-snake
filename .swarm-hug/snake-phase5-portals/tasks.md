@@ -33,4 +33,4 @@
 - [x] (#15) Fix `pickRandomEmptyPortalPairCells` to avoid false `null` when a valid pair exists (e.g., retry or precompute valid pairs under `minManhattanDistance`); add deterministic tests covering the current false-negative RNG case. (A)
 
 ## Follow-up tasks (from sprint review)
-- [A] (#16) Optimize `pickRandomEmptyPortalPairCells` to avoid full O(n^2) `validPairs` materialization (on a 40x30 grid this currently builds 719,400 pairs and spikes ~60MB heap), while preserving the no-false-null guarantee from #15; add a regression test that exercises large-board selection without exhaustive pair allocation.
+- [x] (#16) Optimize `pickRandomEmptyPortalPairCells` to avoid full O(n^2) `validPairs` materialization (on a 40x30 grid this currently builds 719,400 pairs and spikes ~60MB heap), while preserving the no-false-null guarantee from #15; add a regression test that exercises large-board selection without exhaustive pair allocation. (A)
