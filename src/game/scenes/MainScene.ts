@@ -84,6 +84,11 @@ export interface PortalStageExposure {
   snapshot: PortalRuntimeSnapshot;
 }
 
+export interface PortalDistortionConfig {
+  radiusTiles: number;
+  intensity: number;
+}
+
 interface BiomeVisualTheme {
   backgroundColor: number;
   gridLineColor: number;
@@ -178,6 +183,15 @@ const PORTAL_HOOK_RING_SEGMENTS = 16;
 const PORTAL_RING_VERTICAL_SQUASH = 0.78;
 const PORTAL_SPAWN_HOOK_DURATION_MS = 260;
 const PORTAL_DESPAWN_HOOK_DURATION_MS = 220;
+const PORTAL_DISTORTION_PULSE_RADIANS_PER_SEC = Math.PI * 1.35;
+const PORTAL_DISTORTION_MIN_RADIUS_TILES = 0;
+const PORTAL_DISTORTION_MAX_RADIUS_TILES = 8;
+const PORTAL_DISTORTION_MIN_INTENSITY = 0;
+const PORTAL_DISTORTION_MAX_INTENSITY = 1;
+const DEFAULT_PORTAL_DISTORTION_CONFIG: PortalDistortionConfig = {
+  radiusTiles: 2.15,
+  intensity: 0.32,
+};
 const ECHO_GHOST_OUTLINE_ALPHA = 0.4;
 const ECHO_GHOST_OUTLINE_WIDTH_PX = 2;
 const ECHO_GHOST_DASH_LENGTH_PX = 6;
@@ -208,6 +222,10 @@ interface PortalVortexRenderProfile {
   alpha: number;
   scale: number;
   spinMultiplier: number;
+}
+interface PortalDistortionRenderProfile {
+  radiusTiles: number;
+  intensity: number;
 }
 type PortalLifecycleHookKind = "spawn" | "despawn";
 interface PortalLifecycleHookEffect {
@@ -323,6 +341,13 @@ export class MainScene extends Phaser.Scene {
 
   /** Current animated spin offset for portal vortex visuals. */
   private portalVortexSpinRadians = 0;
+
+  /** Current animated pulse offset for portal tile distortion. */
+  private portalDistortionPulseRadians = 0;
+
+  /** Tunable portal tile-distortion controls. */
+  private portalDistortionConfig: PortalDistortionConfig =
+    clonePortalDistortionConfig(DEFAULT_PORTAL_DISTORTION_CONFIG);
 
   /** Cached endpoint positions per portal pair for despawn visual hooks. */
   private portalEndpointCache = new Map<string, readonly [GridPos, GridPos]>();
@@ -671,6 +696,19 @@ export class MainScene extends Phaser.Scene {
     this.setBiomeMechanicsConfig({ moltenCore: config });
   }
 
+  /** Override the portal tile-distortion radius/intensity tuning knobs. */
+  setPortalDistortionConfig(config: Partial<PortalDistortionConfig>): void {
+    this.portalDistortionConfig = mergePortalDistortionConfig(
+      this.portalDistortionConfig,
+      config,
+    );
+  }
+
+  /** Snapshot of the active portal tile-distortion tuning values. */
+  getPortalDistortionConfig(): PortalDistortionConfig {
+    return clonePortalDistortionConfig(this.portalDistortionConfig);
+  }
+
   /** Override the run biome order (must be a full permutation of all biomes). */
   setBiomeCycleOrder(order: readonly Biome[]): void {
     this.biomeManager.setCycleOrder(order);
@@ -813,6 +851,7 @@ export class MainScene extends Phaser.Scene {
   private clearPortalVisualState(): void {
     this.portalGraphics?.clear?.();
     this.portalVortexSpinRadians = 0;
+    this.portalDistortionPulseRadians = 0;
     this.portalEndpointCache.clear();
     this.portalLifecycleHookEffects = [];
   }
@@ -848,16 +887,32 @@ export class MainScene extends Phaser.Scene {
       (this.portalVortexSpinRadians +
         (safeDeltaMs / 1_000) * PORTAL_VORTEX_SPIN_RADIANS_PER_SEC) %
       (Math.PI * 2);
+    this.portalDistortionPulseRadians =
+      (this.portalDistortionPulseRadians +
+        (safeDeltaMs / 1_000) * PORTAL_DISTORTION_PULSE_RADIANS_PER_SEC) %
+      (Math.PI * 2);
 
     if (activePortal && snapshot.activePortalEndpoints) {
-      const profile = this.getPortalVortexRenderProfile(activePortal);
-      if (profile.alpha > 0 && profile.scale > 0) {
+      const distortionProfile = this.getPortalDistortionRenderProfile(activePortal);
+      if (
+        distortionProfile.radiusTiles > 0 &&
+        distortionProfile.intensity > 0
+      ) {
+        this.drawPortalTileDistortionField(
+          gfx,
+          snapshot.activePortalEndpoints,
+          distortionProfile,
+        );
+      }
+
+      const vortexProfile = this.getPortalVortexRenderProfile(activePortal);
+      if (vortexProfile.alpha > 0 && vortexProfile.scale > 0) {
         this.drawPortalPairVortex(
           gfx,
           snapshot.activePortalEndpoints,
-          this.portalVortexSpinRadians * profile.spinMultiplier,
-          profile.alpha,
-          profile.scale,
+          this.portalVortexSpinRadians * vortexProfile.spinMultiplier,
+          vortexProfile.alpha,
+          vortexProfile.scale,
         );
       }
     }
@@ -1008,6 +1063,122 @@ export class MainScene extends Phaser.Scene {
       scale: 0,
       spinMultiplier: 1,
     };
+  }
+
+  private getPortalDistortionRenderProfile(
+    activePortal: Portal,
+  ): PortalDistortionRenderProfile {
+    const state = activePortal.getState();
+    const durations = activePortal.getLifecycleDurations();
+    const elapsedInStateMs = activePortal.getElapsedInStateMs();
+
+    let lifecycleMultiplier = 1;
+    if (state === "spawning") {
+      const progress = normalizeProgress(elapsedInStateMs, durations.spawningMs);
+      lifecycleMultiplier = 0.38 + progress * 0.62;
+    } else if (state === "collapsing") {
+      const progress = normalizeProgress(elapsedInStateMs, durations.collapsingMs);
+      lifecycleMultiplier = Math.max(0, 1 - progress);
+    } else if (state === "collapsed") {
+      lifecycleMultiplier = 0;
+    }
+
+    return {
+      radiusTiles: this.portalDistortionConfig.radiusTiles,
+      intensity: this.portalDistortionConfig.intensity * lifecycleMultiplier,
+    };
+  }
+
+  private drawPortalTileDistortionField(
+    gfx: Phaser.GameObjects.Graphics,
+    endpoints: readonly [GridPos, GridPos],
+    profile: PortalDistortionRenderProfile,
+  ): void {
+    this.drawPortalEndpointTileDistortion(gfx, endpoints[0], profile, 0);
+    this.drawPortalEndpointTileDistortion(gfx, endpoints[1], profile, Math.PI);
+  }
+
+  private drawPortalEndpointTileDistortion(
+    gfx: Phaser.GameObjects.Graphics,
+    endpoint: GridPos,
+    profile: PortalDistortionRenderProfile,
+    phaseOffset: number,
+  ): void {
+    if (profile.radiusTiles <= 0 || profile.intensity <= 0) {
+      return;
+    }
+
+    const minCol = Math.max(0, Math.floor(endpoint.col - profile.radiusTiles));
+    const maxCol = Math.min(
+      GRID_COLS - 1,
+      Math.ceil(endpoint.col + profile.radiusTiles),
+    );
+    const minRow = Math.max(0, Math.floor(endpoint.row - profile.radiusTiles));
+    const maxRow = Math.min(
+      GRID_ROWS - 1,
+      Math.ceil(endpoint.row + profile.radiusTiles),
+    );
+    const endpointCenterCol = endpoint.col + 0.5;
+    const endpointCenterRow = endpoint.row + 0.5;
+    const radiusDenominator = Math.max(0.0001, profile.radiusTiles);
+
+    for (let col = minCol; col <= maxCol; col += 1) {
+      for (let row = minRow; row <= maxRow; row += 1) {
+        const tileCenterCol = col + 0.5;
+        const tileCenterRow = row + 0.5;
+        const deltaCol = tileCenterCol - endpointCenterCol;
+        const deltaRow = tileCenterRow - endpointCenterRow;
+        const distanceTiles = Math.hypot(deltaCol, deltaRow);
+        if (distanceTiles > profile.radiusTiles) {
+          continue;
+        }
+
+        const falloff = 1 - distanceTiles / radiusDenominator;
+        if (falloff <= 0) {
+          continue;
+        }
+
+        const wave = Math.sin(
+          this.portalDistortionPulseRadians +
+            phaseOffset +
+            distanceTiles * 1.9,
+        );
+        const normalizedWave = 0.5 + wave * 0.5;
+        const tileScale =
+          1 + profile.intensity * falloff * (0.45 + normalizedWave * 0.55);
+
+        const swirlAngle =
+          Math.atan2(deltaRow, deltaCol) +
+          this.portalDistortionPulseRadians * 0.45 +
+          phaseOffset;
+        const swirlOffsetPx = TILE_SIZE * profile.intensity * falloff * 0.2;
+        const centerX =
+          col * TILE_SIZE +
+          TILE_SIZE / 2 +
+          Math.cos(swirlAngle) * swirlOffsetPx;
+        const centerY =
+          row * TILE_SIZE +
+          TILE_SIZE / 2 +
+          Math.sin(swirlAngle) * swirlOffsetPx * PORTAL_RING_VERTICAL_SQUASH;
+        const scaledSize = Math.max(1, TILE_SIZE * tileScale);
+        const alpha = Math.min(
+          0.38,
+          profile.intensity * falloff * (0.16 + normalizedWave * 0.14),
+        );
+        if (alpha <= 0) {
+          continue;
+        }
+
+        const tintColor = (col + row) % 2 === 0 ? 0x7855de : 0x93a6ff;
+        gfx.fillStyle?.(tintColor, alpha);
+        gfx.fillRect?.(
+          centerX - scaledSize / 2,
+          centerY - scaledSize / 2,
+          scaledSize,
+          scaledSize,
+        );
+      }
+    }
   }
 
   private drawPortalPairVortex(
@@ -2310,4 +2481,55 @@ function normalizeProgress(elapsedMs: number, durationMs: number): number {
     return 0;
   }
   return Math.max(0, Math.min(1, elapsedMs / durationMs));
+}
+
+function clonePortalDistortionConfig(
+  config: PortalDistortionConfig,
+): PortalDistortionConfig {
+  return {
+    radiusTiles: config.radiusTiles,
+    intensity: config.intensity,
+  };
+}
+
+function mergePortalDistortionConfig(
+  current: PortalDistortionConfig,
+  patch: Partial<PortalDistortionConfig>,
+): PortalDistortionConfig {
+  return {
+    radiusTiles: clampPortalDistortionRadiusTiles(
+      patch.radiusTiles,
+      current.radiusTiles,
+    ),
+    intensity: clampPortalDistortionIntensity(
+      patch.intensity,
+      current.intensity,
+    ),
+  };
+}
+
+function clampPortalDistortionRadiusTiles(
+  value: number | undefined,
+  fallback: number,
+): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return fallback;
+  }
+  return Math.max(
+    PORTAL_DISTORTION_MIN_RADIUS_TILES,
+    Math.min(PORTAL_DISTORTION_MAX_RADIUS_TILES, value),
+  );
+}
+
+function clampPortalDistortionIntensity(
+  value: number | undefined,
+  fallback: number,
+): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return fallback;
+  }
+  return Math.max(
+    PORTAL_DISTORTION_MIN_INTENSITY,
+    Math.min(PORTAL_DISTORTION_MAX_INTENSITY, value),
+  );
 }
