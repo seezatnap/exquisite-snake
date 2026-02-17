@@ -8,14 +8,14 @@
 
 ## Portal Traversal
 
-- [A] (#4) Implement head traversal so when the snake head enters a portal cell it exits from the paired portal cell while preserving current direction and movement cadence [5 pts] (blocked by #3)
+- [x] (#4) Implement head traversal so when the snake head enters a portal cell it exits from the paired portal cell while preserving current direction and movement cadence [5 pts] (blocked by #3) (A)
 - [ ] (#5) Implement body threading logic so segments transit one-by-one through the linked portals with maintained segment order and smooth continuity [5 pts] (blocked by #4)
 - [ ] (#6) Implement collapse-mid-transit handling so any remaining unthreaded segments are teleported instantly to the exit side with correct final ordering/positions [5 pts] (blocked by #5)
 - [ ] (#7) Add emergency teleport safety handling: trigger flash VFX and disable collisions for ~0.5 seconds after forced teleport, then reliably restore collision checks [5 pts] (blocked by #6)
 
 ## Visual Effects & Rendering
 
-- [A] (#8) Build portal visuals with swirling vortex animation for both ends of each linked pair, including spawn/despawn animation hooks tied to portal lifecycle [5 pts] (blocked by #3)
+- [x] (#8) Build portal visuals with swirling vortex animation for both ends of each linked pair, including spawn/despawn animation hooks tied to portal lifecycle [5 pts] (blocked by #3) (A)
 - [ ] (#9) Implement nearby tile distortion around active portals using barrel shader or scale-effect fallback, with tunable radius/intensity and cleanup on collapse [5 pts] (blocked by #8)
 - [ ] (#10) Implement split-snake rendering state during transit so the snake appears at both entry and exit sides while segments are still threading [5 pts] (blocked by #5, #8)
 
