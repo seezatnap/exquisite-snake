@@ -183,6 +183,8 @@ const PORTAL_HOOK_RING_SEGMENTS = 16;
 const PORTAL_RING_VERTICAL_SQUASH = 0.78;
 const PORTAL_SPAWN_HOOK_DURATION_MS = 260;
 const PORTAL_DESPAWN_HOOK_DURATION_MS = 220;
+const PORTAL_EMERGENCY_FLASH_DURATION_MS = 240;
+const PORTAL_EMERGENCY_COLLISION_DISABLE_DURATION_MS = 500;
 const PORTAL_SPLIT_SNAKE_RENDER_DEPTH = RENDER_DEPTH.SNAKE - 0.5;
 const PORTAL_SPLIT_HEAD_ALPHA = 0.46;
 const PORTAL_SPLIT_BODY_ALPHA = 0.34;
@@ -232,7 +234,7 @@ interface PortalDistortionRenderProfile {
   radiusTiles: number;
   intensity: number;
 }
-type PortalLifecycleHookKind = "spawn" | "despawn";
+type PortalLifecycleHookKind = "spawn" | "despawn" | "emergencyTeleport";
 interface PortalLifecycleHookEffect {
   pairId: string;
   kind: PortalLifecycleHookKind;
@@ -363,6 +365,12 @@ export class MainScene extends Phaser.Scene {
   /** Active short-lived portal lifecycle effects (spawn/despawn hooks). */
   private portalLifecycleHookEffects: PortalLifecycleHookEffect[] = [];
 
+  /** Remaining collision-suppression time after forced portal-collapse teleport. */
+  private portalEmergencyCollisionDisableMs = 0;
+
+  /** Monotonic ID for uniquely keyed emergency-teleport flash effects. */
+  private portalEmergencyFlashEffectCounter = 0;
+
   /**
    * Injectable RNG function for deterministic replay sessions.
    * Returns a value in [0, 1). Defaults to Math.random.
@@ -408,6 +416,8 @@ export class MainScene extends Phaser.Scene {
     this.biomeManager.stopRun();
     this.portalManager.stopRun();
     this.lastPortalUpdateResult = createEmptyPortalUpdateResult();
+    this.portalEmergencyCollisionDisableMs = 0;
+    this.portalEmergencyFlashEffectCounter = 0;
     this.resetMoltenCoreState();
     this.clearBiomeTransitionEffect();
     this.destroyEntities();
@@ -431,9 +441,11 @@ export class MainScene extends Phaser.Scene {
       this.clearPortalVisualState();
       this.clearPortalSplitSnakeVisualState();
       this.clearEchoGhostVisualState();
+      this.portalEmergencyCollisionDisableMs = 0;
       return;
     }
 
+    this.advancePortalEmergencyCollisionSafety(delta);
     gameBridge.setElapsedTime(gameBridge.getState().elapsedTime + delta);
     this.updateBiomeState(delta);
 
@@ -500,6 +512,8 @@ export class MainScene extends Phaser.Scene {
     this.biomeManager.startRun();
     this.portalManager.startRun();
     this.lastPortalUpdateResult = createEmptyPortalUpdateResult();
+    this.portalEmergencyCollisionDisableMs = 0;
+    this.portalEmergencyFlashEffectCounter = 0;
     gameBridge.resetRun({
       currentBiome: this.biomeManager.getCurrentBiome(),
       biomeVisitStats: this.biomeManager.getVisitStats(),
@@ -523,6 +537,7 @@ export class MainScene extends Phaser.Scene {
     this.biomeManager.stopRun();
     this.portalManager.stopRun();
     this.lastPortalUpdateResult = createEmptyPortalUpdateResult();
+    this.portalEmergencyCollisionDisableMs = 0;
     this.resetMoltenCoreState();
     this.clearBiomeTransitionEffect();
     this.clearBiomeShiftCountdown();
@@ -606,7 +621,50 @@ export class MainScene extends Phaser.Scene {
       return;
     }
 
+    const traversalSnapshots = this.snake.getPortalTraversalSnapshots();
     this.snake.forceCompletePortalTraversal();
+    this.activatePortalEmergencyTeleportSafety(traversalSnapshots);
+  }
+
+  private activatePortalEmergencyTeleportSafety(
+    traversals: readonly PortalTraversalSnapshot[],
+  ): void {
+    this.portalEmergencyCollisionDisableMs = Math.max(
+      this.portalEmergencyCollisionDisableMs,
+      PORTAL_EMERGENCY_COLLISION_DISABLE_DURATION_MS,
+    );
+
+    const flashedPortalPairs = new Set<string>();
+    for (const traversal of traversals) {
+      const traversalPairKey = `${traversal.entry.col}:${traversal.entry.row}->${traversal.exit.col}:${traversal.exit.row}`;
+      if (flashedPortalPairs.has(traversalPairKey)) {
+        continue;
+      }
+      flashedPortalPairs.add(traversalPairKey);
+
+      this.queuePortalLifecycleHook(
+        `portal-emergency-${this.portalEmergencyFlashEffectCounter}`,
+        [
+          { col: traversal.entry.col, row: traversal.entry.row },
+          { col: traversal.exit.col, row: traversal.exit.row },
+        ],
+        "emergencyTeleport",
+        PORTAL_EMERGENCY_FLASH_DURATION_MS,
+      );
+      this.portalEmergencyFlashEffectCounter += 1;
+    }
+  }
+
+  private advancePortalEmergencyCollisionSafety(deltaMs: number): void {
+    if (this.portalEmergencyCollisionDisableMs <= 0) {
+      return;
+    }
+
+    const safeDeltaMs = Number.isFinite(deltaMs) ? Math.max(0, deltaMs) : 0;
+    this.portalEmergencyCollisionDisableMs = Math.max(
+      0,
+      this.portalEmergencyCollisionDisableMs - safeDeltaMs,
+    );
   }
 
   // ── Collision detection ───────────────────────────────────────
@@ -617,6 +675,9 @@ export class MainScene extends Phaser.Scene {
    */
   private checkCollisions(): boolean {
     if (!this.snake) return false;
+    if (this.portalEmergencyCollisionDisableMs > 0) {
+      return false;
+    }
 
     const head = this.snake.getHeadPosition();
 
@@ -1395,30 +1456,40 @@ export class MainScene extends Phaser.Scene {
     for (const effect of this.portalLifecycleHookEffects) {
       const progress = normalizeProgress(effect.elapsedMs, effect.durationMs);
       const easedProgress = 1 - (1 - progress) ** 2;
+      const isSpawnHook = effect.kind === "spawn";
+      const isDespawnHook = effect.kind === "despawn";
       const ringRadius =
         TILE_SIZE *
-        (effect.kind === "spawn"
+        (isSpawnHook
           ? 0.35 + easedProgress * 1.05
-          : 0.5 + easedProgress * 1.35);
-      const alpha =
-        (effect.kind === "spawn" ? 0.58 : 0.66) * Math.max(0, 1 - progress);
+          : isDespawnHook
+            ? 0.5 + easedProgress * 1.35
+            : 0.62 + easedProgress * 1.55);
+      const alphaBase = isSpawnHook ? 0.58 : isDespawnHook ? 0.66 : 0.88;
+      const alpha = alphaBase * Math.max(0, 1 - progress);
       if (alpha <= 0) {
         continue;
       }
 
-      const ringColor = effect.kind === "spawn" ? 0x8ff7ff : 0xff8adf;
-      const flashColor = effect.kind === "spawn" ? 0xcbfbff : 0xffd4f2;
+      const ringColor = isSpawnHook
+        ? 0x8ff7ff
+        : isDespawnHook
+          ? 0xff8adf
+          : 0xffef91;
+      const flashColor = isSpawnHook
+        ? 0xcbfbff
+        : isDespawnHook
+          ? 0xffd4f2
+          : 0xffffff;
+      const flashAlpha = isSpawnHook ? 0.32 : isDespawnHook ? 0.4 : 0.58;
       const flashRadius =
         TILE_SIZE *
-        (effect.kind === "spawn" ? 0.45 : 0.55) *
-        (1 - progress * 0.5);
+        (isSpawnHook ? 0.45 : isDespawnHook ? 0.55 : 0.72) *
+        (1 - progress * (isSpawnHook || isDespawnHook ? 0.5 : 0.7));
 
       for (const endpoint of effect.endpoints) {
         const center = gridToPixel(endpoint);
-        gfx.fillStyle?.(
-          flashColor,
-          alpha * (effect.kind === "spawn" ? 0.32 : 0.4),
-        );
+        gfx.fillStyle?.(flashColor, alpha * flashAlpha);
         gfx.fillCircle?.(center.x, center.y, Math.max(1, flashRadius));
         this.drawPortalHookRing(
           gfx,
