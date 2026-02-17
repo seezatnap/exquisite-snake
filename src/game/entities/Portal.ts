@@ -123,21 +123,29 @@ export function pickRandomEmptyPortalPairCells(
   }
 
   const rng = options.rng ?? Math.random;
-  const firstIndex = Math.floor(sampleRng(rng) * emptyCells.length);
-  const first = emptyCells[firstIndex];
-  emptyCells.splice(firstIndex, 1);
-
   const minDistance = sanitizeNonNegativeInt(options.minManhattanDistance, 0);
-  const secondCandidates =
-    minDistance <= 0
-      ? emptyCells
-      : emptyCells.filter((cell) => manhattanDistance(first, cell) >= minDistance);
-  if (secondCandidates.length === 0) {
+  const validPairs: Array<[GridPos, GridPos]> = [];
+  for (let firstIndex = 0; firstIndex < emptyCells.length - 1; firstIndex += 1) {
+    for (
+      let secondIndex = firstIndex + 1;
+      secondIndex < emptyCells.length;
+      secondIndex += 1
+    ) {
+      const first = emptyCells[firstIndex];
+      const second = emptyCells[secondIndex];
+      if (minDistance > 0 && manhattanDistance(first, second) < minDistance) {
+        continue;
+      }
+      validPairs.push([first, second]);
+    }
+  }
+
+  if (validPairs.length === 0) {
     return null;
   }
 
-  const secondIndex = Math.floor(sampleRng(rng) * secondCandidates.length);
-  return [first, secondCandidates[secondIndex]];
+  const pairIndex = Math.floor(sampleRng(rng) * validPairs.length);
+  return validPairs[pairIndex];
 }
 
 export class Portal {
