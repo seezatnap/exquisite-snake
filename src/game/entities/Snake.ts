@@ -465,10 +465,62 @@ export class Snake {
 
   /**
    * Clear the active portal transit (e.g. when the portal collapses
-   * and remaining segments are force-teleported by task #6).
+   * and remaining segments are force-teleported).
    */
   clearPortalTransit(): void {
     this.portalTransit = null;
+  }
+
+  /**
+   * Force-complete the active portal transit by instantly teleporting
+   * all remaining unthreaded body segments to the exit side.
+   *
+   * Used when a portal collapses while the snake is still mid-transit.
+   * Each unthreaded segment that is still on the entry side (or hasn't
+   * yet reached the exit side) is relocated to the exit position, and
+   * its prevSegments entry is fixed to prevent interpolation glitches.
+   *
+   * After the forced teleport, the transit is cleared.
+   *
+   * Returns the number of segments that were force-teleported.
+   */
+  forceCompleteTransit(): number {
+    if (!this.portalTransit) return 0;
+
+    const { exitPos } = this.portalTransit;
+    let forceTeleported = 0;
+
+    // Teleport all body segments that haven't been threaded yet.
+    // A segment that has already threaded will be at exitPos or
+    // beyond it (following the head). We only relocate segments
+    // that are NOT already at the exit position — but more
+    // precisely, we just relocate ALL remaining body segments
+    // that are still "on the entry side" (i.e. not yet at the
+    // exit position or trailing the head on the exit side).
+    //
+    // The simplest correct approach: walk body segments from tail
+    // to head. For each segment still at the entry pos or that
+    // hasn't reached the exit side, teleport to exitPos. But since
+    // we can't easily distinguish which side a segment is on when
+    // positions overlap, we just teleport the last N segments
+    // (where N = segmentsRemaining) to exitPos, maintaining their
+    // relative ordering by keeping them all at the exit position.
+    const total = this.segments.length;
+    const remaining = this.portalTransit.segmentsRemaining;
+
+    // The unthreaded segments are the tail-end of the body.
+    // They start at index (total - remaining) and go to (total - 1).
+    const startIdx = total - remaining;
+    for (let i = startIdx; i < total; i++) {
+      this.segments[i] = { ...exitPos };
+      if (i < this.prevSegments.length) {
+        this.prevSegments[i] = { ...exitPos };
+      }
+      forceTeleported++;
+    }
+
+    this.portalTransit = null;
+    return forceTeleported;
   }
 
   // ── State queries ──────────────────────────────────────────────

@@ -43,6 +43,7 @@ import {
 } from "../systems/biomeMechanics";
 import { PortalManager, type PortalManagerOptions } from "../systems/PortalManager";
 import { PortalRenderer } from "../systems/PortalRenderer";
+import type { PortalPair } from "../entities/Portal";
 
 // ── Default spawn configuration ─────────────────────────────────
 
@@ -712,16 +713,42 @@ export class MainScene extends Phaser.Scene {
    * Called early in the update loop (before movement/collision) so that
    * spawn, active, and collapse state changes are settled before any
    * downstream system queries portal occupancy.
+   *
+   * When a portal collapses while the snake is mid-transit through it,
+   * all remaining unthreaded body segments are force-teleported to the
+   * exit side instantly.
    */
   private updatePortals(delta: number): void {
     const collapsed = this.portalManager.update(delta);
     if (collapsed.length > 0) {
+      this.handleCollapsedPortals(collapsed);
       this.portalRenderer.notifyCollapsed(collapsed, this);
       this.events?.emit?.("portalCollapsed", collapsed);
     }
 
     // Render portal visuals (swirling vortex) for active pairs
     this.portalRenderer.update(this, delta, this.portalManager.getActivePairs());
+  }
+
+  /**
+   * Handle portal pairs that just collapsed. If the snake is currently
+   * mid-transit through any of them, force-complete the transit by
+   * teleporting remaining body segments to the exit side.
+   */
+  private handleCollapsedPortals(collapsed: readonly PortalPair[]): void {
+    if (!this.snake) return;
+
+    const transit = this.snake.getPortalTransit();
+    if (!transit) return;
+
+    const isTransitPortalCollapsed = collapsed.some(
+      (pair) => pair.id === transit.portalPairId,
+    );
+
+    if (isTransitPortalCollapsed) {
+      this.snake.forceCompleteTransit();
+      this.events?.emit?.("portalCollapseMidTransit", transit);
+    }
   }
 
   /**
