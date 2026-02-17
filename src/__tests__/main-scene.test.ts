@@ -525,6 +525,147 @@ describe("MainScene", () => {
     ]);
   });
 
+  it("force-completes remaining threaded segments when the portal collapses mid-transit", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.setRng(() => 0);
+    scene.enterPhase("playing");
+
+    const snake = scene.getSnake()!;
+    snake.reset({ col: 10, row: 10 }, "right", 4);
+    snake.getTicker().setInterval(100);
+
+    const collapseTransition = {
+      from: "active",
+      to: "collapsing",
+      elapsedMs: 8_000,
+    } as const;
+    const portalPairId = "portal-pair-collapse-mid-transit";
+    const portalUpdateSpy = vi.spyOn(scene.getPortalManager(), "update");
+    portalUpdateSpy
+      .mockReturnValueOnce({
+        spawnedPairs: [],
+        lifecycleTransitions: [],
+        despawnedPairIds: [],
+        orderedEvents: [],
+      })
+      .mockReturnValueOnce({
+        spawnedPairs: [],
+        lifecycleTransitions: [{ pairId: portalPairId, transition: collapseTransition }],
+        despawnedPairIds: [portalPairId],
+        orderedEvents: [
+          {
+            type: "lifecycleTransition",
+            pairId: portalPairId,
+            transition: collapseTransition,
+          },
+          { type: "despawned", pairId: portalPairId },
+        ],
+      });
+
+    vi.spyOn(scene.getPortalManager(), "getExitPositionForEntryCell").mockImplementation(
+      (entryCell) => {
+        if (entryCell.col === 11 && entryCell.row === 10) {
+          return { col: 3, row: 4 };
+        }
+        return null;
+      },
+    );
+
+    scene.update(0, 100); // step into portal; traversal starts
+    expect(snake.isPortalThreadingActive()).toBe(true);
+    expect(snake.getSegments()).toEqual([
+      { col: 3, row: 4 },
+      { col: 10, row: 10 },
+      { col: 9, row: 10 },
+      { col: 8, row: 10 },
+    ]);
+
+    scene.update(0, 50); // portal collapses before next movement step
+
+    expect(snake.getSegments()).toEqual([
+      { col: 3, row: 4 },
+      { col: 2, row: 4 },
+      { col: 1, row: 4 },
+      { col: 0, row: 4 },
+    ]);
+    expect(snake.isPortalThreadingActive()).toBe(false);
+    expect(snake.getPortalTraversalSnapshots()).toEqual([]);
+  });
+
+  it("renders split-snake mirror positions on the entry side while threading is active", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.setRng(() => 0);
+    scene.enterPhase("playing");
+
+    const snake = scene.getSnake()!;
+    snake.reset({ col: 10, row: 10 }, "right", 4);
+    snake.getTicker().setInterval(100);
+
+    vi.spyOn(scene.getPortalManager(), "update").mockReturnValue({
+      spawnedPairs: [],
+      lifecycleTransitions: [],
+      despawnedPairIds: [],
+      orderedEvents: [],
+    });
+    vi.spyOn(scene.getPortalManager(), "getExitPositionForEntryCell").mockImplementation(
+      (entryCell) => {
+        if (entryCell.col === 11 && entryCell.row === 10) {
+          return { col: 3, row: 4 };
+        }
+        return null;
+      },
+    );
+
+    mockFillCircle.mockClear();
+    scene.update(0, 100); // step into portal; split render starts
+
+    expect(hasFillCircleAt(gridToPixel({ col: 11, row: 10 }))).toBe(true);
+
+    mockFillCircle.mockClear();
+    scene.update(0, 100); // first body segment threads
+
+    expect(hasFillCircleAt(gridToPixel({ col: 12, row: 10 }))).toBe(true);
+    expect(hasFillCircleAt(gridToPixel({ col: 11, row: 10 }))).toBe(true);
+  });
+
+  it("clears split-snake overlay drawing once portal threading completes", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.setRng(() => 0);
+    scene.enterPhase("playing");
+
+    const snake = scene.getSnake()!;
+    snake.reset({ col: 10, row: 10 }, "right", 4);
+    snake.getTicker().setInterval(100);
+
+    vi.spyOn(scene.getPortalManager(), "update").mockReturnValue({
+      spawnedPairs: [],
+      lifecycleTransitions: [],
+      despawnedPairIds: [],
+      orderedEvents: [],
+    });
+    vi.spyOn(scene.getPortalManager(), "getExitPositionForEntryCell").mockImplementation(
+      (entryCell) => {
+        if (entryCell.col === 11 && entryCell.row === 10) {
+          return { col: 3, row: 4 };
+        }
+        return null;
+      },
+    );
+
+    scene.update(0, 100); // start traversal
+    scene.update(0, 100); // thread #1
+    scene.update(0, 100); // thread #2
+
+    mockFillCircle.mockClear();
+    scene.update(0, 100); // thread #3 -> complete
+
+    expect(snake.isPortalThreadingActive()).toBe(false);
+    expect(mockFillCircle).not.toHaveBeenCalled();
+  });
+
   it("renders swirling vortex visuals for both endpoints of an active portal pair", () => {
     const scene = new MainScene();
     scene.create();

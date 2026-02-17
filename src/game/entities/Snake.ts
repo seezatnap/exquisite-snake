@@ -361,6 +361,29 @@ export class Snake {
     });
   }
 
+  /**
+   * Force-complete all active portal traversal threads.
+   *
+   * Used when a linked portal pair collapses mid-transit. Any remaining
+   * unthreaded body segments are teleported instantly to the exit-side chain.
+   */
+  forceCompletePortalTraversal(): void {
+    if (!this.alive || this.portalTraversalThreads.length === 0) {
+      return;
+    }
+
+    for (const traversal of this.portalTraversalThreads) {
+      this.forceCompletePortalTraversalThread(traversal.stepsElapsed);
+    }
+
+    this.portalTraversalThreads = [];
+    this.prevSegments = this.segments.map((segment) => ({
+      col: segment.col,
+      row: segment.row,
+    }));
+    this.interpolateSprites();
+  }
+
   private advanceSegments(direction: Direction): void {
     // Save previous positions for interpolation
     this.prevSegments = this.segments.map((s) => ({ ...s }));
@@ -394,6 +417,38 @@ export class Snake {
       traversal.stepsElapsed += 1;
     }
     this.pruneCompletedPortalTraversalThreads();
+  }
+
+  private forceCompletePortalTraversalThread(stepsElapsed: number): void {
+    const bodySegmentCount = Math.max(0, this.segments.length - 1);
+    if (bodySegmentCount <= 0) {
+      return;
+    }
+
+    const threadedBodySegments = Math.min(
+      bodySegmentCount,
+      Math.max(0, Math.floor(stepsElapsed)),
+    );
+    if (threadedBodySegments >= bodySegmentCount) {
+      return;
+    }
+
+    const firstUnthreadedIndex = threadedBodySegments + 1;
+    let tailExtensionDirection = oppositeDirection(this.direction);
+    if (threadedBodySegments > 0) {
+      const threadedTailIndex = firstUnthreadedIndex - 1;
+      const inferredTailDirection = inferStepDirection(
+        this.segments[threadedTailIndex - 1],
+        this.segments[threadedTailIndex],
+      );
+      if (inferredTailDirection) {
+        tailExtensionDirection = inferredTailDirection;
+      }
+    }
+
+    for (let i = firstUnthreadedIndex; i <= bodySegmentCount; i++) {
+      this.segments[i] = stepInDirection(this.segments[i - 1], tailExtensionDirection);
+    }
   }
 
   private snapTeleportedBodyInterpolationToPortalExit(): void {
@@ -624,4 +679,22 @@ export class Snake {
 
 function manhattanDistance(a: GridPos, b: GridPos): number {
   return Math.abs(a.col - b.col) + Math.abs(a.row - b.row);
+}
+
+function inferStepDirection(from: GridPos, to: GridPos): Direction | null {
+  const deltaCol = to.col - from.col;
+  const deltaRow = to.row - from.row;
+  if (Math.abs(deltaCol) + Math.abs(deltaRow) !== 1) {
+    return null;
+  }
+  if (deltaCol === 1) {
+    return "right";
+  }
+  if (deltaCol === -1) {
+    return "left";
+  }
+  if (deltaRow === 1) {
+    return "down";
+  }
+  return "up";
 }
