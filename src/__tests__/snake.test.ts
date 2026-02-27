@@ -49,7 +49,7 @@ vi.mock("phaser", () => {
 
 import Phaser from "phaser";
 import { Snake } from "@/game/entities/Snake";
-import { MoveTicker } from "@/game/utils/grid";
+import { MoveTicker, gridToPixel } from "@/game/utils/grid";
 import type { GridPos, Direction } from "@/game/utils/grid";
 
 // ── Helpers ──────────────────────────────────────────────────────
@@ -242,6 +242,127 @@ describe("Snake external nudges", () => {
       { col: 9, row: 10 },
     ]);
     expect(snake.getLength()).toBe(3);
+  });
+});
+
+describe("Snake portal traversal", () => {
+  it("teleports the head without changing direction, length, or body order", () => {
+    const snake = createSnake({ col: 10, row: 10 }, "right", 3);
+
+    snake.teleportHeadTo({ col: 3, row: 4 });
+
+    expect(snake.getDirection()).toBe("right");
+    expect(snake.getLength()).toBe(3);
+    expect(snake.getSegments()).toEqual([
+      { col: 3, row: 4 },
+      { col: 9, row: 10 },
+      { col: 8, row: 10 },
+    ]);
+  });
+
+  it("ignores portal head teleport requests after death", () => {
+    const snake = createSnake({ col: 10, row: 10 }, "right", 3);
+    snake.kill();
+
+    snake.teleportHeadTo({ col: 3, row: 4 });
+
+    expect(snake.getHeadPosition()).toEqual({ col: 10, row: 10 });
+  });
+
+  it("threads body segments through the portal one-by-one in order", () => {
+    const ticker = new MoveTicker(100);
+    const snake = createSnake({ col: 10, row: 10 }, "right", 4, ticker);
+
+    snake.update(100); // head -> entry cell (11,10)
+    snake.beginPortalTraversal({ col: 11, row: 10 }, { col: 3, row: 4 });
+
+    expect(snake.getSegments()).toEqual([
+      { col: 3, row: 4 },
+      { col: 10, row: 10 },
+      { col: 9, row: 10 },
+      { col: 8, row: 10 },
+    ]);
+    expect(snake.isPortalThreadingActive()).toBe(true);
+    expect(snake.getPortalTraversalSnapshots()).toEqual([
+      {
+        entry: { col: 11, row: 10 },
+        exit: { col: 3, row: 4 },
+        stepsElapsed: 0,
+        remainingBodySegments: 3,
+      },
+    ]);
+
+    snake.update(100); // segment #1 threads
+    expect(snake.getSegments()).toEqual([
+      { col: 4, row: 4 },
+      { col: 3, row: 4 },
+      { col: 10, row: 10 },
+      { col: 9, row: 10 },
+    ]);
+
+    snake.update(100); // segment #2 threads
+    expect(snake.getSegments()).toEqual([
+      { col: 5, row: 4 },
+      { col: 4, row: 4 },
+      { col: 3, row: 4 },
+      { col: 10, row: 10 },
+    ]);
+    expect(snake.getPortalTraversalSnapshots()).toEqual([
+      {
+        entry: { col: 11, row: 10 },
+        exit: { col: 3, row: 4 },
+        stepsElapsed: 2,
+        remainingBodySegments: 1,
+      },
+    ]);
+
+    snake.update(100); // segment #3 threads (complete)
+    expect(snake.getSegments()).toEqual([
+      { col: 6, row: 4 },
+      { col: 5, row: 4 },
+      { col: 4, row: 4 },
+      { col: 3, row: 4 },
+    ]);
+    expect(snake.isPortalThreadingActive()).toBe(false);
+    expect(snake.getPortalTraversalSnapshots()).toEqual([]);
+  });
+
+  it("force-completes any remaining unthreaded segments on portal collapse", () => {
+    const ticker = new MoveTicker(100);
+    const snake = createSnake({ col: 10, row: 10 }, "right", 4, ticker);
+
+    snake.update(100); // head -> entry cell (11,10)
+    snake.beginPortalTraversal({ col: 11, row: 10 }, { col: 3, row: 4 });
+    snake.update(100); // segment #1 threads to exit side
+
+    snake.forceCompletePortalTraversal();
+
+    expect(snake.getSegments()).toEqual([
+      { col: 4, row: 4 },
+      { col: 3, row: 4 },
+      { col: 2, row: 4 },
+      { col: 1, row: 4 },
+    ]);
+    expect(snake.isPortalThreadingActive()).toBe(false);
+    expect(snake.getPortalTraversalSnapshots()).toEqual([]);
+  });
+
+  it("keeps threaded body interpolation anchored at the portal exit", () => {
+    const ticker = new MoveTicker(100);
+    const snake = createSnake({ col: 10, row: 10 }, "right", 4, ticker);
+
+    snake.update(100); // head -> entry
+    snake.beginPortalTraversal({ col: 11, row: 10 }, { col: 3, row: 4 });
+    snake.update(100); // first body segment threads to exit
+
+    mockSetPosition.mockClear();
+    snake.update(50); // interpolation-only frame
+
+    const frameCalls = mockSetPosition.mock.calls.slice(-snake.getLength());
+    const firstBodyFramePos = frameCalls[1];
+    const portalExitPixel = gridToPixel({ col: 3, row: 4 });
+
+    expect(firstBodyFramePos).toEqual([portalExitPixel.x, portalExitPixel.y]);
   });
 });
 

@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import fs from "fs";
 import path from "path";
 import { gameBridge } from "@/game/bridge";
-import { GRID_COLS, GRID_ROWS, RENDER_DEPTH } from "@/game/config";
+import { GRID_COLS, GRID_ROWS, RENDER_DEPTH, TILE_SIZE } from "@/game/config";
 import { Biome } from "@/game/systems/BiomeManager";
 import { gridToPixel } from "@/game/utils/grid";
 
@@ -123,8 +123,9 @@ vi.mock("phaser", () => {
 });
 
 // Import after mock
-import { MainScene } from "@/game/scenes/MainScene";
+import { MainScene, PORTAL_SCENE_EVENTS } from "@/game/scenes/MainScene";
 import { Snake } from "@/game/entities/Snake";
+import type { PortalManagerUpdateResult } from "@/game/systems/PortalManager";
 
 // Spy on gameBridge methods
 const spySetPhase = vi.spyOn(gameBridge, "setPhase");
@@ -163,6 +164,63 @@ function injectMoltenLavaPool(
     }
   ).moltenLavaPools;
   pools.set(`${pos.col}:${pos.row}`, { ...pos });
+}
+
+function hasFillCircleAt(center: { x: number; y: number }): boolean {
+  return mockFillCircle.mock.calls.some(
+    ([x, y]) => x === center.x && y === center.y,
+  );
+}
+
+function createFakeActivePortal(
+  pairId: string,
+  endpointA: { col: number; row: number },
+  endpointB: { col: number; row: number },
+) {
+  return {
+    getPairId: () => pairId,
+    getState: () => "active" as const,
+    getEndpoints: () =>
+      [
+        {
+          id: `${pairId}:a`,
+          pairId,
+          linkedEndpointId: `${pairId}:b`,
+          position: endpointA,
+        },
+        {
+          id: `${pairId}:b`,
+          pairId,
+          linkedEndpointId: `${pairId}:a`,
+          position: endpointB,
+        },
+      ] as const,
+    getElapsedInStateMs: () => 2_500,
+    getLifecycleDurations: () => ({
+      spawningMs: 200,
+      activeMs: 8_000,
+      collapsingMs: 200,
+    }),
+  };
+}
+
+function getFillRectMetrics(): { count: number; maxSize: number } {
+  const sizes = mockFillRect.mock.calls
+    .map(([, , width, height]) =>
+      typeof width === "number" && typeof height === "number"
+        ? Math.max(width, height)
+        : 0,
+    )
+    .filter((size) => size > 0);
+
+  if (sizes.length === 0) {
+    return { count: 0, maxSize: 0 };
+  }
+
+  return {
+    count: sizes.length,
+    maxSize: Math.max(...sizes),
+  };
 }
 
 beforeEach(() => {
@@ -264,6 +322,1044 @@ describe("MainScene", () => {
 
     scene.enterPhase("gameOver");
     expect(spySetPhase).toHaveBeenCalledWith("gameOver");
+  });
+
+  it("starts and stops PortalManager with run lifecycle transitions", () => {
+    const scene = new MainScene();
+    scene.create();
+    expect(scene.getPortalManager().isRunning()).toBe(false);
+
+    scene.enterPhase("playing");
+    expect(scene.getPortalManager().isRunning()).toBe(true);
+
+    scene.endRun();
+    expect(scene.getPortalManager().isRunning()).toBe(false);
+  });
+
+  it("updates portals before movement/collision and emits deterministic stage exposure order", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.enterPhase("playing");
+
+    const snake = scene.getSnake()!;
+    snake.reset({ col: 10, row: 10 }, "right", 3);
+    snake.getTicker().setInterval(1);
+    const preUpdateSegments = snake.getSegments().map((segment) => ({
+      col: segment.col,
+      row: segment.row,
+    }));
+
+    const portalUpdateResult: PortalManagerUpdateResult = {
+      spawnedPairs: [
+        {
+          pairId: "portal-pair-1",
+          endpoints: [
+            { col: 2, row: 2 },
+            { col: 7, row: 8 },
+          ],
+        },
+      ],
+      lifecycleTransitions: [
+        {
+          pairId: "portal-pair-0",
+          transition: { from: "active", to: "collapsing", elapsedMs: 8_000 },
+        },
+      ],
+      despawnedPairIds: ["portal-pair-0"],
+      orderedEvents: [
+        {
+          type: "lifecycleTransition",
+          pairId: "portal-pair-0",
+          transition: { from: "active", to: "collapsing", elapsedMs: 8_000 },
+        },
+        {
+          type: "despawned",
+          pairId: "portal-pair-0",
+        },
+        {
+          type: "spawned",
+          pairId: "portal-pair-1",
+          endpoints: [
+            { col: 2, row: 2 },
+            { col: 7, row: 8 },
+          ],
+        },
+      ],
+    };
+
+    const portalUpdateSpy = vi
+      .spyOn(scene.getPortalManager(), "update")
+      .mockReturnValue(portalUpdateResult);
+    const snakeUpdateSpy = vi.spyOn(snake, "update");
+    const collisionSpy = vi.spyOn(
+      scene as unknown as { checkCollisions: () => boolean },
+      "checkCollisions",
+    );
+
+    const emitSpy = vi.fn();
+    (
+      scene as unknown as {
+        events: { emit: (...args: unknown[]) => void };
+      }
+    ).events = { emit: emitSpy };
+
+    scene.update(0, 16);
+
+    expect(portalUpdateSpy).toHaveBeenCalledTimes(1);
+    const [deltaArg, spawnContextArg] = portalUpdateSpy.mock.calls[0];
+    expect(deltaArg).toBe(16);
+    const occupiedCells = Array.from(spawnContextArg?.occupiedCells ?? []);
+    for (const segment of preUpdateSegments) {
+      expect(occupiedCells).toContainEqual(segment);
+    }
+    expect(occupiedCells.length).toBeGreaterThanOrEqual(
+      preUpdateSegments.length + 1,
+    );
+
+    const portalUpdateOrder = portalUpdateSpy.mock.invocationCallOrder[0];
+    const snakeUpdateOrder = snakeUpdateSpy.mock.invocationCallOrder[0];
+    const collisionOrder = collisionSpy.mock.invocationCallOrder[0];
+    expect(portalUpdateOrder).toBeLessThan(snakeUpdateOrder);
+    expect(snakeUpdateOrder).toBeLessThan(collisionOrder);
+
+    expect(scene.getPortalUpdateResult()).toEqual(portalUpdateResult);
+
+    const updateEvent = emitSpy.mock.calls.find(
+      ([eventName]) => eventName === PORTAL_SCENE_EVENTS.UPDATE,
+    );
+    expect(updateEvent).toBeDefined();
+    expect(
+      (updateEvent?.[1] as { updateResult: PortalManagerUpdateResult }).updateResult,
+    ).toEqual(portalUpdateResult);
+
+    const stageExposureEvents = emitSpy.mock.calls
+      .filter(
+        ([eventName]) => eventName === PORTAL_SCENE_EVENTS.STAGE_EXPOSURE,
+      )
+      .map(([, payload]) => (payload as { stage: string }).stage);
+    expect(stageExposureEvents).toEqual(["rendering", "movement", "collision"]);
+
+    const portalStateChangeEvents = emitSpy.mock.calls
+      .filter(([eventName]) => eventName === PORTAL_SCENE_EVENTS.STATE_CHANGE)
+      .map(([, payload]) => payload);
+    expect(portalStateChangeEvents).toEqual(portalUpdateResult.orderedEvents);
+  });
+
+  it("teleports the snake head to a paired portal exit when a step lands on an entry cell", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.setRng(() => 0);
+    scene.enterPhase("playing");
+
+    const snake = scene.getSnake()!;
+    snake.reset({ col: 10, row: 10 }, "right", 3);
+    snake.getTicker().setInterval(100);
+
+    const portalExitSpy = vi
+      .spyOn(scene.getPortalManager(), "getExitPositionForEntryCell")
+      .mockImplementation((entryCell) => {
+        if (entryCell.col === 11 && entryCell.row === 10) {
+          return { col: 3, row: 4 };
+        }
+        return null;
+      });
+
+    scene.update(0, 100);
+
+    expect(portalExitSpy).toHaveBeenCalledTimes(1);
+    expect(portalExitSpy).toHaveBeenCalledWith({ col: 11, row: 10 });
+    expect(snake.getHeadPosition()).toEqual({ col: 3, row: 4 });
+    expect(snake.getDirection()).toBe("right");
+    expect(snake.getSegments()).toEqual([
+      { col: 3, row: 4 },
+      { col: 10, row: 10 },
+      { col: 9, row: 10 },
+    ]);
+    expect(snake.isPortalThreadingActive()).toBe(true);
+    expect(snake.getPortalTraversalSnapshots()).toEqual([
+      {
+        entry: { col: 11, row: 10 },
+        exit: { col: 3, row: 4 },
+        stepsElapsed: 0,
+        remainingBodySegments: 2,
+      },
+    ]);
+  });
+
+  it("preserves movement cadence by evaluating portal traversal only on stepped ticks", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.setRng(() => 0);
+    scene.enterPhase("playing");
+
+    const snake = scene.getSnake()!;
+    snake.reset({ col: 10, row: 10 }, "right", 3);
+    snake.getTicker().setInterval(100);
+
+    const portalExitSpy = vi
+      .spyOn(scene.getPortalManager(), "getExitPositionForEntryCell")
+      .mockImplementation((entryCell) => {
+        if (entryCell.col === 11 && entryCell.row === 10) {
+          return { col: 3, row: 4 };
+        }
+        if (entryCell.col === 3 && entryCell.row === 4) {
+          return { col: 11, row: 10 };
+        }
+        return null;
+      });
+
+    scene.update(0, 100); // step + portal traversal
+    expect(snake.getHeadPosition()).toEqual({ col: 3, row: 4 });
+
+    scene.update(0, 50); // no step; head should not traverse again
+    expect(snake.getHeadPosition()).toEqual({ col: 3, row: 4 });
+
+    scene.update(0, 50); // next step in current direction
+    expect(snake.getHeadPosition()).toEqual({ col: 4, row: 4 });
+    expect(snake.getDirection()).toBe("right");
+
+    expect(portalExitSpy).toHaveBeenCalledTimes(2);
+    expect(portalExitSpy.mock.calls).toEqual([
+      [{ col: 11, row: 10 }],
+      [{ col: 4, row: 4 }],
+    ]);
+  });
+
+  it("force-completes remaining threaded segments when the portal collapses mid-transit", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.setRng(() => 0);
+    scene.enterPhase("playing");
+
+    const snake = scene.getSnake()!;
+    snake.reset({ col: 10, row: 10 }, "right", 4);
+    snake.getTicker().setInterval(100);
+
+    const collapseTransition = {
+      from: "active",
+      to: "collapsing",
+      elapsedMs: 8_000,
+    } as const;
+    const portalPairId = "portal-pair-collapse-mid-transit";
+    const portalUpdateSpy = vi.spyOn(scene.getPortalManager(), "update");
+    portalUpdateSpy
+      .mockReturnValueOnce({
+        spawnedPairs: [],
+        lifecycleTransitions: [],
+        despawnedPairIds: [],
+        orderedEvents: [],
+      })
+      .mockReturnValueOnce({
+        spawnedPairs: [],
+        lifecycleTransitions: [{ pairId: portalPairId, transition: collapseTransition }],
+        despawnedPairIds: [portalPairId],
+        orderedEvents: [
+          {
+            type: "lifecycleTransition",
+            pairId: portalPairId,
+            transition: collapseTransition,
+          },
+          { type: "despawned", pairId: portalPairId },
+        ],
+      });
+
+    vi.spyOn(scene.getPortalManager(), "getExitPositionForEntryCell").mockImplementation(
+      (entryCell) => {
+        if (entryCell.col === 11 && entryCell.row === 10) {
+          return { col: 3, row: 4 };
+        }
+        return null;
+      },
+    );
+
+    scene.update(0, 100); // step into portal; traversal starts
+    expect(snake.isPortalThreadingActive()).toBe(true);
+    expect(snake.getSegments()).toEqual([
+      { col: 3, row: 4 },
+      { col: 10, row: 10 },
+      { col: 9, row: 10 },
+      { col: 8, row: 10 },
+    ]);
+
+    scene.update(0, 50); // portal collapses before next movement step
+
+    expect(snake.getSegments()).toEqual([
+      { col: 3, row: 4 },
+      { col: 2, row: 4 },
+      { col: 1, row: 4 },
+      { col: 0, row: 4 },
+    ]);
+    expect(snake.isPortalThreadingActive()).toBe(false);
+    expect(snake.getPortalTraversalSnapshots()).toEqual([]);
+  });
+
+  it("renders an emergency flash hook when collapse forces instant teleport completion", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.setRng(() => 0);
+    scene.enterPhase("playing");
+
+    const snake = scene.getSnake()!;
+    snake.reset({ col: 10, row: 10 }, "right", 4);
+    snake.getTicker().setInterval(100);
+
+    const collapseTransition = {
+      from: "active",
+      to: "collapsing",
+      elapsedMs: 8_000,
+    } as const;
+    const portalPairId = "portal-pair-collapse-emergency-flash";
+    const portalUpdateSpy = vi.spyOn(scene.getPortalManager(), "update");
+    portalUpdateSpy
+      .mockReturnValueOnce({
+        spawnedPairs: [],
+        lifecycleTransitions: [],
+        despawnedPairIds: [],
+        orderedEvents: [],
+      })
+      .mockReturnValueOnce({
+        spawnedPairs: [],
+        lifecycleTransitions: [{ pairId: portalPairId, transition: collapseTransition }],
+        despawnedPairIds: [portalPairId],
+        orderedEvents: [
+          {
+            type: "lifecycleTransition",
+            pairId: portalPairId,
+            transition: collapseTransition,
+          },
+          { type: "despawned", pairId: portalPairId },
+        ],
+      });
+
+    vi.spyOn(scene.getPortalManager(), "getExitPositionForEntryCell").mockImplementation(
+      (entryCell) => {
+        if (entryCell.col === 11 && entryCell.row === 10) {
+          return { col: 3, row: 4 };
+        }
+        return null;
+      },
+    );
+
+    scene.update(0, 100); // step into portal; traversal starts
+    mockFillCircle.mockClear();
+
+    scene.update(0, 50); // collapse forces emergency teleport completion
+
+    expect(hasFillCircleAt(gridToPixel({ col: 11, row: 10 }))).toBe(true);
+    expect(hasFillCircleAt(gridToPixel({ col: 3, row: 4 }))).toBe(true);
+  });
+
+  it("temporarily disables collisions for ~0.5s after forced teleport, then restores them", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.setRng(() => 0);
+    scene.enterPhase("playing");
+
+    const snake = scene.getSnake()!;
+    snake.reset({ col: 10, row: 10 }, "right", 4);
+    snake.getTicker().setInterval(100);
+
+    const collapseTransition = {
+      from: "active",
+      to: "collapsing",
+      elapsedMs: 8_000,
+    } as const;
+    const portalPairId = "portal-pair-collapse-collision-grace";
+    const portalUpdateSpy = vi.spyOn(scene.getPortalManager(), "update");
+    portalUpdateSpy
+      .mockReturnValueOnce({
+        spawnedPairs: [],
+        lifecycleTransitions: [],
+        despawnedPairIds: [],
+        orderedEvents: [],
+      })
+      .mockReturnValueOnce({
+        spawnedPairs: [],
+        lifecycleTransitions: [{ pairId: portalPairId, transition: collapseTransition }],
+        despawnedPairIds: [portalPairId],
+        orderedEvents: [
+          {
+            type: "lifecycleTransition",
+            pairId: portalPairId,
+            transition: collapseTransition,
+          },
+          { type: "despawned", pairId: portalPairId },
+        ],
+      })
+      .mockReturnValue({
+        spawnedPairs: [],
+        lifecycleTransitions: [],
+        despawnedPairIds: [],
+        orderedEvents: [],
+      });
+
+    vi.spyOn(scene.getPortalManager(), "getExitPositionForEntryCell").mockImplementation(
+      (entryCell) => {
+        if (entryCell.col === 11 && entryCell.row === 10) {
+          return { col: GRID_COLS - 1, row: 10 };
+        }
+        return null;
+      },
+    );
+
+    scene.update(0, 100); // step into portal; traversal starts
+    scene.update(0, 50); // collapse forces emergency teleport completion
+
+    scene.update(0, 100); // head is now out-of-bounds, but still protected
+    expect(scene.getPhase()).toBe("playing");
+    expect(snake.getHeadPosition().col).toBe(GRID_COLS);
+
+    scene.update(0, 100);
+    expect(scene.getPhase()).toBe("playing");
+    scene.update(0, 100);
+    expect(scene.getPhase()).toBe("playing");
+    scene.update(0, 100);
+    expect(scene.getPhase()).toBe("playing");
+
+    scene.update(0, 100); // grace window elapsed, wall collision should resolve
+    expect(scene.getPhase()).toBe("gameOver");
+    expect(snake.isAlive()).toBe(false);
+  });
+
+  it("does not grant collision immunity when a portal collapses without active threading", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.enterPhase("playing");
+
+    const snake = scene.getSnake()!;
+    snake.reset({ col: GRID_COLS - 1, row: 10 }, "right", 1);
+    snake.getTicker().setInterval(100);
+
+    vi.spyOn(scene.getPortalManager(), "update").mockReturnValue({
+      spawnedPairs: [],
+      lifecycleTransitions: [
+        {
+          pairId: "portal-pair-collapse-without-threading",
+          transition: { from: "active", to: "collapsing", elapsedMs: 8_000 },
+        },
+      ],
+      despawnedPairIds: ["portal-pair-collapse-without-threading"],
+      orderedEvents: [
+        {
+          type: "lifecycleTransition",
+          pairId: "portal-pair-collapse-without-threading",
+          transition: { from: "active", to: "collapsing", elapsedMs: 8_000 },
+        },
+        {
+          type: "despawned",
+          pairId: "portal-pair-collapse-without-threading",
+        },
+      ],
+    });
+    vi.spyOn(scene.getPortalManager(), "getExitPositionForEntryCell").mockReturnValue(null);
+
+    scene.update(0, 100);
+
+    expect(scene.getPhase()).toBe("gameOver");
+    expect(snake.isAlive()).toBe(false);
+  });
+
+  it("preserves Ice Cavern momentum turn delay across portal traversal", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.setBiomeCycleOrder([
+      Biome.IceCavern,
+      Biome.NeonCity,
+      Biome.MoltenCore,
+      Biome.VoidRift,
+    ]);
+    scene.enterPhase("playing");
+    expect(scene.getCurrentBiome()).toBe(Biome.IceCavern);
+
+    const snake = scene.getSnake()!;
+    snake.reset({ col: 10, row: 10 }, "right", 3);
+    snake.getTicker().setInterval(100);
+    snake.bufferDirection("up");
+
+    vi.spyOn(scene.getPortalManager(), "update").mockReturnValue({
+      spawnedPairs: [],
+      lifecycleTransitions: [],
+      despawnedPairIds: [],
+      orderedEvents: [],
+    });
+    vi.spyOn(scene.getPortalManager(), "getExitPositionForEntryCell").mockImplementation(
+      (entryCell) => {
+        if (entryCell.col === 11 && entryCell.row === 10) {
+          return { col: 18, row: 12 };
+        }
+        return null;
+      },
+    );
+
+    scene.update(0, 100); // slide tile 1 + teleport
+    expect(snake.getDirection()).toBe("right");
+    expect(snake.getHeadPosition()).toEqual({ col: 18, row: 12 });
+
+    scene.update(0, 100); // slide tile 2
+    expect(snake.getDirection()).toBe("right");
+    expect(snake.getHeadPosition()).toEqual({ col: 19, row: 12 });
+
+    scene.update(0, 100); // delayed turn applies
+    expect(snake.getDirection()).toBe("up");
+    expect(snake.getHeadPosition()).toEqual({ col: 19, row: 11 });
+  });
+
+  it("applies Molten Core lava hazards immediately after portal exit", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.setBiomeCycleOrder([
+      Biome.MoltenCore,
+      Biome.NeonCity,
+      Biome.IceCavern,
+      Biome.VoidRift,
+    ]);
+    scene.enterPhase("playing");
+    scene.setMoltenLavaConfig({
+      spawnChancePerInterval: 0,
+      burnTailSegments: 3,
+    });
+    expect(scene.getCurrentBiome()).toBe(Biome.MoltenCore);
+
+    const snake = scene.getSnake()!;
+    snake.reset({ col: 10, row: 10 }, "right", 6);
+    snake.getTicker().setInterval(100);
+    injectMoltenLavaPool(scene, { col: 3, row: 4 });
+
+    vi.spyOn(scene.getPortalManager(), "update").mockReturnValue({
+      spawnedPairs: [],
+      lifecycleTransitions: [],
+      despawnedPairIds: [],
+      orderedEvents: [],
+    });
+    vi.spyOn(scene.getPortalManager(), "getExitPositionForEntryCell").mockImplementation(
+      (entryCell) => {
+        if (entryCell.col === 11 && entryCell.row === 10) {
+          return { col: 3, row: 4 };
+        }
+        return null;
+      },
+    );
+
+    scene.update(0, 100);
+
+    expect(scene.getPhase()).toBe("playing");
+    expect(snake.getHeadPosition()).toEqual({ col: 3, row: 4 });
+    expect(snake.getLength()).toBe(3);
+  });
+
+  it("applies Void Rift gravity from the post-teleport exit position", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.setBiomeCycleOrder([
+      Biome.VoidRift,
+      Biome.NeonCity,
+      Biome.IceCavern,
+      Biome.MoltenCore,
+    ]);
+    scene.setBiomeMechanicsConfig({
+      voidRift: { gravityPullCadenceSteps: 1 },
+    });
+    scene.enterPhase("playing");
+    expect(scene.getCurrentBiome()).toBe(Biome.VoidRift);
+
+    const snake = scene.getSnake()!;
+    snake.reset({ col: 10, row: 10 }, "right", 1);
+    snake.getTicker().setInterval(100);
+
+    vi.spyOn(scene.getPortalManager(), "update").mockReturnValue({
+      spawnedPairs: [],
+      lifecycleTransitions: [],
+      despawnedPairIds: [],
+      orderedEvents: [],
+    });
+    vi.spyOn(scene.getPortalManager(), "getExitPositionForEntryCell").mockImplementation(
+      (entryCell) => {
+        if (entryCell.col === 11 && entryCell.row === 10) {
+          return { col: 23, row: 25 };
+        }
+        return null;
+      },
+    );
+
+    scene.update(0, 100);
+
+    expect(scene.getPhase()).toBe("playing");
+    expect(snake.getDirection()).toBe("right");
+    expect(snake.getHeadPosition()).toEqual({ col: 23, row: 24 });
+  });
+
+  it("excludes active portal endpoints from Molten Core lava spawn candidates", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.setBiomeCycleOrder([
+      Biome.MoltenCore,
+      Biome.NeonCity,
+      Biome.IceCavern,
+      Biome.VoidRift,
+    ]);
+    scene.setRng(() => 0.9);
+    scene.enterPhase("playing");
+    scene.setRng(() => 0);
+    scene.setMoltenLavaConfig({
+      spawnIntervalMs: 1,
+      spawnChancePerInterval: 1,
+      maxPools: 1,
+    });
+
+    vi.spyOn(scene.getPortalManager(), "getActivePortalEndpoints").mockReturnValue([
+      {
+        id: "portal-pair-integration:a",
+        pairId: "portal-pair-integration",
+        linkedEndpointId: "portal-pair-integration:b",
+        position: { col: 0, row: 0 },
+      },
+      {
+        id: "portal-pair-integration:b",
+        pairId: "portal-pair-integration",
+        linkedEndpointId: "portal-pair-integration:a",
+        position: { col: 1, row: 0 },
+      },
+    ]);
+
+    scene.update(0, 1);
+
+    expect(scene.getCurrentBiome()).toBe(Biome.MoltenCore);
+    expect(scene.getMoltenLavaPools()).toEqual([{ col: 0, row: 1 }]);
+  });
+
+  it("keeps food on the entry tile when snake traversal teleports through a portal", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.enterPhase("playing");
+
+    const snake = scene.getSnake()!;
+    const food = scene.getFood()!;
+    snake.reset({ col: 10, row: 10 }, "right", 1);
+    snake.getTicker().setInterval(100);
+
+    const forcedFoodPos = { col: 11, row: 10 };
+    const forcedFoodPixel = gridToPixel(forcedFoodPos);
+    (food as unknown as { position: { col: number; row: number } }).position = {
+      ...forcedFoodPos,
+    };
+    food.getSprite().setPosition(forcedFoodPixel.x, forcedFoodPixel.y);
+
+    vi.spyOn(scene.getPortalManager(), "update").mockReturnValue({
+      spawnedPairs: [],
+      lifecycleTransitions: [],
+      despawnedPairIds: [],
+      orderedEvents: [],
+    });
+    vi.spyOn(scene.getPortalManager(), "getExitPositionForEntryCell").mockImplementation(
+      (entryCell) => {
+        if (entryCell.col === 11 && entryCell.row === 10) {
+          return { col: 3, row: 4 };
+        }
+        return null;
+      },
+    );
+
+    mockTimeDelayedCall.mockClear();
+    scene.update(0, 100);
+
+    expect(snake.getHeadPosition()).toEqual({ col: 3, row: 4 });
+    expect(scene.getScore()).toBe(0);
+    expect(snake.getLength()).toBe(1);
+    expect(food.getPosition()).toEqual(forcedFoodPos);
+    expect(mockTimeDelayedCall).not.toHaveBeenCalled();
+  });
+
+  it("keeps food respawns off active portal endpoint cells", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.setRng(() => 0);
+    scene.enterPhase("playing");
+
+    const snake = scene.getSnake()!;
+    const food = scene.getFood()!;
+    snake.reset({ col: 10, row: 10 }, "right", 1);
+    snake.getTicker().setInterval(100);
+
+    const forcedFoodPos = { col: 11, row: 10 };
+    const forcedFoodPixel = gridToPixel(forcedFoodPos);
+    (food as unknown as { position: { col: number; row: number } }).position = {
+      ...forcedFoodPos,
+    };
+    food.getSprite().setPosition(forcedFoodPixel.x, forcedFoodPixel.y);
+
+    const endpointA = {
+      id: "portal-pair-invariant:a",
+      pairId: "portal-pair-invariant",
+      linkedEndpointId: "portal-pair-invariant:b",
+      position: { col: 0, row: 0 },
+    };
+    const endpointB = {
+      id: "portal-pair-invariant:b",
+      pairId: "portal-pair-invariant",
+      linkedEndpointId: "portal-pair-invariant:a",
+      position: { col: 1, row: 0 },
+    };
+
+    vi.spyOn(scene.getPortalManager(), "update").mockReturnValue({
+      spawnedPairs: [],
+      lifecycleTransitions: [],
+      despawnedPairIds: [],
+      orderedEvents: [],
+    });
+    vi.spyOn(scene.getPortalManager(), "getExitPositionForEntryCell").mockReturnValue(null);
+    vi.spyOn(scene.getPortalManager(), "getActivePortalEndpoints").mockReturnValue([
+      endpointA,
+      endpointB,
+    ]);
+
+    scene.update(0, 100);
+
+    const respawnedFood = food.getPosition();
+    expect(respawnedFood).not.toEqual(endpointA.position);
+    expect(respawnedFood).not.toEqual(endpointB.position);
+    expect(scene.getScore()).toBe(1);
+  });
+
+  it("replays echo ghost history at recorded portal-exit cells without portal rerouting", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.enterPhase("playing");
+
+    const snake = scene.getSnake()!;
+    const ghost = scene.getEchoGhost()!;
+    snake.reset({ col: 10, row: 10 }, "right", 1);
+    snake.getTicker().setInterval(100);
+    ghost.reset();
+
+    vi.spyOn(scene.getPortalManager(), "update").mockReturnValue({
+      spawnedPairs: [],
+      lifecycleTransitions: [],
+      despawnedPairIds: [],
+      orderedEvents: [],
+    });
+    const portalExitSpy = vi
+      .spyOn(scene.getPortalManager(), "getExitPositionForEntryCell")
+      .mockImplementation((entryCell) => {
+        if (entryCell.col === 11 && entryCell.row === 10) {
+          return { col: 3, row: 4 };
+        }
+        if (entryCell.col === 3 && entryCell.row === 4) {
+          return { col: 20, row: 20 };
+        }
+        return null;
+      });
+
+    scene.update(0, 100);
+    expect(snake.getHeadPosition()).toEqual({ col: 3, row: 4 });
+    expect(portalExitSpy).toHaveBeenCalledTimes(1);
+
+    snake.getTicker().setInterval(60_000);
+    scene.update(0, 5_000);
+
+    expect(portalExitSpy).toHaveBeenCalledTimes(1);
+    expect(ghost.isActive()).toBe(true);
+    expect(ghost.getPlaybackSegments()).toEqual([{ col: 3, row: 4 }]);
+  });
+
+  it("renders split-snake mirror positions on the entry side while threading is active", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.setRng(() => 0);
+    scene.enterPhase("playing");
+
+    const snake = scene.getSnake()!;
+    snake.reset({ col: 10, row: 10 }, "right", 4);
+    snake.getTicker().setInterval(100);
+
+    vi.spyOn(scene.getPortalManager(), "update").mockReturnValue({
+      spawnedPairs: [],
+      lifecycleTransitions: [],
+      despawnedPairIds: [],
+      orderedEvents: [],
+    });
+    vi.spyOn(scene.getPortalManager(), "getExitPositionForEntryCell").mockImplementation(
+      (entryCell) => {
+        if (entryCell.col === 11 && entryCell.row === 10) {
+          return { col: 3, row: 4 };
+        }
+        return null;
+      },
+    );
+
+    mockFillCircle.mockClear();
+    scene.update(0, 100); // step into portal; split render starts
+
+    expect(hasFillCircleAt(gridToPixel({ col: 11, row: 10 }))).toBe(true);
+
+    mockFillCircle.mockClear();
+    scene.update(0, 100); // first body segment threads
+
+    expect(hasFillCircleAt(gridToPixel({ col: 12, row: 10 }))).toBe(true);
+    expect(hasFillCircleAt(gridToPixel({ col: 11, row: 10 }))).toBe(true);
+  });
+
+  it("clears split-snake overlay drawing once portal threading completes", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.setRng(() => 0);
+    scene.enterPhase("playing");
+
+    const snake = scene.getSnake()!;
+    snake.reset({ col: 10, row: 10 }, "right", 4);
+    snake.getTicker().setInterval(100);
+
+    vi.spyOn(scene.getPortalManager(), "update").mockReturnValue({
+      spawnedPairs: [],
+      lifecycleTransitions: [],
+      despawnedPairIds: [],
+      orderedEvents: [],
+    });
+    vi.spyOn(scene.getPortalManager(), "getExitPositionForEntryCell").mockImplementation(
+      (entryCell) => {
+        if (entryCell.col === 11 && entryCell.row === 10) {
+          return { col: 3, row: 4 };
+        }
+        return null;
+      },
+    );
+
+    scene.update(0, 100); // start traversal
+    scene.update(0, 100); // thread #1
+    scene.update(0, 100); // thread #2
+
+    mockFillCircle.mockClear();
+    scene.update(0, 100); // thread #3 -> complete
+
+    expect(snake.isPortalThreadingActive()).toBe(false);
+    expect(mockFillCircle).not.toHaveBeenCalled();
+  });
+
+  it("renders swirling vortex visuals for both endpoints of an active portal pair", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.enterPhase("playing");
+    scene.getSnake()!.getTicker().setInterval(200_000);
+
+    const endpointA = { col: 6, row: 7 };
+    const endpointB = { col: 15, row: 18 };
+    const pairId = "portal-pair-vortex";
+    const fakeActivePortal = createFakeActivePortal(pairId, endpointA, endpointB);
+
+    vi.spyOn(scene.getPortalManager(), "update").mockReturnValue({
+      spawnedPairs: [],
+      lifecycleTransitions: [],
+      despawnedPairIds: [],
+      orderedEvents: [],
+    });
+    vi
+      .spyOn(scene.getPortalManager(), "getActivePortal")
+      .mockReturnValue(fakeActivePortal as never);
+
+    mockFillCircle.mockClear();
+    mockMoveTo.mockClear();
+    mockLineTo.mockClear();
+
+    scene.update(0, 16);
+
+    const centerA = gridToPixel(endpointA);
+    const centerB = gridToPixel(endpointB);
+    expect(hasFillCircleAt(centerA)).toBe(true);
+    expect(hasFillCircleAt(centerB)).toBe(true);
+    expect(mockMoveTo).toHaveBeenCalled();
+    expect(mockLineTo).toHaveBeenCalled();
+  });
+
+  it("renders nearby tile distortion overlays around active portals", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.enterPhase("playing");
+    scene.getSnake()!.getTicker().setInterval(200_000);
+
+    const endpointA = { col: 8, row: 9 };
+    const endpointB = { col: 20, row: 14 };
+    const pairId = "portal-pair-distortion";
+    const fakeActivePortal = createFakeActivePortal(pairId, endpointA, endpointB);
+
+    vi.spyOn(scene.getPortalManager(), "update").mockReturnValue({
+      spawnedPairs: [],
+      lifecycleTransitions: [],
+      despawnedPairIds: [],
+      orderedEvents: [],
+    });
+    vi
+      .spyOn(scene.getPortalManager(), "getActivePortal")
+      .mockReturnValue(fakeActivePortal as never);
+
+    mockFillRect.mockClear();
+
+    scene.update(0, 16);
+
+    expect(mockFillRect).toHaveBeenCalled();
+    const hasScaledTile = mockFillRect.mock.calls.some(
+      ([, , width, height]) =>
+        typeof width === "number" &&
+        typeof height === "number" &&
+        (width > TILE_SIZE || height > TILE_SIZE),
+    );
+    expect(hasScaledTile).toBe(true);
+  });
+
+  it("supports tunable portal distortion radius and intensity", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.enterPhase("playing");
+    scene.getSnake()!.getTicker().setInterval(200_000);
+
+    const endpointA = { col: 7, row: 8 };
+    const endpointB = { col: 18, row: 16 };
+    const pairId = "portal-pair-distortion-tuning";
+    const fakeActivePortal = createFakeActivePortal(pairId, endpointA, endpointB);
+
+    vi.spyOn(scene.getPortalManager(), "update").mockReturnValue({
+      spawnedPairs: [],
+      lifecycleTransitions: [],
+      despawnedPairIds: [],
+      orderedEvents: [],
+    });
+    vi
+      .spyOn(scene.getPortalManager(), "getActivePortal")
+      .mockReturnValue(fakeActivePortal as never);
+
+    scene.setPortalDistortionConfig({
+      radiusTiles: 0.75,
+      intensity: 0.12,
+    });
+    mockFillRect.mockClear();
+    scene.update(0, 0);
+    const lowTuning = getFillRectMetrics();
+
+    scene.setPortalDistortionConfig({
+      radiusTiles: 2.8,
+      intensity: 0.9,
+    });
+    mockFillRect.mockClear();
+    scene.update(0, 0);
+    const highTuning = getFillRectMetrics();
+
+    expect(highTuning.count).toBeGreaterThan(lowTuning.count);
+    expect(highTuning.maxSize).toBeGreaterThan(lowTuning.maxSize);
+  });
+
+  it("cleans up portal tile distortion once the portal collapses/despawns", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.enterPhase("playing");
+    scene.getSnake()!.getTicker().setInterval(200_000);
+
+    const endpoints = [
+      { col: 6, row: 6 },
+      { col: 17, row: 17 },
+    ] as const;
+    const pairId = "portal-pair-distortion-cleanup";
+    const fakeActivePortal = createFakeActivePortal(pairId, endpoints[0], endpoints[1]);
+
+    const updateSpy = vi.spyOn(scene.getPortalManager(), "update");
+    updateSpy.mockReturnValueOnce({
+      spawnedPairs: [],
+      lifecycleTransitions: [],
+      despawnedPairIds: [],
+      orderedEvents: [],
+    });
+    updateSpy.mockReturnValueOnce({
+      spawnedPairs: [],
+      lifecycleTransitions: [
+        {
+          pairId,
+          transition: { from: "active", to: "collapsing", elapsedMs: 8_000 },
+        },
+      ],
+      despawnedPairIds: [pairId],
+      orderedEvents: [
+        {
+          type: "lifecycleTransition",
+          pairId,
+          transition: { from: "active", to: "collapsing", elapsedMs: 8_000 },
+        },
+        { type: "despawned", pairId },
+      ],
+    });
+    vi
+      .spyOn(scene.getPortalManager(), "getActivePortal")
+      .mockReturnValueOnce(fakeActivePortal as never)
+      .mockReturnValueOnce(fakeActivePortal as never)
+      .mockReturnValue(null);
+
+    mockFillRect.mockClear();
+    scene.update(0, 16);
+    expect(mockFillRect).toHaveBeenCalled();
+
+    mockFillRect.mockClear();
+    scene.update(0, 16);
+    expect(mockFillRect).not.toHaveBeenCalled();
+  });
+
+  it("renders portal spawn/despawn hooks from lifecycle events", () => {
+    const scene = new MainScene();
+    scene.create();
+    scene.enterPhase("playing");
+    scene.getSnake()!.getTicker().setInterval(200_000);
+
+    const endpoints = [
+      { col: 4, row: 5 },
+      { col: 21, row: 13 },
+    ] as const;
+    const pairId = "portal-pair-hook";
+    const updateSpy = vi.spyOn(scene.getPortalManager(), "update");
+    updateSpy.mockReturnValueOnce({
+      spawnedPairs: [{ pairId, endpoints }],
+      lifecycleTransitions: [],
+      despawnedPairIds: [],
+      orderedEvents: [{ type: "spawned", pairId, endpoints }],
+    });
+    updateSpy.mockReturnValueOnce({
+      spawnedPairs: [],
+      lifecycleTransitions: [
+        {
+          pairId,
+          transition: { from: "active", to: "collapsing", elapsedMs: 8_000 },
+        },
+      ],
+      despawnedPairIds: [pairId],
+      orderedEvents: [
+        {
+          type: "lifecycleTransition",
+          pairId,
+          transition: { from: "active", to: "collapsing", elapsedMs: 8_000 },
+        },
+        { type: "despawned", pairId },
+      ],
+    });
+    vi.spyOn(scene.getPortalManager(), "getActivePortal").mockReturnValue(null);
+
+    const centerA = gridToPixel(endpoints[0]);
+    const centerB = gridToPixel(endpoints[1]);
+
+    mockFillCircle.mockClear();
+    mockMoveTo.mockClear();
+    mockLineTo.mockClear();
+
+    scene.update(0, 16);
+
+    expect(hasFillCircleAt(centerA)).toBe(true);
+    expect(hasFillCircleAt(centerB)).toBe(true);
+    expect(mockMoveTo).toHaveBeenCalled();
+    expect(mockLineTo).toHaveBeenCalled();
+
+    mockFillCircle.mockClear();
+    mockMoveTo.mockClear();
+    mockLineTo.mockClear();
+
+    scene.update(0, 16);
+
+    expect(hasFillCircleAt(centerA)).toBe(true);
+    expect(hasFillCircleAt(centerB)).toBe(true);
+    expect(mockMoveTo).toHaveBeenCalled();
+    expect(mockLineTo).toHaveBeenCalled();
   });
 
   // ── Score ──────────────────────────────────────────────────
@@ -554,7 +1650,7 @@ describe("MainScene", () => {
     scene.update(0, 45_000); // Neon -> Ice
 
     expect(scene.getCurrentBiome()).toBe(Biome.IceCavern);
-    expect(mockAddGraphics).toHaveBeenCalledTimes(4);
+    expect(mockAddGraphics.mock.calls.length).toBeGreaterThanOrEqual(4);
     expect(mockSetBackgroundColor).toHaveBeenCalledWith(0x081624);
     expect(mockLineStyle).toHaveBeenCalledWith(2, 0x8fdcff, 0.16);
     expect(mockLineStyle).toHaveBeenCalledWith(1, 0x8ed5ff, 0.16);

@@ -19,7 +19,7 @@ import {
   type Direction,
   type GridPos,
 } from "../utils/grid";
-import { Snake } from "../entities/Snake";
+import { Snake, type PortalTraversalSnapshot } from "../entities/Snake";
 import { Food } from "../entities/Food";
 import { EchoGhost, type EchoGhostSnapshot } from "../entities/EchoGhost";
 import { emitFoodParticles, shakeCamera } from "../systems/effects";
@@ -41,6 +41,12 @@ import {
   normalizeRandomHook,
   sampleBiomeRandom,
 } from "../systems/biomeMechanics";
+import type { Portal, PortalLifecycleState } from "../entities/Portal";
+import {
+  PortalManager,
+  type PortalManagerUpdateResult,
+  type PortalSpawnContext,
+} from "../systems/PortalManager";
 
 // ── Default spawn configuration ─────────────────────────────────
 
@@ -56,6 +62,32 @@ const VOID_RIFT_CENTER: GridPos = {
   row: Math.floor(GRID_ROWS / 2),
 };
 const VOID_RIFT_VORTEX_SPIN_RADIANS_PER_SEC = Math.PI * 0.75;
+
+export const PORTAL_SCENE_EVENTS = {
+  UPDATE: "portalUpdate",
+  STAGE_EXPOSURE: "portalStageExposure",
+  STATE_CHANGE: "portalStateChange",
+} as const;
+
+export type PortalExposureStage = "rendering" | "movement" | "collision";
+
+export interface PortalRuntimeSnapshot {
+  deltaMs: number;
+  activePortalPairId: string | null;
+  activePortalState: PortalLifecycleState | null;
+  activePortalEndpoints: readonly [GridPos, GridPos] | null;
+  updateResult: PortalManagerUpdateResult;
+}
+
+export interface PortalStageExposure {
+  stage: PortalExposureStage;
+  snapshot: PortalRuntimeSnapshot;
+}
+
+export interface PortalDistortionConfig {
+  radiusTiles: number;
+  intensity: number;
+}
 
 interface BiomeVisualTheme {
   backgroundColor: number;
@@ -143,6 +175,30 @@ const BIOME_SHIFT_COUNTDOWN_SHAKE_Y_PX = 7;
 const BIOME_SHIFT_COUNTDOWN_NUMBER_Y_OFFSET_PX = -40;
 const BIOME_SHIFT_COUNTDOWN_LABEL_Y_OFFSET_PX = 88;
 const ECHO_GHOST_RENDER_DEPTH = RENDER_DEPTH.SNAKE - 1;
+const PORTAL_RENDER_DEPTH = RENDER_DEPTH.BIOME_MECHANIC + 1;
+const PORTAL_VORTEX_SPIN_RADIANS_PER_SEC = Math.PI * 2.4;
+const PORTAL_VORTEX_RING_COUNT = 3;
+const PORTAL_VORTEX_RING_SEGMENTS = 18;
+const PORTAL_HOOK_RING_SEGMENTS = 16;
+const PORTAL_RING_VERTICAL_SQUASH = 0.78;
+const PORTAL_SPAWN_HOOK_DURATION_MS = 260;
+const PORTAL_DESPAWN_HOOK_DURATION_MS = 220;
+const PORTAL_EMERGENCY_FLASH_DURATION_MS = 240;
+const PORTAL_EMERGENCY_COLLISION_DISABLE_DURATION_MS = 500;
+const PORTAL_SPLIT_SNAKE_RENDER_DEPTH = RENDER_DEPTH.SNAKE - 0.5;
+const PORTAL_SPLIT_HEAD_ALPHA = 0.46;
+const PORTAL_SPLIT_BODY_ALPHA = 0.34;
+const PORTAL_SPLIT_HEAD_RADIUS_PX = TILE_SIZE * 0.42;
+const PORTAL_SPLIT_BODY_RADIUS_PX = TILE_SIZE * 0.34;
+const PORTAL_DISTORTION_PULSE_RADIANS_PER_SEC = Math.PI * 1.35;
+const PORTAL_DISTORTION_MIN_RADIUS_TILES = 0;
+const PORTAL_DISTORTION_MAX_RADIUS_TILES = 8;
+const PORTAL_DISTORTION_MIN_INTENSITY = 0;
+const PORTAL_DISTORTION_MAX_INTENSITY = 1;
+const DEFAULT_PORTAL_DISTORTION_CONFIG: PortalDistortionConfig = {
+  radiusTiles: 2.15,
+  intensity: 0.32,
+};
 const ECHO_GHOST_OUTLINE_ALPHA = 0.4;
 const ECHO_GHOST_OUTLINE_WIDTH_PX = 2;
 const ECHO_GHOST_DASH_LENGTH_PX = 6;
@@ -168,6 +224,23 @@ interface EchoGhostTrailParticle {
   ageMs: number;
   lifespanMs: number;
   radiusPx: number;
+}
+interface PortalVortexRenderProfile {
+  alpha: number;
+  scale: number;
+  spinMultiplier: number;
+}
+interface PortalDistortionRenderProfile {
+  radiusTiles: number;
+  intensity: number;
+}
+type PortalLifecycleHookKind = "spawn" | "despawn" | "emergencyTeleport";
+interface PortalLifecycleHookEffect {
+  pairId: string;
+  kind: PortalLifecycleHookKind;
+  endpoints: readonly [GridPos, GridPos];
+  elapsedMs: number;
+  durationMs: number;
 }
 
 function createBiomeMechanicsState(biome: Biome): BiomeMechanicsState {
@@ -202,6 +275,13 @@ export class MainScene extends Phaser.Scene {
 
   /** Biome rotation/timing owner for the current run. */
   private readonly biomeManager = new BiomeManager();
+
+  /** Portal spawn/collapse scheduler for the current run. */
+  private readonly portalManager: PortalManager;
+
+  /** Last portal-manager update payload emitted during the current frame. */
+  private lastPortalUpdateResult: PortalManagerUpdateResult =
+    createEmptyPortalUpdateResult();
 
   /** Shared balancing knobs for Ice, Molten, and Void biome mechanics. */
   private biomeMechanicsConfig: BiomeMechanicsConfig = cloneBiomeMechanicsConfig(
@@ -242,6 +322,12 @@ export class MainScene extends Phaser.Scene {
   /** Graphics object used for mechanic-linked overlays (lava pools / void vortex). */
   private biomeMechanicGraphics: Phaser.GameObjects.Graphics | null = null;
 
+  /** Graphics object used to render active portal vortices and lifecycle hooks. */
+  private portalGraphics: Phaser.GameObjects.Graphics | null = null;
+
+  /** Graphics overlay that mirrors threaded snake segments during portal transit. */
+  private portalSplitSnakeGraphics: Phaser.GameObjects.Graphics | null = null;
+
   /** Graphics object used to render the delayed echo-ghost overlay. */
   private echoGhostGraphics: Phaser.GameObjects.Graphics | null = null;
 
@@ -263,6 +349,28 @@ export class MainScene extends Phaser.Scene {
   /** Current animated spin offset for the Void Rift center vortex. */
   private voidVortexSpinRadians = 0;
 
+  /** Current animated spin offset for portal vortex visuals. */
+  private portalVortexSpinRadians = 0;
+
+  /** Current animated pulse offset for portal tile distortion. */
+  private portalDistortionPulseRadians = 0;
+
+  /** Tunable portal tile-distortion controls. */
+  private portalDistortionConfig: PortalDistortionConfig =
+    clonePortalDistortionConfig(DEFAULT_PORTAL_DISTORTION_CONFIG);
+
+  /** Cached endpoint positions per portal pair for despawn visual hooks. */
+  private portalEndpointCache = new Map<string, readonly [GridPos, GridPos]>();
+
+  /** Active short-lived portal lifecycle effects (spawn/despawn hooks). */
+  private portalLifecycleHookEffects: PortalLifecycleHookEffect[] = [];
+
+  /** Remaining collision-suppression time after forced portal-collapse teleport. */
+  private portalEmergencyCollisionDisableMs = 0;
+
+  /** Monotonic ID for uniquely keyed emergency-teleport flash effects. */
+  private portalEmergencyFlashEffectCounter = 0;
+
   /**
    * Injectable RNG function for deterministic replay sessions.
    * Returns a value in [0, 1). Defaults to Math.random.
@@ -271,6 +379,9 @@ export class MainScene extends Phaser.Scene {
 
   constructor() {
     super({ key: "MainScene" });
+    this.portalManager = new PortalManager({
+      rng: () => sampleBiomeRandom(this.rng),
+    });
   }
 
   /** Bound listener for bridge phase changes (stored for cleanup). */
@@ -303,6 +414,10 @@ export class MainScene extends Phaser.Scene {
       this.onBridgePhaseChange = null;
     }
     this.biomeManager.stopRun();
+    this.portalManager.stopRun();
+    this.lastPortalUpdateResult = createEmptyPortalUpdateResult();
+    this.portalEmergencyCollisionDisableMs = 0;
+    this.portalEmergencyFlashEffectCounter = 0;
     this.resetMoltenCoreState();
     this.clearBiomeTransitionEffect();
     this.destroyEntities();
@@ -314,6 +429,8 @@ export class MainScene extends Phaser.Scene {
     this.gridGraphics = null;
     this.biomeMechanicGraphics?.destroy?.();
     this.biomeMechanicGraphics = null;
+    this.destroyPortalVisuals();
+    this.destroyPortalSplitSnakeVisuals();
     this.destroyEchoGhostVisuals();
     this.destroyBiomeShiftCountdown();
   }
@@ -321,22 +438,34 @@ export class MainScene extends Phaser.Scene {
   update(_time: number, delta: number): void {
     if (gameBridge.getState().phase !== "playing") {
       this.clearBiomeShiftCountdown();
+      this.clearPortalVisualState();
+      this.clearPortalSplitSnakeVisualState();
       this.clearEchoGhostVisualState();
+      this.portalEmergencyCollisionDisableMs = 0;
       return;
     }
 
+    this.advancePortalEmergencyCollisionSafety(delta);
     gameBridge.setElapsedTime(gameBridge.getState().elapsedTime + delta);
     this.updateBiomeState(delta);
 
     if (!this.snake || !this.food || !this.echoGhost) return;
+    const portalSnapshot = this.updatePortalState(delta);
+    this.resolvePortalCollapseMidTransit(portalSnapshot);
+
+    this.emitPortalStageExposure("rendering", portalSnapshot);
     this.echoGhost.advance(delta);
     this.updateEchoGhostVisuals(delta);
     this.updateMoltenCoreMechanics(delta);
     this.updateBiomeMechanicVisuals(delta);
+    this.updatePortalVisuals(delta, portalSnapshot);
 
+    this.emitPortalStageExposure("movement", portalSnapshot);
     const stepped = this.snake.update(delta);
 
     if (stepped) {
+      this.resolvePortalHeadTraversal();
+      this.emitPortalStageExposure("collision", portalSnapshot);
       if (this.checkCollisions()) {
         return; // Game over — stop processing this frame
       }
@@ -354,6 +483,8 @@ export class MainScene extends Phaser.Scene {
 
       this.echoGhost.recordPath(this.snake.getSegments());
     }
+
+    this.updatePortalSplitSnakeVisuals();
   }
 
   // ── Phase management ────────────────────────────────────────
@@ -379,6 +510,10 @@ export class MainScene extends Phaser.Scene {
   private startRun(): void {
     this.activeRunId += 1;
     this.biomeManager.startRun();
+    this.portalManager.startRun();
+    this.lastPortalUpdateResult = createEmptyPortalUpdateResult();
+    this.portalEmergencyCollisionDisableMs = 0;
+    this.portalEmergencyFlashEffectCounter = 0;
     gameBridge.resetRun({
       currentBiome: this.biomeManager.getCurrentBiome(),
       biomeVisitStats: this.biomeManager.getVisitStats(),
@@ -388,6 +523,8 @@ export class MainScene extends Phaser.Scene {
     this.clearBiomeShiftCountdown();
     this.voidGravityStepCounter = 0;
     this.voidVortexSpinRadians = 0;
+    this.clearPortalVisualState();
+    this.clearPortalSplitSnakeVisualState();
     this.destroyBiomeMechanicGraphics();
     this.handleBiomeEnter(this.biomeManager.getCurrentBiome());
     this.destroyEntities();
@@ -398,9 +535,14 @@ export class MainScene extends Phaser.Scene {
   endRun(): void {
     shakeCamera(this);
     this.biomeManager.stopRun();
+    this.portalManager.stopRun();
+    this.lastPortalUpdateResult = createEmptyPortalUpdateResult();
+    this.portalEmergencyCollisionDisableMs = 0;
     this.resetMoltenCoreState();
     this.clearBiomeTransitionEffect();
     this.clearBiomeShiftCountdown();
+    this.clearPortalVisualState();
+    this.clearPortalSplitSnakeVisualState();
     this.destroyBiomeMechanicGraphics();
     if (this.snake?.isAlive()) {
       this.snake.kill();
@@ -450,6 +592,81 @@ export class MainScene extends Phaser.Scene {
     this.destroyEchoGhostVisuals();
   }
 
+  private resolvePortalHeadTraversal(): void {
+    if (!this.snake) {
+      return;
+    }
+
+    const entryPos = this.snake.getHeadPosition();
+    const exitPos = this.portalManager.getExitPositionForEntryCell(entryPos);
+    if (!exitPos) {
+      return;
+    }
+
+    this.snake.beginPortalTraversal(entryPos, exitPos);
+  }
+
+  private resolvePortalCollapseMidTransit(
+    snapshot: PortalRuntimeSnapshot,
+  ): void {
+    if (!this.snake || !this.snake.isPortalThreadingActive()) {
+      return;
+    }
+
+    const collapsedDuringUpdate = snapshot.updateResult.lifecycleTransitions.some(
+      ({ transition }) =>
+        transition.to === "collapsing" || transition.to === "collapsed",
+    );
+    if (!collapsedDuringUpdate) {
+      return;
+    }
+
+    const traversalSnapshots = this.snake.getPortalTraversalSnapshots();
+    this.snake.forceCompletePortalTraversal();
+    this.activatePortalEmergencyTeleportSafety(traversalSnapshots);
+  }
+
+  private activatePortalEmergencyTeleportSafety(
+    traversals: readonly PortalTraversalSnapshot[],
+  ): void {
+    this.portalEmergencyCollisionDisableMs = Math.max(
+      this.portalEmergencyCollisionDisableMs,
+      PORTAL_EMERGENCY_COLLISION_DISABLE_DURATION_MS,
+    );
+
+    const flashedPortalPairs = new Set<string>();
+    for (const traversal of traversals) {
+      const traversalPairKey = `${traversal.entry.col}:${traversal.entry.row}->${traversal.exit.col}:${traversal.exit.row}`;
+      if (flashedPortalPairs.has(traversalPairKey)) {
+        continue;
+      }
+      flashedPortalPairs.add(traversalPairKey);
+
+      this.queuePortalLifecycleHook(
+        `portal-emergency-${this.portalEmergencyFlashEffectCounter}`,
+        [
+          { col: traversal.entry.col, row: traversal.entry.row },
+          { col: traversal.exit.col, row: traversal.exit.row },
+        ],
+        "emergencyTeleport",
+        PORTAL_EMERGENCY_FLASH_DURATION_MS,
+      );
+      this.portalEmergencyFlashEffectCounter += 1;
+    }
+  }
+
+  private advancePortalEmergencyCollisionSafety(deltaMs: number): void {
+    if (this.portalEmergencyCollisionDisableMs <= 0) {
+      return;
+    }
+
+    const safeDeltaMs = Number.isFinite(deltaMs) ? Math.max(0, deltaMs) : 0;
+    this.portalEmergencyCollisionDisableMs = Math.max(
+      0,
+      this.portalEmergencyCollisionDisableMs - safeDeltaMs,
+    );
+  }
+
   // ── Collision detection ───────────────────────────────────────
 
   /**
@@ -458,6 +675,9 @@ export class MainScene extends Phaser.Scene {
    */
   private checkCollisions(): boolean {
     if (!this.snake) return false;
+    if (this.portalEmergencyCollisionDisableMs > 0) {
+      return false;
+    }
 
     const head = this.snake.getHeadPosition();
 
@@ -570,6 +790,19 @@ export class MainScene extends Phaser.Scene {
     this.setBiomeMechanicsConfig({ moltenCore: config });
   }
 
+  /** Override the portal tile-distortion radius/intensity tuning knobs. */
+  setPortalDistortionConfig(config: Partial<PortalDistortionConfig>): void {
+    this.portalDistortionConfig = mergePortalDistortionConfig(
+      this.portalDistortionConfig,
+      config,
+    );
+  }
+
+  /** Snapshot of the active portal tile-distortion tuning values. */
+  getPortalDistortionConfig(): PortalDistortionConfig {
+    return clonePortalDistortionConfig(this.portalDistortionConfig);
+  }
+
   /** Override the run biome order (must be a full permutation of all biomes). */
   setBiomeCycleOrder(order: readonly Biome[]): void {
     this.biomeManager.setCycleOrder(order);
@@ -601,6 +834,14 @@ export class MainScene extends Phaser.Scene {
     return this.echoGhost;
   }
 
+  getPortalManager(): PortalManager {
+    return this.portalManager;
+  }
+
+  getPortalUpdateResult(): PortalManagerUpdateResult {
+    return this.lastPortalUpdateResult;
+  }
+
   /**
    * Rewind integration hook: capture the active EchoGhost buffer/timing snapshot.
    */
@@ -620,6 +861,677 @@ export class MainScene extends Phaser.Scene {
   }
 
   // ── Arena grid ──────────────────────────────────────────────
+
+  private updatePortalState(deltaMs: number): PortalRuntimeSnapshot {
+    const updateResult = this.portalManager.update(
+      deltaMs,
+      this.createPortalSpawnContext(),
+    );
+    this.lastPortalUpdateResult = updateResult;
+
+    const activePortal = this.portalManager.getActivePortal();
+    const activePortalEndpoints = activePortal
+      ? clonePortalEndpoints(activePortal.getEndpoints())
+      : null;
+
+    const snapshot: PortalRuntimeSnapshot = {
+      deltaMs,
+      activePortalPairId: activePortal?.getPairId() ?? null,
+      activePortalState: activePortal?.getState() ?? null,
+      activePortalEndpoints,
+      updateResult,
+    };
+
+    this.events?.emit?.(PORTAL_SCENE_EVENTS.UPDATE, snapshot);
+    for (const portalEvent of updateResult.orderedEvents) {
+      this.events?.emit?.(PORTAL_SCENE_EVENTS.STATE_CHANGE, portalEvent);
+    }
+
+    return snapshot;
+  }
+
+  private emitPortalStageExposure(
+    stage: PortalExposureStage,
+    snapshot: PortalRuntimeSnapshot,
+  ): void {
+    const exposure: PortalStageExposure = { stage, snapshot };
+    this.events?.emit?.(PORTAL_SCENE_EVENTS.STAGE_EXPOSURE, exposure);
+  }
+
+  private createPortalSpawnContext(): PortalSpawnContext {
+    const occupiedCells: GridPos[] = [];
+    if (this.snake) {
+      for (const segment of this.snake.getSegments()) {
+        occupiedCells.push({ col: segment.col, row: segment.row });
+      }
+    }
+    if (this.food) {
+      const foodPos = this.food.getPosition();
+      occupiedCells.push({ col: foodPos.col, row: foodPos.row });
+    }
+
+    const blockedCells: GridPos[] = [];
+    for (const lavaPool of this.moltenLavaPools.values()) {
+      blockedCells.push({ col: lavaPool.col, row: lavaPool.row });
+    }
+    if (this.biomeManager.getCurrentBiome() === Biome.VoidRift) {
+      blockedCells.push({ ...VOID_RIFT_CENTER });
+    }
+
+    return {
+      occupiedCells,
+      blockedCells,
+    };
+  }
+
+  private ensurePortalGraphics(): boolean {
+    if (this.portalGraphics) {
+      return true;
+    }
+
+    const addFactory = this.add as unknown as {
+      graphics?: () => Phaser.GameObjects.Graphics;
+    };
+    if (typeof addFactory.graphics !== "function") {
+      return false;
+    }
+
+    const graphics = addFactory.graphics();
+    graphics.setDepth?.(PORTAL_RENDER_DEPTH);
+    this.portalGraphics = graphics;
+    return true;
+  }
+
+  private ensurePortalSplitSnakeGraphics(): boolean {
+    if (this.portalSplitSnakeGraphics) {
+      return true;
+    }
+
+    const addFactory = this.add as unknown as {
+      graphics?: () => Phaser.GameObjects.Graphics;
+    };
+    if (typeof addFactory.graphics !== "function") {
+      return false;
+    }
+
+    const graphics = addFactory.graphics();
+    graphics.setDepth?.(PORTAL_SPLIT_SNAKE_RENDER_DEPTH);
+    this.portalSplitSnakeGraphics = graphics;
+    return true;
+  }
+
+  private clearPortalSplitSnakeVisualState(): void {
+    this.portalSplitSnakeGraphics?.clear?.();
+  }
+
+  private destroyPortalSplitSnakeVisuals(): void {
+    this.clearPortalSplitSnakeVisualState();
+    this.portalSplitSnakeGraphics?.destroy?.();
+    this.portalSplitSnakeGraphics = null;
+  }
+
+  private clearPortalVisualState(): void {
+    this.portalGraphics?.clear?.();
+    this.portalVortexSpinRadians = 0;
+    this.portalDistortionPulseRadians = 0;
+    this.portalEndpointCache.clear();
+    this.portalLifecycleHookEffects = [];
+  }
+
+  private destroyPortalVisuals(): void {
+    this.clearPortalVisualState();
+    this.portalGraphics?.destroy?.();
+    this.portalGraphics = null;
+  }
+
+  private updatePortalSplitSnakeVisuals(): void {
+    if (!this.snake || !this.snake.isPortalThreadingActive()) {
+      this.portalSplitSnakeGraphics?.clear?.();
+      return;
+    }
+
+    if (!this.ensurePortalSplitSnakeGraphics()) {
+      return;
+    }
+
+    const gfx = this.portalSplitSnakeGraphics!;
+    gfx.clear?.();
+
+    const segments = this.snake.getSegments();
+    if (segments.length === 0) {
+      return;
+    }
+
+    const traversals = this.snake.getPortalTraversalSnapshots();
+    for (const traversal of traversals) {
+      this.drawPortalSplitTraversal(gfx, segments, traversal);
+    }
+  }
+
+  private drawPortalSplitTraversal(
+    gfx: Phaser.GameObjects.Graphics,
+    segments: readonly GridPos[],
+    traversal: PortalTraversalSnapshot,
+  ): void {
+    const bodySegmentCount = Math.max(0, segments.length - 1);
+    const threadedBodySegments = Math.min(
+      bodySegmentCount,
+      Math.max(0, Math.floor(traversal.stepsElapsed)),
+    );
+    const mirroredSegmentCount = Math.min(
+      segments.length,
+      threadedBodySegments + 1,
+    );
+    if (mirroredSegmentCount <= 0) {
+      return;
+    }
+
+    const colOffset = traversal.entry.col - traversal.exit.col;
+    const rowOffset = traversal.entry.row - traversal.exit.row;
+
+    for (let i = 0; i < mirroredSegmentCount; i += 1) {
+      const sourceSegment = segments[i];
+      const mirroredPos = {
+        col: sourceSegment.col + colOffset,
+        row: sourceSegment.row + rowOffset,
+      };
+      if (!isInBounds(mirroredPos)) {
+        continue;
+      }
+
+      const center = gridToPixel(mirroredPos);
+      const isHeadMirror = i === 0;
+      gfx.fillStyle?.(
+        isHeadMirror ? COLORS.SNAKE_HEAD : COLORS.SNAKE_BODY,
+        isHeadMirror ? PORTAL_SPLIT_HEAD_ALPHA : PORTAL_SPLIT_BODY_ALPHA,
+      );
+      gfx.fillCircle?.(
+        center.x,
+        center.y,
+        isHeadMirror
+          ? PORTAL_SPLIT_HEAD_RADIUS_PX
+          : PORTAL_SPLIT_BODY_RADIUS_PX,
+      );
+    }
+  }
+
+  private updatePortalVisuals(
+    deltaMs: number,
+    snapshot: PortalRuntimeSnapshot,
+  ): void {
+    this.capturePortalLifecycleHookEvents(snapshot);
+    const activePortal = this.portalManager.getActivePortal();
+    const hasActiveVortex = Boolean(activePortal && snapshot.activePortalEndpoints);
+    const hasLifecycleHooks = this.portalLifecycleHookEffects.length > 0;
+    if (!hasActiveVortex && !hasLifecycleHooks) {
+      this.portalGraphics?.clear?.();
+      return;
+    }
+
+    if (!this.ensurePortalGraphics()) {
+      return;
+    }
+
+    const gfx = this.portalGraphics!;
+    gfx.clear?.();
+
+    const safeDeltaMs = Number.isFinite(deltaMs) ? Math.max(0, deltaMs) : 0;
+    this.portalVortexSpinRadians =
+      (this.portalVortexSpinRadians +
+        (safeDeltaMs / 1_000) * PORTAL_VORTEX_SPIN_RADIANS_PER_SEC) %
+      (Math.PI * 2);
+    this.portalDistortionPulseRadians =
+      (this.portalDistortionPulseRadians +
+        (safeDeltaMs / 1_000) * PORTAL_DISTORTION_PULSE_RADIANS_PER_SEC) %
+      (Math.PI * 2);
+
+    if (activePortal && snapshot.activePortalEndpoints) {
+      const distortionProfile = this.getPortalDistortionRenderProfile(activePortal);
+      if (
+        distortionProfile.radiusTiles > 0 &&
+        distortionProfile.intensity > 0
+      ) {
+        this.drawPortalTileDistortionField(
+          gfx,
+          snapshot.activePortalEndpoints,
+          distortionProfile,
+        );
+      }
+
+      const vortexProfile = this.getPortalVortexRenderProfile(activePortal);
+      if (vortexProfile.alpha > 0 && vortexProfile.scale > 0) {
+        this.drawPortalPairVortex(
+          gfx,
+          snapshot.activePortalEndpoints,
+          this.portalVortexSpinRadians * vortexProfile.spinMultiplier,
+          vortexProfile.alpha,
+          vortexProfile.scale,
+        );
+      }
+    }
+
+    this.drawPortalLifecycleHooks(gfx);
+    this.advancePortalLifecycleHooks(safeDeltaMs);
+  }
+
+  private capturePortalLifecycleHookEvents(snapshot: PortalRuntimeSnapshot): void {
+    const collapseHookedPairIds = new Set<string>();
+    for (const portalEvent of snapshot.updateResult.orderedEvents) {
+      if (portalEvent.type === "spawned") {
+        const endpoints = cloneGridPosPair(portalEvent.endpoints);
+        this.portalEndpointCache.set(portalEvent.pairId, endpoints);
+        this.queuePortalLifecycleHook(
+          portalEvent.pairId,
+          endpoints,
+          "spawn",
+          PORTAL_SPAWN_HOOK_DURATION_MS,
+        );
+        continue;
+      }
+
+      if (portalEvent.type === "lifecycleTransition") {
+        if (portalEvent.transition.to !== "collapsing") {
+          continue;
+        }
+        const endpoints = this.resolvePortalHookEndpoints(
+          portalEvent.pairId,
+          snapshot,
+        );
+        if (!endpoints) {
+          continue;
+        }
+        collapseHookedPairIds.add(portalEvent.pairId);
+        this.queuePortalLifecycleHook(
+          portalEvent.pairId,
+          endpoints,
+          "despawn",
+          PORTAL_DESPAWN_HOOK_DURATION_MS,
+        );
+        continue;
+      }
+
+      if (portalEvent.type === "despawned") {
+        if (!collapseHookedPairIds.has(portalEvent.pairId)) {
+          const endpoints = this.resolvePortalHookEndpoints(
+            portalEvent.pairId,
+            snapshot,
+          );
+          if (endpoints) {
+            this.queuePortalLifecycleHook(
+              portalEvent.pairId,
+              endpoints,
+              "despawn",
+              PORTAL_DESPAWN_HOOK_DURATION_MS,
+            );
+          }
+        }
+        this.portalEndpointCache.delete(portalEvent.pairId);
+      }
+    }
+
+    if (snapshot.activePortalPairId && snapshot.activePortalEndpoints) {
+      this.portalEndpointCache.set(
+        snapshot.activePortalPairId,
+        cloneGridPosPair(snapshot.activePortalEndpoints),
+      );
+    }
+  }
+
+  private resolvePortalHookEndpoints(
+    pairId: string,
+    snapshot: PortalRuntimeSnapshot,
+  ): readonly [GridPos, GridPos] | null {
+    if (
+      snapshot.activePortalPairId === pairId &&
+      snapshot.activePortalEndpoints !== null
+    ) {
+      return cloneGridPosPair(snapshot.activePortalEndpoints);
+    }
+
+    const cachedEndpoints = this.portalEndpointCache.get(pairId);
+    return cachedEndpoints ? cloneGridPosPair(cachedEndpoints) : null;
+  }
+
+  private queuePortalLifecycleHook(
+    pairId: string,
+    endpoints: readonly [GridPos, GridPos],
+    kind: PortalLifecycleHookKind,
+    durationMs: number,
+  ): void {
+    this.portalLifecycleHookEffects.push({
+      pairId,
+      kind,
+      endpoints: cloneGridPosPair(endpoints),
+      elapsedMs: 0,
+      durationMs,
+    });
+  }
+
+  private advancePortalLifecycleHooks(deltaMs: number): void {
+    if (this.portalLifecycleHookEffects.length === 0) {
+      return;
+    }
+
+    for (const effect of this.portalLifecycleHookEffects) {
+      effect.elapsedMs += deltaMs;
+    }
+    this.portalLifecycleHookEffects = this.portalLifecycleHookEffects.filter(
+      (effect) => effect.elapsedMs < effect.durationMs,
+    );
+  }
+
+  private getPortalVortexRenderProfile(activePortal: Portal): PortalVortexRenderProfile {
+    const state = activePortal.getState();
+    const durations = activePortal.getLifecycleDurations();
+    const elapsedInStateMs = activePortal.getElapsedInStateMs();
+
+    if (state === "spawning") {
+      const progress = normalizeProgress(elapsedInStateMs, durations.spawningMs);
+      return {
+        alpha: 0.25 + progress * 0.75,
+        scale: 0.55 + progress * 0.45,
+        spinMultiplier: 0.7 + progress * 0.35,
+      };
+    }
+
+    if (state === "collapsing") {
+      const progress = normalizeProgress(elapsedInStateMs, durations.collapsingMs);
+      return {
+        alpha: Math.max(0.08, 1 - progress),
+        scale: 1 + progress * 0.35,
+        spinMultiplier: 1.2 + progress * 0.5,
+      };
+    }
+
+    if (state === "active") {
+      return {
+        alpha: 1,
+        scale: 1,
+        spinMultiplier: 1,
+      };
+    }
+
+    return {
+      alpha: 0,
+      scale: 0,
+      spinMultiplier: 1,
+    };
+  }
+
+  private getPortalDistortionRenderProfile(
+    activePortal: Portal,
+  ): PortalDistortionRenderProfile {
+    const state = activePortal.getState();
+    const durations = activePortal.getLifecycleDurations();
+    const elapsedInStateMs = activePortal.getElapsedInStateMs();
+
+    let lifecycleMultiplier = 1;
+    if (state === "spawning") {
+      const progress = normalizeProgress(elapsedInStateMs, durations.spawningMs);
+      lifecycleMultiplier = 0.38 + progress * 0.62;
+    } else if (state === "collapsing") {
+      const progress = normalizeProgress(elapsedInStateMs, durations.collapsingMs);
+      lifecycleMultiplier = Math.max(0, 1 - progress);
+    } else if (state === "collapsed") {
+      lifecycleMultiplier = 0;
+    }
+
+    return {
+      radiusTiles: this.portalDistortionConfig.radiusTiles,
+      intensity: this.portalDistortionConfig.intensity * lifecycleMultiplier,
+    };
+  }
+
+  private drawPortalTileDistortionField(
+    gfx: Phaser.GameObjects.Graphics,
+    endpoints: readonly [GridPos, GridPos],
+    profile: PortalDistortionRenderProfile,
+  ): void {
+    this.drawPortalEndpointTileDistortion(gfx, endpoints[0], profile, 0);
+    this.drawPortalEndpointTileDistortion(gfx, endpoints[1], profile, Math.PI);
+  }
+
+  private drawPortalEndpointTileDistortion(
+    gfx: Phaser.GameObjects.Graphics,
+    endpoint: GridPos,
+    profile: PortalDistortionRenderProfile,
+    phaseOffset: number,
+  ): void {
+    if (profile.radiusTiles <= 0 || profile.intensity <= 0) {
+      return;
+    }
+
+    const minCol = Math.max(0, Math.floor(endpoint.col - profile.radiusTiles));
+    const maxCol = Math.min(
+      GRID_COLS - 1,
+      Math.ceil(endpoint.col + profile.radiusTiles),
+    );
+    const minRow = Math.max(0, Math.floor(endpoint.row - profile.radiusTiles));
+    const maxRow = Math.min(
+      GRID_ROWS - 1,
+      Math.ceil(endpoint.row + profile.radiusTiles),
+    );
+    const endpointCenterCol = endpoint.col + 0.5;
+    const endpointCenterRow = endpoint.row + 0.5;
+    const radiusDenominator = Math.max(0.0001, profile.radiusTiles);
+
+    for (let col = minCol; col <= maxCol; col += 1) {
+      for (let row = minRow; row <= maxRow; row += 1) {
+        const tileCenterCol = col + 0.5;
+        const tileCenterRow = row + 0.5;
+        const deltaCol = tileCenterCol - endpointCenterCol;
+        const deltaRow = tileCenterRow - endpointCenterRow;
+        const distanceTiles = Math.hypot(deltaCol, deltaRow);
+        if (distanceTiles > profile.radiusTiles) {
+          continue;
+        }
+
+        const falloff = 1 - distanceTiles / radiusDenominator;
+        if (falloff <= 0) {
+          continue;
+        }
+
+        const wave = Math.sin(
+          this.portalDistortionPulseRadians +
+            phaseOffset +
+            distanceTiles * 1.9,
+        );
+        const normalizedWave = 0.5 + wave * 0.5;
+        const tileScale =
+          1 + profile.intensity * falloff * (0.45 + normalizedWave * 0.55);
+
+        const swirlAngle =
+          Math.atan2(deltaRow, deltaCol) +
+          this.portalDistortionPulseRadians * 0.45 +
+          phaseOffset;
+        const swirlOffsetPx = TILE_SIZE * profile.intensity * falloff * 0.2;
+        const centerX =
+          col * TILE_SIZE +
+          TILE_SIZE / 2 +
+          Math.cos(swirlAngle) * swirlOffsetPx;
+        const centerY =
+          row * TILE_SIZE +
+          TILE_SIZE / 2 +
+          Math.sin(swirlAngle) * swirlOffsetPx * PORTAL_RING_VERTICAL_SQUASH;
+        const scaledSize = Math.max(1, TILE_SIZE * tileScale);
+        const alpha = Math.min(
+          0.38,
+          profile.intensity * falloff * (0.16 + normalizedWave * 0.14),
+        );
+        if (alpha <= 0) {
+          continue;
+        }
+
+        const tintColor = (col + row) % 2 === 0 ? 0x7855de : 0x93a6ff;
+        gfx.fillStyle?.(tintColor, alpha);
+        gfx.fillRect?.(
+          centerX - scaledSize / 2,
+          centerY - scaledSize / 2,
+          scaledSize,
+          scaledSize,
+        );
+      }
+    }
+  }
+
+  private drawPortalPairVortex(
+    gfx: Phaser.GameObjects.Graphics,
+    endpoints: readonly [GridPos, GridPos],
+    spinRadians: number,
+    alpha: number,
+    scale: number,
+  ): void {
+    this.drawPortalEndpointVortex(
+      gfx,
+      endpoints[0],
+      spinRadians,
+      alpha,
+      scale,
+      0,
+    );
+    this.drawPortalEndpointVortex(
+      gfx,
+      endpoints[1],
+      spinRadians,
+      alpha,
+      scale,
+      Math.PI,
+    );
+  }
+
+  private drawPortalEndpointVortex(
+    gfx: Phaser.GameObjects.Graphics,
+    endpoint: GridPos,
+    spinRadians: number,
+    alpha: number,
+    scale: number,
+    phaseOffset: number,
+  ): void {
+    const center = gridToPixel(endpoint);
+    const baseRadius = TILE_SIZE * 0.52 * scale;
+
+    gfx.fillStyle?.(0x1b0c34, 0.34 * alpha);
+    gfx.fillCircle?.(center.x, center.y, baseRadius * 1.65);
+
+    for (let ring = 0; ring < PORTAL_VORTEX_RING_COUNT; ring += 1) {
+      const ringT = ring / Math.max(1, PORTAL_VORTEX_RING_COUNT - 1);
+      const radius = baseRadius * (1.34 - ringT * 0.28);
+      const ringAlpha = Math.max(0, alpha * (0.62 - ringT * 0.17));
+      const ringColor = ring % 2 === 0 ? 0x8f6bff : 0x5ce3ff;
+      const lineWidth = Math.max(1, 2 - ringT * 0.8);
+
+      gfx.lineStyle?.(lineWidth, ringColor, ringAlpha);
+      for (let segment = 0; segment <= PORTAL_VORTEX_RING_SEGMENTS; segment += 1) {
+        const segmentT = segment / PORTAL_VORTEX_RING_SEGMENTS;
+        const angle =
+          spinRadians * (1 + ringT * 0.55) +
+          phaseOffset +
+          segmentT * Math.PI * 2 +
+          ring * 0.38;
+        const spiralPull = 1 - segmentT * 0.24;
+        const x = center.x + Math.cos(angle) * radius * spiralPull;
+        const y =
+          center.y +
+          Math.sin(angle) *
+            radius *
+            PORTAL_RING_VERTICAL_SQUASH *
+            spiralPull;
+
+        if (segment === 0) {
+          gfx.moveTo?.(x, y);
+        } else {
+          gfx.lineTo?.(x, y);
+        }
+      }
+      gfx.strokePath?.();
+    }
+
+    gfx.fillStyle?.(0x5e31d1, 0.5 * alpha);
+    gfx.fillCircle?.(center.x, center.y, baseRadius * 0.92);
+    gfx.fillStyle?.(0xe8dbff, 0.72 * alpha);
+    gfx.fillCircle?.(center.x, center.y, Math.max(1, baseRadius * 0.33));
+  }
+
+  private drawPortalLifecycleHooks(gfx: Phaser.GameObjects.Graphics): void {
+    for (const effect of this.portalLifecycleHookEffects) {
+      const progress = normalizeProgress(effect.elapsedMs, effect.durationMs);
+      const easedProgress = 1 - (1 - progress) ** 2;
+      const isSpawnHook = effect.kind === "spawn";
+      const isDespawnHook = effect.kind === "despawn";
+      const ringRadius =
+        TILE_SIZE *
+        (isSpawnHook
+          ? 0.35 + easedProgress * 1.05
+          : isDespawnHook
+            ? 0.5 + easedProgress * 1.35
+            : 0.62 + easedProgress * 1.55);
+      const alphaBase = isSpawnHook ? 0.58 : isDespawnHook ? 0.66 : 0.88;
+      const alpha = alphaBase * Math.max(0, 1 - progress);
+      if (alpha <= 0) {
+        continue;
+      }
+
+      const ringColor = isSpawnHook
+        ? 0x8ff7ff
+        : isDespawnHook
+          ? 0xff8adf
+          : 0xffef91;
+      const flashColor = isSpawnHook
+        ? 0xcbfbff
+        : isDespawnHook
+          ? 0xffd4f2
+          : 0xffffff;
+      const flashAlpha = isSpawnHook ? 0.32 : isDespawnHook ? 0.4 : 0.58;
+      const flashRadius =
+        TILE_SIZE *
+        (isSpawnHook ? 0.45 : isDespawnHook ? 0.55 : 0.72) *
+        (1 - progress * (isSpawnHook || isDespawnHook ? 0.5 : 0.7));
+
+      for (const endpoint of effect.endpoints) {
+        const center = gridToPixel(endpoint);
+        gfx.fillStyle?.(flashColor, alpha * flashAlpha);
+        gfx.fillCircle?.(center.x, center.y, Math.max(1, flashRadius));
+        this.drawPortalHookRing(
+          gfx,
+          center.x,
+          center.y,
+          ringRadius,
+          ringColor,
+          alpha,
+        );
+      }
+    }
+  }
+
+  private drawPortalHookRing(
+    gfx: Phaser.GameObjects.Graphics,
+    centerX: number,
+    centerY: number,
+    radius: number,
+    color: number,
+    alpha: number,
+  ): void {
+    if (radius <= 0 || alpha <= 0) {
+      return;
+    }
+
+    const lineWidth = Math.max(1, 2.4 - radius / (TILE_SIZE * 1.2));
+    gfx.lineStyle?.(lineWidth, color, alpha);
+    for (let segment = 0; segment <= PORTAL_HOOK_RING_SEGMENTS; segment += 1) {
+      const segmentT = segment / PORTAL_HOOK_RING_SEGMENTS;
+      const radians = segmentT * Math.PI * 2;
+      const x = centerX + Math.cos(radians) * radius;
+      const y =
+        centerY +
+        Math.sin(radians) * radius * PORTAL_RING_VERTICAL_SQUASH;
+      if (segment === 0) {
+        gfx.moveTo?.(x, y);
+      } else {
+        gfx.lineTo?.(x, y);
+      }
+    }
+    gfx.strokePath?.();
+  }
 
   private updateBiomeState(delta: number): void {
     this.updateBiomeTransitionEffect(delta);
@@ -712,10 +1624,12 @@ export class MainScene extends Phaser.Scene {
     }
 
     const foodPos = this.food.getPosition();
+    const activePortalEndpointKeys = this.getActivePortalEndpointKeys();
     const candidates: GridPos[] = [];
 
     for (let col = 0; col < GRID_COLS; col++) {
       for (let row = 0; row < GRID_ROWS; row++) {
+        const key = `${col}:${row}`;
         const pos: GridPos = { col, row };
         if (this.snake.isOnSnake(pos)) {
           continue;
@@ -723,7 +1637,10 @@ export class MainScene extends Phaser.Scene {
         if (foodPos.col === col && foodPos.row === row) {
           continue;
         }
-        if (this.moltenLavaPools.has(this.gridPosKey(pos))) {
+        if (this.moltenLavaPools.has(key)) {
+          continue;
+        }
+        if (activePortalEndpointKeys.has(key)) {
           continue;
         }
         candidates.push(pos);
@@ -766,6 +1683,28 @@ export class MainScene extends Phaser.Scene {
       }
       this.moltenLavaPools.delete(firstKey);
     }
+  }
+
+  private getActivePortalEndpointKeys(): Set<string> {
+    const keys = new Set<string>();
+    const endpoints = this.portalManager.getActivePortalEndpoints();
+    if (!endpoints) {
+      return keys;
+    }
+    keys.add(this.gridPosKey(endpoints[0].position));
+    keys.add(this.gridPosKey(endpoints[1].position));
+    return keys;
+  }
+
+  private getActivePortalEndpointPositions(): GridPos[] {
+    const endpoints = this.portalManager.getActivePortalEndpoints();
+    if (!endpoints) {
+      return [];
+    }
+    return endpoints.map((endpoint) => ({
+      col: endpoint.position.col,
+      row: endpoint.position.row,
+    }));
   }
 
   private gridPosKey(pos: GridPos): string {
@@ -840,8 +1779,12 @@ export class MainScene extends Phaser.Scene {
     const ghostSampleTimestampMs = this.echoGhost.getElapsedMs();
     const ghostDelayMs = this.echoGhost.getDelayMs();
     const runIdAtEat = this.activeRunId;
+    const blockedPortalEndpoints = this.getActivePortalEndpointPositions();
     const eaten = this.food.checkEat(this.snake, (points) =>
       this.addScore(points),
+      {
+        blockedCells: blockedPortalEndpoints,
+      },
     );
     if (eaten) {
       emitFoodParticles(this, fx, fy);
@@ -1084,6 +2027,8 @@ export class MainScene extends Phaser.Scene {
    */
   private syncGameplayLayering(): void {
     this.gridGraphics?.setDepth?.(RENDER_DEPTH.BIOME_GRID);
+    this.portalGraphics?.setDepth?.(PORTAL_RENDER_DEPTH);
+    this.portalSplitSnakeGraphics?.setDepth?.(PORTAL_SPLIT_SNAKE_RENDER_DEPTH);
     this.food?.getSprite()?.setDepth?.(RENDER_DEPTH.FOOD);
     this.echoGhostGraphics?.setDepth?.(ECHO_GHOST_RENDER_DEPTH);
     this.snake?.setRenderDepth(RENDER_DEPTH.SNAKE);
@@ -1734,4 +2679,92 @@ export class MainScene extends Phaser.Scene {
 
     gfx.strokePath();
   }
+}
+
+function createEmptyPortalUpdateResult(): PortalManagerUpdateResult {
+  return {
+    spawnedPairs: [],
+    lifecycleTransitions: [],
+    despawnedPairIds: [],
+    orderedEvents: [],
+  };
+}
+
+function clonePortalEndpoints(
+  endpoints: readonly [{ position: GridPos }, { position: GridPos }],
+): readonly [GridPos, GridPos] {
+  return cloneGridPosPair([
+    { col: endpoints[0].position.col, row: endpoints[0].position.row },
+    { col: endpoints[1].position.col, row: endpoints[1].position.row },
+  ]);
+}
+
+function cloneGridPosPair(
+  endpoints: readonly [GridPos, GridPos],
+): readonly [GridPos, GridPos] {
+  return [
+    { col: endpoints[0].col, row: endpoints[0].row },
+    { col: endpoints[1].col, row: endpoints[1].row },
+  ] as const;
+}
+
+function normalizeProgress(elapsedMs: number, durationMs: number): number {
+  if (!Number.isFinite(durationMs) || durationMs <= 0) {
+    return 1;
+  }
+  if (!Number.isFinite(elapsedMs) || elapsedMs <= 0) {
+    return 0;
+  }
+  return Math.max(0, Math.min(1, elapsedMs / durationMs));
+}
+
+function clonePortalDistortionConfig(
+  config: PortalDistortionConfig,
+): PortalDistortionConfig {
+  return {
+    radiusTiles: config.radiusTiles,
+    intensity: config.intensity,
+  };
+}
+
+function mergePortalDistortionConfig(
+  current: PortalDistortionConfig,
+  patch: Partial<PortalDistortionConfig>,
+): PortalDistortionConfig {
+  return {
+    radiusTiles: clampPortalDistortionRadiusTiles(
+      patch.radiusTiles,
+      current.radiusTiles,
+    ),
+    intensity: clampPortalDistortionIntensity(
+      patch.intensity,
+      current.intensity,
+    ),
+  };
+}
+
+function clampPortalDistortionRadiusTiles(
+  value: number | undefined,
+  fallback: number,
+): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return fallback;
+  }
+  return Math.max(
+    PORTAL_DISTORTION_MIN_RADIUS_TILES,
+    Math.min(PORTAL_DISTORTION_MAX_RADIUS_TILES, value),
+  );
+}
+
+function clampPortalDistortionIntensity(
+  value: number | undefined,
+  fallback: number,
+): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return fallback;
+  }
+  return Math.max(
+    PORTAL_DISTORTION_MIN_INTENSITY,
+    Math.min(PORTAL_DISTORTION_MAX_INTENSITY, value),
+  );
 }
