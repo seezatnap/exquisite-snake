@@ -10,9 +10,21 @@ const POINTS_PER_FOOD = 1;
 const GROWTH_PER_FOOD = 1;
 
 /**
- * Food entity — spawns on the arena grid in a cell not occupied by the snake,
- * detects when the snake head reaches it, triggers score increment and snake
- * growth, then respawns at a new safe position.
+ * Callback that returns `true` when the given grid cell is excluded
+ * from food placement (e.g. portal cells, lava pools).
+ */
+export type FoodExclusionChecker = (pos: GridPos) => boolean;
+
+/**
+ * Food entity — spawns on the arena grid in a cell not occupied by the snake
+ * or any excluded zone (portals, etc.), detects when the snake head reaches
+ * it, triggers score increment and snake growth, then respawns at a new safe
+ * position.
+ *
+ * **Portal exclusion invariant**: Food must never be spawned on, pulled
+ * through, or routed through portal cells. The exclusion checkers enforce
+ * this at spawn/respawn time, and food position is never mutated by portal
+ * traversal logic.
  */
 export class Food {
   /** Current grid position of the food. */
@@ -30,6 +42,13 @@ export class Food {
    */
   private rng: () => number;
 
+  /**
+   * External exclusion checkers that prevent food from spawning on
+   * certain cells (e.g. portal cells). Each checker returns `true`
+   * if the cell is excluded.
+   */
+  private exclusionCheckers: FoodExclusionChecker[] = [];
+
   constructor(
     scene: Phaser.Scene,
     snake: Snake,
@@ -45,10 +64,22 @@ export class Food {
     this.sprite.setDepth?.(RENDER_DEPTH.FOOD);
   }
 
+  // ── Exclusion management ──────────────────────────────────────────
+
+  /**
+   * Set external exclusion checkers that prevent food from spawning on
+   * certain cells (e.g. active portal cells). Replaces any previously set
+   * checkers.
+   */
+  setExclusionCheckers(checkers: FoodExclusionChecker[]): void {
+    this.exclusionCheckers = [...checkers];
+  }
+
   // ── Spawn logic ─────────────────────────────────────────────────
 
   /**
-   * Find a random grid position that does not overlap any snake segment.
+   * Find a random grid position that does not overlap any snake segment
+   * or any excluded cell (portal cells, etc.).
    *
    * Strategy: collect all free cells and pick one at random.
    * If the grid is completely full (snake fills every cell), falls back to
@@ -60,9 +91,13 @@ export class Food {
     for (let col = 0; col < GRID_COLS; col++) {
       for (let row = 0; row < GRID_ROWS; row++) {
         const pos: GridPos = { col, row };
-        if (!snake.isOnSnake(pos)) {
-          freeCells.push(pos);
+        if (snake.isOnSnake(pos)) {
+          continue;
         }
+        if (this.exclusionCheckers.some((check) => check(pos))) {
+          continue;
+        }
+        freeCells.push(pos);
       }
     }
 

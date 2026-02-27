@@ -22,7 +22,12 @@ import {
 import { Snake } from "../entities/Snake";
 import { Food } from "../entities/Food";
 import { EchoGhost, type EchoGhostSnapshot } from "../entities/EchoGhost";
-import { emitFoodParticles, shakeCamera } from "../systems/effects";
+import {
+  emitFoodParticles,
+  shakeCamera,
+  emitEmergencyTeleportFlash,
+  EMERGENCY_COLLISION_IMMUNITY_MS,
+} from "../systems/effects";
 import {
   Biome,
   BIOME_CONFIG,
@@ -41,6 +46,10 @@ import {
   normalizeRandomHook,
   sampleBiomeRandom,
 } from "../systems/biomeMechanics";
+import { PortalManager, type PortalManagerOptions } from "../systems/PortalManager";
+import { PortalRenderer } from "../systems/PortalRenderer";
+import { SplitSnakeRenderer } from "../systems/SplitSnakeRenderer";
+import type { PortalPair } from "../entities/Portal";
 
 // ── Default spawn configuration ─────────────────────────────────
 
@@ -203,6 +212,15 @@ export class MainScene extends Phaser.Scene {
   /** Biome rotation/timing owner for the current run. */
   private readonly biomeManager = new BiomeManager();
 
+  /** Portal spawn cadence and lifecycle manager. */
+  private portalManager: PortalManager = new PortalManager();
+
+  /** Renders swirling vortex visuals for active portal pairs. */
+  private portalRenderer: PortalRenderer = new PortalRenderer();
+
+  /** Renders split-snake visual effects during portal transit. */
+  private splitSnakeRenderer: SplitSnakeRenderer = new SplitSnakeRenderer();
+
   /** Shared balancing knobs for Ice, Molten, and Void biome mechanics. */
   private biomeMechanicsConfig: BiomeMechanicsConfig = cloneBiomeMechanicsConfig(
     DEFAULT_BIOME_MECHANICS_CONFIG,
@@ -264,6 +282,12 @@ export class MainScene extends Phaser.Scene {
   private voidVortexSpinRadians = 0;
 
   /**
+   * Remaining collision immunity time in ms after an emergency teleport.
+   * While positive, all collision checks are skipped to avoid unfair deaths.
+   */
+  private emergencyCollisionImmunityMs = 0;
+
+  /**
    * Injectable RNG function for deterministic replay sessions.
    * Returns a value in [0, 1). Defaults to Math.random.
    */
@@ -302,6 +326,9 @@ export class MainScene extends Phaser.Scene {
       gameBridge.off("phaseChange", this.onBridgePhaseChange);
       this.onBridgePhaseChange = null;
     }
+    this.portalManager.reset();
+    this.portalRenderer.destroy();
+    this.splitSnakeRenderer.destroy();
     this.biomeManager.stopRun();
     this.resetMoltenCoreState();
     this.clearBiomeTransitionEffect();
@@ -329,6 +356,16 @@ export class MainScene extends Phaser.Scene {
     this.updateBiomeState(delta);
 
     if (!this.snake || !this.food || !this.echoGhost) return;
+
+    // 1. Tick down emergency collision immunity timer (before portals, so
+    //    immunity granted this frame is not consumed in the same frame)
+    if (this.emergencyCollisionImmunityMs > 0) {
+      this.emergencyCollisionImmunityMs = Math.max(0, this.emergencyCollisionImmunityMs - delta);
+    }
+
+    // 2. Advance portal lifecycle (spawn/active/collapse) before movement/collision
+    this.updatePortals(delta);
+
     this.echoGhost.advance(delta);
     this.updateEchoGhostVisuals(delta);
     this.updateMoltenCoreMechanics(delta);
@@ -337,14 +374,27 @@ export class MainScene extends Phaser.Scene {
     const stepped = this.snake.update(delta);
 
     if (stepped) {
+      const portalTraversed = this.resolvePortalHeadTraversal();
+      this.resolvePortalBodyThreading();
+
+      // After portal teleport, clear ice momentum so the snake doesn't
+      // continue sliding in the pre-teleport direction after a spatial
+      // discontinuity.
+      if (portalTraversed) {
+        this.clearIceMomentumAfterPortal();
+      }
+
       if (this.checkCollisions()) {
         return; // Game over — stop processing this frame
       }
 
       this.resolveFoodConsumption();
 
-      const gravityApplied = this.applyVoidRiftGravityNudgeIfDue();
+      const gravityApplied = this.applyVoidRiftGravityNudgeIfDue(portalTraversed);
       if (gravityApplied) {
+        // If gravity pushes the head onto a portal, resolve the traversal
+        this.resolvePortalHeadTraversal();
+
         if (this.checkCollisions()) {
           this.echoGhost.recordPath(this.snake.getSegments());
           return;
@@ -388,15 +438,24 @@ export class MainScene extends Phaser.Scene {
     this.clearBiomeShiftCountdown();
     this.voidGravityStepCounter = 0;
     this.voidVortexSpinRadians = 0;
+    this.emergencyCollisionImmunityMs = 0;
     this.destroyBiomeMechanicGraphics();
     this.handleBiomeEnter(this.biomeManager.getCurrentBiome());
     this.destroyEntities();
     this.createEntities();
+    this.portalRenderer.reset();
+    this.splitSnakeRenderer.reset();
+    this.portalManager.setRng(this.rng);
+    this.updatePortalOccupancyCheckers();
+    this.portalManager.startRun();
   }
 
   /** End the current run: kill snake, persist high-score, transition to gameOver. */
   endRun(): void {
     shakeCamera(this);
+    this.portalManager.stopRun();
+    this.portalRenderer.reset();
+    this.splitSnakeRenderer.reset();
     this.biomeManager.stopRun();
     this.resetMoltenCoreState();
     this.clearBiomeTransitionEffect();
@@ -427,6 +486,7 @@ export class MainScene extends Phaser.Scene {
     this.snake.setupInput();
     this.snake.setupTouchInput();
     this.food = new Food(this, this.snake, this.rng);
+    this.updateFoodExclusionCheckers();
     this.echoGhost = new EchoGhost();
     this.echoGhost.recordPath(this.snake.getSegments());
     this.ensureEchoGhostGraphics();
@@ -458,6 +518,9 @@ export class MainScene extends Phaser.Scene {
    */
   private checkCollisions(): boolean {
     if (!this.snake) return false;
+
+    // Skip all collision checks during emergency teleport immunity
+    if (this.emergencyCollisionImmunityMs > 0) return false;
 
     const head = this.snake.getHeadPosition();
 
@@ -543,6 +606,7 @@ export class MainScene extends Phaser.Scene {
   /** Set the RNG function for deterministic replay. */
   setRng(rng: () => number): void {
     this.rng = normalizeRandomHook(rng, this.rng);
+    this.portalManager.setRng(this.rng);
   }
 
   /** Get the current RNG function. */
@@ -601,6 +665,23 @@ export class MainScene extends Phaser.Scene {
     return this.echoGhost;
   }
 
+  getPortalManager(): PortalManager {
+    return this.portalManager;
+  }
+
+  getPortalRenderer(): PortalRenderer {
+    return this.portalRenderer;
+  }
+
+  getSplitSnakeRenderer(): SplitSnakeRenderer {
+    return this.splitSnakeRenderer;
+  }
+
+  /** Remaining emergency collision immunity time in ms (0 = no immunity). */
+  getEmergencyCollisionImmunityMs(): number {
+    return this.emergencyCollisionImmunityMs;
+  }
+
   /**
    * Rewind integration hook: capture the active EchoGhost buffer/timing snapshot.
    */
@@ -636,6 +717,7 @@ export class MainScene extends Phaser.Scene {
 
   private handleBiomeTransition(transition: BiomeTransition): void {
     this.handleBiomeExit(transition.from);
+    this.portalManager.collapseAll();
     this.syncBiomeRuntimeToBridge();
     gameBridge.emitBiomeTransition(transition);
     this.handleBiomeEnter(transition.to);
@@ -669,6 +751,131 @@ export class MainScene extends Phaser.Scene {
 
     gameBridge.emitBiomeExit(biome);
     this.events?.emit?.("biomeExit", biome);
+  }
+
+  // ── Portal integration ──────────────────────────────────────────
+
+  /**
+   * Advance portal lifecycle each frame.
+   *
+   * Called early in the update loop (before movement/collision) so that
+   * spawn, active, and collapse state changes are settled before any
+   * downstream system queries portal occupancy.
+   *
+   * When a portal collapses while the snake is mid-transit through it,
+   * all remaining unthreaded body segments are force-teleported to the
+   * exit side instantly.
+   */
+  private updatePortals(delta: number): void {
+    const collapsed = this.portalManager.update(delta);
+    if (collapsed.length > 0) {
+      this.handleCollapsedPortals(collapsed);
+      this.portalRenderer.notifyCollapsed(collapsed, this);
+      this.events?.emit?.("portalCollapsed", collapsed);
+    }
+
+    // Render portal visuals (swirling vortex) for active pairs
+    this.portalRenderer.update(this, delta, this.portalManager.getActivePairs());
+
+    // Render split-snake effects during portal transit
+    this.splitSnakeRenderer.update(
+      this,
+      delta,
+      this.snake?.getSegments() ?? [],
+      this.snake?.getPortalTransit() ?? null,
+    );
+  }
+
+  /**
+   * Handle portal pairs that just collapsed. If the snake is currently
+   * mid-transit through any of them, force-complete the transit by
+   * teleporting remaining body segments to the exit side.
+   */
+  private handleCollapsedPortals(collapsed: readonly PortalPair[]): void {
+    if (!this.snake) return;
+
+    const transit = this.snake.getPortalTransit();
+    if (!transit) return;
+
+    const isTransitPortalCollapsed = collapsed.some(
+      (pair) => pair.id === transit.portalPairId,
+    );
+
+    if (isTransitPortalCollapsed) {
+      this.snake.forceCompleteTransit();
+      this.snake.clearPendingMomentum();
+      this.emergencyCollisionImmunityMs = EMERGENCY_COLLISION_IMMUNITY_MS;
+      emitEmergencyTeleportFlash(this);
+      this.events?.emit?.("portalCollapseMidTransit", transit);
+    }
+  }
+
+  /**
+   * Refresh the occupancy checkers given to the PortalManager so that
+   * portal pairs never spawn on top of the snake, food, or lava pools.
+   */
+  private updatePortalOccupancyCheckers(): void {
+    this.portalManager.setOccupancyCheckers([
+      (pos) => this.snake?.isOnSnake(pos) ?? false,
+      (pos) => {
+        const foodPos = this.food?.getPosition();
+        return foodPos ? gridEquals(pos, foodPos) : false;
+      },
+      (pos) => this.moltenLavaPools.has(this.gridPosKey(pos)),
+    ]);
+  }
+
+  /**
+   * Refresh the exclusion checkers given to the Food entity so that
+   * food never spawns on portal cells. This enforces the invariant
+   * that food and food-related mechanics are never pulled/routed
+   * through portals.
+   */
+  private updateFoodExclusionCheckers(): void {
+    if (!this.food) return;
+    this.food.setExclusionCheckers([
+      (pos) => this.portalManager.isPortalCell(pos),
+    ]);
+  }
+
+  /**
+   * Check whether the snake head is on a traversable portal cell.
+   * If so, teleport the head to the linked exit portal, preserving
+   * the current direction and movement cadence, and initiate body
+   * threading so segments transit one-by-one through the portal.
+   *
+   * Returns `true` if a portal traversal occurred.
+   */
+  private resolvePortalHeadTraversal(): boolean {
+    if (!this.snake) return false;
+
+    const head = this.snake.getHeadPosition();
+    const pair = this.portalManager.getPairAtPosition(head);
+    if (!pair || !pair.isTraversable()) return false;
+
+    const exitPos = pair.getLinkedExit(head);
+    if (!exitPos) return false;
+
+    this.snake.teleportHead(exitPos, pair.id, head);
+    this.events?.emit?.("portalTraversed", { pair, entry: head, exit: exitPos });
+    return true;
+  }
+
+  /**
+   * Thread body segments through the active portal transit.
+   *
+   * Called after each movement step. Body segments that have arrived at
+   * the entry portal position are teleported to the exit position,
+   * maintaining segment order and smooth visual continuity.
+   */
+  private resolvePortalBodyThreading(): void {
+    if (!this.snake) return;
+    this.snake.resolveBodyThreading();
+  }
+
+  /** Allow external configuration of the PortalManager (e.g. for tests). */
+  setPortalManagerOptions(options: PortalManagerOptions): void {
+    this.portalManager = new PortalManager(options);
   }
 
   private updateMoltenCoreMechanics(delta: number): void {
@@ -724,6 +931,9 @@ export class MainScene extends Phaser.Scene {
           continue;
         }
         if (this.moltenLavaPools.has(this.gridPosKey(pos))) {
+          continue;
+        }
+        if (this.portalManager.isPortalCell(pos)) {
           continue;
         }
         candidates.push(pos);
@@ -801,6 +1011,17 @@ export class MainScene extends Phaser.Scene {
       : 0;
     this.snake.setTurnMomentumTiles(turnMomentumTiles);
     this.applyVoidRiftInputGuard(biome);
+  }
+
+  /**
+   * After a portal teleport, clear any in-progress ice momentum slide
+   * so the pending turn applies immediately at the exit position.
+   * This prevents the snake from sliding in the pre-teleport direction
+   * after the spatial discontinuity of a portal traversal.
+   */
+  private clearIceMomentumAfterPortal(): void {
+    if (!this.snake) return;
+    this.snake.clearPendingMomentum();
   }
 
   private applyVoidRiftInputGuard(biome: Biome): void {
@@ -886,7 +1107,12 @@ export class MainScene extends Phaser.Scene {
     });
   }
 
-  private applyVoidRiftGravityNudgeIfDue(): boolean {
+  /**
+   * @param skipNudge — When true the step counter still advances but the
+   *   actual gravity displacement is suppressed. Used when a portal
+   *   teleport already displaced the snake on this step.
+   */
+  private applyVoidRiftGravityNudgeIfDue(skipNudge = false): boolean {
     if (!this.snake || this.biomeManager.getCurrentBiome() !== Biome.VoidRift) {
       return false;
     }
@@ -895,6 +1121,12 @@ export class MainScene extends Phaser.Scene {
     const head = this.snake.getHeadPosition();
     const cadenceSteps = this.getVoidRiftGravityCadenceSteps(head);
     if (this.voidGravityStepCounter % cadenceSteps !== 0) {
+      return false;
+    }
+
+    // Portal teleport already displaced the snake this step — skip the
+    // actual nudge but still count the step for cadence tracking.
+    if (skipNudge) {
       return false;
     }
 

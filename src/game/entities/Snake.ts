@@ -37,6 +37,26 @@ const KEY_DIRECTION_MAP: Record<string, Direction> = {
 
 type DirectionInputGuard = (dir: Direction) => boolean;
 
+// ── Portal transit ──────────────────────────────────────────────
+
+/**
+ * Tracks an active portal transit where body segments are threading
+ * through a portal pair one-by-one after the head has been teleported.
+ */
+export interface PortalTransitState {
+  /** ID of the portal pair being traversed. */
+  portalPairId: string;
+
+  /** The portal end the head entered (entry side). */
+  entryPos: GridPos;
+
+  /** The portal end the head exited from (exit side). */
+  exitPos: GridPos;
+
+  /** Number of body segments that have not yet threaded through. */
+  segmentsRemaining: number;
+}
+
 // ── Snake entity ─────────────────────────────────────────────────
 
 export class Snake {
@@ -87,6 +107,9 @@ export class Snake {
 
   /** Whether an opposite-direction input was rejected since the last consumed step. */
   private rejectedOppositeDirectionInput = false;
+
+  /** Active portal transit state (body segments threading through a portal). */
+  private portalTransit: PortalTransitState | null = null;
 
   constructor(
     scene: Phaser.Scene,
@@ -235,6 +258,20 @@ export class Snake {
     }
   }
 
+  /**
+   * Clear any in-progress ice momentum slide, applying the pending turn
+   * immediately instead. Called after portal teleport so the snake does
+   * not continue sliding in the pre-teleport direction after a spatial
+   * discontinuity.
+   */
+  clearPendingMomentum(): void {
+    if (this.pendingTurn !== null) {
+      this.direction = this.pendingTurn;
+      this.pendingTurn = null;
+      this.pendingTurnSlideTiles = 0;
+    }
+  }
+
   // ── Movement ───────────────────────────────────────────────────
 
   /**
@@ -360,6 +397,146 @@ export class Snake {
     return true;
   }
 
+  // ── Portal traversal ──────────────────────────────────────────
+
+  /**
+   * Teleport the snake head to a new grid position.
+   *
+   * Used by portal traversal: the head is relocated to the exit portal
+   * cell while preserving the current direction and movement cadence.
+   * The previous-position for the head is also set to the exit so that
+   * sprite interpolation doesn't create a visual "slide" from the old
+   * position to the new one.
+   *
+   * When `portalPairId` and `entryPos` are provided, initiates body
+   * threading so that subsequent segments transit through the portal
+   * one-by-one on each step.
+   */
+  teleportHead(
+    exitPos: GridPos,
+    portalPairId?: string,
+    entryPos?: GridPos,
+  ): void {
+    this.segments[0] = { ...exitPos };
+    this.prevSegments[0] = { ...exitPos };
+
+    // Start body threading if portal info is provided and there are body segments
+    if (portalPairId && entryPos && this.segments.length > 1) {
+      this.portalTransit = {
+        portalPairId,
+        entryPos: { ...entryPos },
+        exitPos: { ...exitPos },
+        segmentsRemaining: this.segments.length - 1,
+      };
+    }
+  }
+
+  /**
+   * Thread body segments through the active portal transit.
+   *
+   * Called after each movement step. For each body segment that has
+   * arrived at the entry portal position, teleport it to the exit
+   * position (and fix prevSegments to avoid interpolation glitches).
+   *
+   * Returns the number of segments threaded this step.
+   */
+  resolveBodyThreading(): number {
+    if (!this.portalTransit) return 0;
+
+    const { entryPos, exitPos } = this.portalTransit;
+    let threaded = 0;
+
+    for (let i = 1; i < this.segments.length; i++) {
+      if (
+        gridEquals(this.segments[i], entryPos)
+      ) {
+        this.segments[i] = { ...exitPos };
+        // Also fix the previous position so interpolation doesn't
+        // visually slide the segment across the screen
+        if (i < this.prevSegments.length) {
+          this.prevSegments[i] = { ...exitPos };
+        }
+        this.portalTransit.segmentsRemaining--;
+        threaded++;
+      }
+    }
+
+    // Transit is complete when all segments have threaded through
+    if (this.portalTransit.segmentsRemaining <= 0) {
+      this.portalTransit = null;
+    }
+
+    return threaded;
+  }
+
+  /**
+   * Get the current portal transit state, or null if no transit is active.
+   */
+  getPortalTransit(): PortalTransitState | null {
+    if (!this.portalTransit) return null;
+    return { ...this.portalTransit, entryPos: { ...this.portalTransit.entryPos }, exitPos: { ...this.portalTransit.exitPos } };
+  }
+
+  /**
+   * Clear the active portal transit (e.g. when the portal collapses
+   * and remaining segments are force-teleported).
+   */
+  clearPortalTransit(): void {
+    this.portalTransit = null;
+  }
+
+  /**
+   * Force-complete the active portal transit by instantly teleporting
+   * all remaining unthreaded body segments to the exit side.
+   *
+   * Used when a portal collapses while the snake is still mid-transit.
+   * Each unthreaded segment that is still on the entry side (or hasn't
+   * yet reached the exit side) is relocated to the exit position, and
+   * its prevSegments entry is fixed to prevent interpolation glitches.
+   *
+   * After the forced teleport, the transit is cleared.
+   *
+   * Returns the number of segments that were force-teleported.
+   */
+  forceCompleteTransit(): number {
+    if (!this.portalTransit) return 0;
+
+    const { exitPos } = this.portalTransit;
+    let forceTeleported = 0;
+
+    // Teleport all body segments that haven't been threaded yet.
+    // A segment that has already threaded will be at exitPos or
+    // beyond it (following the head). We only relocate segments
+    // that are NOT already at the exit position — but more
+    // precisely, we just relocate ALL remaining body segments
+    // that are still "on the entry side" (i.e. not yet at the
+    // exit position or trailing the head on the exit side).
+    //
+    // The simplest correct approach: walk body segments from tail
+    // to head. For each segment still at the entry pos or that
+    // hasn't reached the exit side, teleport to exitPos. But since
+    // we can't easily distinguish which side a segment is on when
+    // positions overlap, we just teleport the last N segments
+    // (where N = segmentsRemaining) to exitPos, maintaining their
+    // relative ordering by keeping them all at the exit position.
+    const total = this.segments.length;
+    const remaining = this.portalTransit.segmentsRemaining;
+
+    // The unthreaded segments are the tail-end of the body.
+    // They start at index (total - remaining) and go to (total - 1).
+    const startIdx = total - remaining;
+    for (let i = startIdx; i < total; i++) {
+      this.segments[i] = { ...exitPos };
+      if (i < this.prevSegments.length) {
+        this.prevSegments[i] = { ...exitPos };
+      }
+      forceTeleported++;
+    }
+
+    this.portalTransit = null;
+    return forceTeleported;
+  }
+
   // ── State queries ──────────────────────────────────────────────
 
   /** Get the head grid position. */
@@ -435,6 +612,7 @@ export class Snake {
   /** Destroy all sprites, detach input listeners, and reset state. */
   destroy(): void {
     this.alive = false;
+    this.portalTransit = null;
     if (this.keydownHandler && this.scene.input?.keyboard) {
       this.scene.input.keyboard.off("keydown", this.keydownHandler);
       this.keydownHandler = null;
@@ -472,6 +650,7 @@ export class Snake {
     this.pendingTurnSlideTiles = 0;
     this.pendingGrowth = 0;
     this.rejectedOppositeDirectionInput = false;
+    this.portalTransit = null;
     this.ticker.reset();
 
     // Build new segments
